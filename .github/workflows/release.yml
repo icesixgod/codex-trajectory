@@ -1,0 +1,46 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.7.22"
+          enable-cache: true
+      - run: uv sync --locked --group dev
+      - name: Validate tag and package
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          uv run python scripts/validate_release.py --version "$version"
+          uv run ruff format --check .
+          uv run ruff check .
+          uv run mypy
+          uv run pytest --cov --cov-report=term-missing
+          mkdir -p dist
+          git archive --format=zip --prefix="codex-trajectory-$version/" --output="dist/codex-trajectory-v$version.zip" HEAD
+          git archive --format=tar --prefix="codex-trajectory-$version/" HEAD | gzip -n > "dist/codex-trajectory-v$version.tar.gz"
+          uv run python scripts/check_archives.py "dist/codex-trajectory-v$version.zip" "dist/codex-trajectory-v$version.tar.gz"
+          cd dist
+          sha256sum codex-trajectory-v* > SHA256SUMS
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "$GITHUB_REF_NAME"
+          dist/codex-trajectory-v*.zip
+          dist/codex-trajectory-v*.tar.gz
+          dist/SHA256SUMS
+          --title "Codex Trajectory $GITHUB_REF_NAME"
+          --notes-file ".github/release-notes/$GITHUB_REF_NAME.md"

@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.7.22"
+          enable-cache: true
+      - run: uv sync --locked --group dev
+      - run: uv run ruff format --check .
+      - run: uv run ruff check .
+      - run: uv run mypy
+      - run: uv run pytest --cov --cov-report=term-missing
+      - run: uv run python scripts/validate_release.py --version 0.1.0
+      - run: uv run python scripts/smoke_mcp.py
+
+  runtime:
+    name: Runtime (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.7.22"
+          enable-cache: true
+          python-version: ${{ matrix.python }}
+      - run: uv run --no-project python scripts/smoke_mcp.py
+        env:
+          UV_PYTHON: ${{ matrix.python }}
+
+  ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.7.22"
+          enable-cache: true
+      - run: uv sync --locked --group dev
+      - run: uv run playwright install --with-deps chromium
+      - run: uv run pytest plugins/codex-trajectory/tests/test_ui.py -q
+        env:
+          RUN_UI_TESTS: "1"
+
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.7.22"
+      - name: Build and inspect release archives
+        shell: bash
+        run: |
+          mkdir -p /tmp/codex-trajectory-dist
+          git archive --format=zip --prefix="codex-trajectory-0.1.0/" --output="/tmp/codex-trajectory-dist/codex-trajectory-v0.1.0.zip" HEAD
+          git archive --format=tar --prefix="codex-trajectory-0.1.0/" HEAD | gzip -n > "/tmp/codex-trajectory-dist/codex-trajectory-v0.1.0.tar.gz"
+          uv run --no-project python scripts/check_archives.py /tmp/codex-trajectory-dist/codex-trajectory-v0.1.0.zip /tmp/codex-trajectory-dist/codex-trajectory-v0.1.0.tar.gz

@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "codex-trajectory": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--script",
+        "./scripts/codex_trajectory_mcp.py"
+      ],
+      "cwd": ".",
+      "env_vars": [
+        "CODEX_HOME"
+      ]
+    }
+  }
+}

@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="360" viewBox="0 0 1200 360">
+  <rect width="1200" height="360" rx="64" fill="#F7F8FC"/>
+  <g transform="translate(64 48) scale(.516)">
+    <defs>
+      <linearGradient id="light-bg" x1="72" y1="48" x2="440" y2="464" gradientUnits="userSpaceOnUse">
+        <stop stop-color="#7583FF"/><stop offset="1" stop-color="#3B4BD4"/>
+      </linearGradient>
+    </defs>
+    <rect x="0" y="0" width="512" height="512" rx="112" fill="url(#light-bg)"/>
+    <path d="M98 132h316M98 256h316M98 380h316" stroke="#C9CFFF" stroke-width="16" stroke-linecap="round" opacity=".36"/>
+    <path d="M170 96v320M342 96v320" stroke="#C9CFFF" stroke-width="12" stroke-linecap="round" opacity=".22"/>
+    <rect x="76" y="108" width="116" height="48" rx="20" fill="#FFFFFF"/>
+    <rect x="218" y="232" width="206" height="48" rx="20" fill="#FFD06A"/>
+    <rect x="124" y="356" width="166" height="48" rx="20" fill="#73E2D2"/>
+  </g>
+  <text x="382" y="160" fill="#1B2030" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="70" font-weight="750">Codex Trajectory</text>
+  <text x="386" y="222" fill="#667085" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="30">Private by default. Clear by design.</text>
+</svg>

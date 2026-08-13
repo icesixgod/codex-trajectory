@@ -1,0 +1,590 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Codex Trajectory</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f7f8fc;
+      --panel: #ffffff;
+      --panel-2: #f0f2f8;
+      --line: #dfe3ee;
+      --line-strong: #aeb6cc;
+      --text: #1b2030;
+      --muted: #667085;
+      --accent: #5b6cff;
+      --accent-soft: #e8ebff;
+      --danger: #d43f55;
+      --success: #26845b;
+      --user: #4299e1;
+      --assistant: #7c68ee;
+      --reasoning: #a968cf;
+      --tool: #e49a37;
+      --subagent: #2da6a0;
+      --compaction: #7c879c;
+      --shadow: 0 8px 28px rgba(29, 39, 68, .08);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #12141a;
+        --panel: #191c24;
+        --panel-2: #222631;
+        --line: #303644;
+        --line-strong: #596174;
+        --text: #edf0f7;
+        --muted: #a1a9ba;
+        --accent: #8d99ff;
+        --accent-soft: #292e50;
+        --danger: #ff7285;
+        --success: #5ed39e;
+        --shadow: 0 10px 30px rgba(0, 0, 0, .24);
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 13px/1.45 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    button, input, select { font: inherit; color: inherit; }
+    button, select, input {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 8px;
+    }
+    button { cursor: pointer; padding: 6px 10px; }
+    button:hover { border-color: var(--line-strong); background: var(--panel-2); }
+    button:disabled { opacity: .55; cursor: wait; }
+    :focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 60%, transparent); outline-offset: 2px; }
+    #app { min-height: 240px; padding: 12px; }
+    .shell {
+      max-width: 1180px;
+      margin: 0 auto;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .topbar {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 16px 18px 12px;
+      border-bottom: 1px solid var(--line);
+    }
+    .eyebrow { color: var(--accent); font-size: 11px; font-weight: 750; letter-spacing: .09em; text-transform: uppercase; }
+    h1 { margin: 3px 0 2px; font-size: 20px; line-height: 1.2; }
+    .subtitle { max-width: 720px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .top-actions { display: flex; gap: 7px; align-items: center; }
+    #sessionSelect { width: min(360px, 38vw); padding: 7px 30px 7px 9px; }
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(84px, 1fr));
+      gap: 8px;
+      padding: 12px 18px;
+      background: var(--panel-2);
+      border-bottom: 1px solid var(--line);
+    }
+    .privacy-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 18px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--accent-soft) 55%, var(--panel)); }
+    .privacy-copy { color: var(--muted); }
+    .privacy-copy strong { color: var(--text); }
+    .privacy-action { white-space: nowrap; }
+    .stat { min-width: 0; padding: 7px 9px; border-radius: 9px; background: color-mix(in srgb, var(--panel) 82%, transparent); }
+    .stat-label { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
+    .stat-value { margin-top: 2px; font-size: 15px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .overview { padding: 12px 18px 14px; border-bottom: 1px solid var(--line); }
+    .section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+    .section-title { font-weight: 700; }
+    .section-note { color: var(--muted); font-size: 11px; }
+    .timeline-wrap { position: relative; }
+    #timeline {
+      position: relative;
+      height: 92px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background:
+        linear-gradient(to bottom, transparent 31%, var(--line) 31%, var(--line) 32%, transparent 32%, transparent 65%, var(--line) 65%, var(--line) 66%, transparent 66%),
+        repeating-linear-gradient(to right, transparent 0, transparent calc(10% - 1px), color-mix(in srgb, var(--line) 65%, transparent) calc(10% - 1px), color-mix(in srgb, var(--line) 65%, transparent) 10%);
+      touch-action: none;
+      user-select: none;
+      cursor: crosshair;
+    }
+    .turn-boundary { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--line-strong); opacity: .7; }
+    .span { position: absolute; height: 16px; min-width: 3px; border-radius: 4px; opacity: .88; border: 1px solid color-mix(in srgb, currentColor 70%, #0000); cursor: pointer; }
+    .span:hover, .span.selected { opacity: 1; outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent); z-index: 4; }
+    .span[data-kind="user"] { background: var(--user); color: var(--user); }
+    .span[data-kind="assistant"] { background: var(--assistant); color: var(--assistant); }
+    .span[data-kind="reasoning"] { background: var(--reasoning); color: var(--reasoning); }
+    .span[data-kind="tool"] { background: var(--tool); color: var(--tool); }
+    .span[data-kind="subagent"] { background: var(--subagent); color: var(--subagent); }
+    .span[data-kind="compaction"] { background: var(--compaction); color: var(--compaction); }
+    .span.error { box-shadow: inset 0 0 0 2px var(--danger); }
+    #selection {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      display: none;
+      background: color-mix(in srgb, var(--accent) 16%, transparent);
+      border-left: 1px solid var(--accent);
+      border-right: 1px solid var(--accent);
+      pointer-events: none;
+      z-index: 3;
+    }
+    .ticks { display: flex; justify-content: space-between; margin-top: 4px; color: var(--muted); font-variant-numeric: tabular-nums; font-size: 10px; }
+    .toolbar { display: flex; gap: 8px; padding: 10px 18px; border-bottom: 1px solid var(--line); align-items: center; }
+    #search { flex: 1; min-width: 120px; padding: 7px 10px; }
+    #kindFilter { padding: 7px 9px; }
+    .range-chip { padding: 5px 8px; color: var(--accent); background: var(--accent-soft); border-radius: 999px; white-space: nowrap; }
+    .content { display: grid; grid-template-columns: minmax(0, 1fr) 340px; min-height: 360px; }
+    .ledger-wrap { min-width: 0; max-height: 560px; overflow: auto; scrollbar-gutter: stable; }
+    table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    thead { position: sticky; top: 0; z-index: 5; background: var(--panel); box-shadow: 0 1px var(--line); }
+    th { color: var(--muted); text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: .05em; padding: 8px 7px; }
+    th:nth-child(1) { width: 54px; }
+    th:nth-child(2) { width: 66px; }
+    th:nth-child(3) { width: 150px; }
+    th:nth-child(5) { width: 86px; text-align: right; }
+    td { padding: 8px 7px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    tr.record { cursor: pointer; }
+    tr.record:hover td { background: var(--panel-2); }
+    tr.record.selected td { background: var(--accent-soft); }
+    .turn-row td { padding: 9px 7px 6px; border-top: 2px solid var(--line-strong); border-bottom: 1px solid var(--line); color: var(--muted); font-size: 11px; font-weight: 700; background: color-mix(in srgb, var(--panel-2) 68%, transparent); }
+    .index, .duration, .mono { font-variant-numeric: tabular-nums; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .duration { text-align: right; color: var(--muted); }
+    .event { display: flex; align-items: center; gap: 7px; min-width: 0; }
+    .dot { width: 7px; height: 7px; flex: none; border-radius: 50%; background: var(--compaction); }
+    .dot.user { background: var(--user); }
+    .dot.assistant { background: var(--assistant); }
+    .dot.reasoning { background: var(--reasoning); }
+    .dot.tool { background: var(--tool); }
+    .dot.subagent { background: var(--subagent); }
+    .event-name, .summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .status-error { color: var(--danger); }
+    .status-running { color: var(--accent); }
+    .inspector { border-left: 1px solid var(--line); max-height: 560px; overflow: auto; padding: 14px; scrollbar-gutter: stable; }
+    .empty { display: grid; min-height: 280px; place-items: center; color: var(--muted); text-align: center; padding: 30px; }
+    .inspector h2 { margin: 0 0 4px; font-size: 15px; }
+    .inspect-meta { color: var(--muted); font-size: 11px; margin-bottom: 12px; }
+    .inspect-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-bottom: 12px; }
+    .inspect-item { padding: 7px; background: var(--panel-2); border-radius: 8px; min-width: 0; }
+    .inspect-item span { display: block; color: var(--muted); font-size: 10px; text-transform: uppercase; }
+    .inspect-item strong { display: block; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    details { margin-top: 9px; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+    summary { cursor: pointer; padding: 8px 10px; font-weight: 650; background: var(--panel-2); }
+    pre { margin: 0; padding: 10px; max-height: 260px; overflow: auto; white-space: pre-wrap; word-break: break-word; font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .notice { margin: 10px 18px; padding: 8px 10px; border-radius: 8px; color: var(--muted); background: var(--panel-2); }
+    .notice.error { color: var(--danger); border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent); }
+    .loading { min-height: 260px; display: grid; place-items: center; color: var(--muted); }
+    .spinner { width: 20px; height: 20px; margin: 0 auto 8px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (max-width: 760px) {
+      #app { padding: 0; }
+      .shell { border-radius: 0; border-left: 0; border-right: 0; }
+      .topbar { flex-direction: column; }
+      .top-actions, #sessionSelect { width: 100%; }
+      #sessionSelect { flex: 1; }
+      .stats { grid-template-columns: repeat(3, 1fr); }
+      .content { grid-template-columns: 1fr; }
+      .inspector { border-left: 0; border-top: 1px solid var(--line); max-height: 420px; }
+      .ledger-wrap { max-height: 470px; }
+      th:nth-child(2), td:nth-child(2) { display: none; }
+      th:nth-child(3) { width: 115px; }
+      .toolbar { flex-wrap: wrap; }
+      .privacy-bar { align-items: flex-start; flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <div id="app"><div class="loading"><div><div class="spinner"></div>Waiting for trajectory data…</div></div></div>
+  <script>
+    (() => {
+      const app = document.getElementById("app");
+      const pending = new Map();
+      let nextRequestId = 1;
+      let data = null;
+      let selectedId = null;
+      let search = "";
+      let kind = "all";
+      let selectedRange = null;
+      let fullDomain = null;
+      let viewport = null;
+      let drag = null;
+      let busy = false;
+
+      const requestedLanguage = new URLSearchParams(window.location.search).get("lang");
+      const language = requestedLanguage || navigator.language || document.documentElement.lang || "en";
+      const zh = language.toLowerCase().startsWith("zh");
+      document.documentElement.lang = zh ? "zh-CN" : "en";
+      const labels = zh ? {
+        eyebrow: "本地任务轨迹", overview: "时间概览", hint: "拖选区间 · 滚轮缩放 · 右键清除",
+        turns: "轮次", records: "记录", tools: "工具", failures: "失败", tokens: "Token", duration: "总时长",
+        search: "搜索事件、摘要、输入或输出…", all: "全部类型", refresh: "刷新", reset: "重置视图",
+        index: "索引", turnStep: "轮次/步骤", event: "事件", summary: "内容", time: "耗时",
+        inspect: "选择一条记录查看详情", input: "输入", output: "输出", metadata: "元数据", usage: "Token 用量",
+        status: "状态", started: "开始", completed: "完成", callId: "调用 ID", noMatch: "当前筛选条件没有匹配记录。",
+        omitted: "当前显示尾部记录；有更早记录未载入。", range: "时间区间", clear: "清除区间", current: "当前/最近任务", turn: "轮次",
+        safeMode: "安全摘要", safeDescription: "工具输入、输出和原始元数据已隐藏。", fullMode: "完整详情", fullDescription: "完整详情已加载，仅应在你信任当前任务内容时使用。",
+        loadFull: "加载完整详情", confirmFull: "完整详情可能包含源代码、命令输出和敏感信息。确定加载吗？", loading: "正在加载轨迹…", loadError: "无法加载轨迹", warnings: "读取警告",
+      } : {
+        eyebrow: "Local task trajectory", overview: "Timing overview", hint: "Drag to select · wheel to zoom · right-click to clear",
+        turns: "Turns", records: "Records", tools: "Tools", failures: "Failures", tokens: "Tokens", duration: "Duration",
+        search: "Search events, summaries, input, or output…", all: "All types", refresh: "Refresh", reset: "Reset view",
+        index: "Index", turnStep: "Turn/step", event: "Event", summary: "Content", time: "Time",
+        inspect: "Select a record to inspect its details", input: "Input", output: "Output", metadata: "Metadata", usage: "Token usage",
+        status: "Status", started: "Started", completed: "Completed", callId: "Call ID", noMatch: "No records match the current filters.",
+        omitted: "Showing the loaded tail; earlier records are omitted.", range: "Time range", clear: "Clear range", current: "Current/latest task", turn: "Turn",
+        safeMode: "Safe summary", safeDescription: "Tool input, output, and raw metadata are hidden.", fullMode: "Full details", fullDescription: "Full details are loaded. Use them only when you trust this task's contents.",
+        loadFull: "Load full details", confirmFull: "Full details may contain source code, command output, and sensitive data. Load them?", loading: "Loading trajectory…", loadError: "Could not load trajectory", warnings: "Read warnings",
+      };
+
+      const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, char => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
+      })[char]);
+      const number = (value) => Number.isFinite(value) ? new Intl.NumberFormat().format(value) : "—";
+      const date = (value) => value ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "medium" }).format(new Date(value)) : "—";
+      const duration = (ms) => {
+        if (!Number.isFinite(ms)) return "—";
+        if (ms < 1000) return `${Math.round(ms)} ms`;
+        if (ms < 60000) return `${(ms / 1000).toFixed(ms < 10000 ? 2 : 1)} s`;
+        return `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s`;
+      };
+      const recordRange = (record) => {
+        const start = Date.parse(record.startedAt || "");
+        if (!Number.isFinite(start)) return null;
+        const endValue = Date.parse(record.completedAt || "");
+        const end = Number.isFinite(endValue) ? Math.max(start, endValue) : start + Math.max(0, record.durationMs || 0);
+        return { start, end };
+      };
+
+      function request(method, params) {
+        const id = nextRequestId++;
+        window.parent.postMessage({ jsonrpc: "2.0", id, method, params }, "*");
+        return new Promise((resolve, reject) => pending.set(id, { resolve, reject }));
+      }
+
+      async function callTool(name, args) {
+        if (window.openai?.callTool) return window.openai.callTool(name, args);
+        return request("tools/call", { name, arguments: args });
+      }
+
+      function computeDomain() {
+        const ranges = (data?.records || []).map(recordRange).filter(Boolean);
+        if (!ranges.length) return { start: Date.now(), end: Date.now() + 1 };
+        const start = Math.min(...ranges.map(range => range.start));
+        let end = Math.max(...ranges.map(range => range.end));
+        if (end <= start) end = start + 1;
+        return { start, end };
+      }
+
+      function render(next) {
+        if (!next?.session || !Array.isArray(next.records)) return;
+        data = next;
+        busy = false;
+        fullDomain = computeDomain();
+        viewport = { ...fullDomain };
+        selectedRange = null;
+        selectedId = next.records.at(-1)?.id || null;
+        drawShell();
+      }
+
+      function stat(label, value) {
+        return `<div class="stat"><div class="stat-label">${escapeHtml(label)}</div><div class="stat-value">${escapeHtml(value)}</div></div>`;
+      }
+
+      function drawShell() {
+        const stats = data.stats || {};
+        const turns = data.turns || [];
+        const totalDuration = turns.reduce((sum, turn) => sum + (Number.isFinite(turn.durationMs) ? turn.durationMs : 0), 0);
+        const tokenTotal = stats.tokens?.total_tokens;
+        app.innerHTML = `
+          <section class="shell">
+            <header class="topbar">
+              <div><div class="eyebrow">${labels.eyebrow}</div><h1>${escapeHtml(data.session.title)}</h1><div class="subtitle" title="${escapeHtml(data.session.cwd || "")}">${escapeHtml(data.session.model || "Codex")} · ${escapeHtml(data.session.cwd || data.session.id)}</div></div>
+              <div class="top-actions"><select id="sessionSelect" aria-label="${labels.current}"></select><button id="refresh" type="button">${labels.refresh}</button></div>
+            </header>
+            <div class="privacy-bar" role="status">
+              <div class="privacy-copy"><strong>${data.detailLevel === "full" ? labels.fullMode : labels.safeMode}</strong> · ${data.detailLevel === "full" ? labels.fullDescription : labels.safeDescription}</div>
+              ${data.detailLevel === "full" ? "" : `<button type="button" class="privacy-action" id="loadFull">${labels.loadFull}</button>`}
+            </div>
+            <div class="stats">
+              ${stat(labels.turns, number(stats.turns))}${stat(labels.records, number(stats.records))}${stat(labels.tools, number(stats.toolCalls))}
+              ${stat(labels.failures, number(stats.failedTools))}${stat(labels.tokens, number(tokenTotal))}${stat(labels.duration, duration(totalDuration))}
+            </div>
+            <section class="overview">
+              <div class="section-head"><div><span class="section-title">${labels.overview}</span> <span class="section-note">${labels.hint}</span></div><button id="resetView" type="button">${labels.reset}</button></div>
+              <div class="timeline-wrap"><div id="timeline" role="application" aria-label="${labels.overview}"><div id="selection"></div></div><div class="ticks"><span id="tickStart"></span><span id="tickMiddle"></span><span id="tickEnd"></span></div></div>
+            </section>
+            <div class="toolbar">
+              <input id="search" type="search" aria-label="${labels.search}" placeholder="${labels.search}" value="${escapeHtml(search)}">
+              <select id="kindFilter" aria-label="${labels.all}"><option value="all">${labels.all}</option>${["user","assistant","reasoning","tool","subagent","compaction"].map(value => `<option value="${value}">${value}</option>`).join("")}</select>
+              <span id="rangeChip"></span>
+            </div>
+            ${stats.omittedRecords ? `<div class="notice">${labels.omitted} ${number(stats.omittedRecords)}</div>` : ""}
+            ${(data.warnings || []).length ? `<div class="notice" role="status"><strong>${labels.warnings}:</strong> ${escapeHtml(data.warnings.map(item => item.message).join(" "))}</div>` : ""}
+            <div class="content"><div class="ledger-wrap"><table><thead><tr><th>${labels.index}</th><th>${labels.turnStep}</th><th>${labels.event}</th><th>${labels.summary}</th><th>${labels.time}</th></tr></thead><tbody id="ledger"></tbody></table></div><aside class="inspector" id="inspector"></aside></div>
+          </section>`;
+        populateSessions();
+        document.getElementById("kindFilter").value = kind;
+        bindControls();
+        drawTimeline();
+        drawLedger();
+      }
+
+      function populateSessions() {
+        const select = document.getElementById("sessionSelect");
+        const recent = data.recentSessions || [];
+        select.innerHTML = recent.map(session => `<option value="${escapeHtml(session.id)}" ${session.id === data.session.id ? "selected" : ""}>${escapeHtml(session.title)} · ${escapeHtml(session.id.slice(0, 8))}</option>`).join("");
+        if (!recent.some(session => session.id === data.session.id)) {
+          select.insertAdjacentHTML("afterbegin", `<option value="${escapeHtml(data.session.id)}" selected>${escapeHtml(data.session.title)}</option>`);
+        }
+      }
+
+      function bindControls() {
+        document.getElementById("search").addEventListener("input", event => { search = event.target.value; drawLedger(); });
+        document.getElementById("kindFilter").addEventListener("change", event => { kind = event.target.value; drawLedger(); });
+        document.getElementById("refresh").addEventListener("click", () => loadSession(data.session.id, data.detailLevel));
+        document.getElementById("sessionSelect").addEventListener("change", event => loadSession(event.target.value, "summary"));
+        document.getElementById("loadFull")?.addEventListener("click", () => {
+          if (window.confirm(labels.confirmFull)) loadSession(data.session.id, "full");
+        });
+        document.getElementById("resetView").addEventListener("click", () => { viewport = { ...fullDomain }; selectedRange = null; drawTimeline(); drawLedger(); });
+        const timeline = document.getElementById("timeline");
+        timeline.addEventListener("pointerdown", timelinePointerDown);
+        timeline.addEventListener("pointermove", timelinePointerMove);
+        timeline.addEventListener("pointerup", timelinePointerUp);
+        timeline.addEventListener("pointercancel", timelinePointerUp);
+        timeline.addEventListener("wheel", timelineWheel, { passive: false });
+        timeline.addEventListener("contextmenu", event => { event.preventDefault(); selectedRange = null; drawTimeline(); drawLedger(); });
+      }
+
+      async function loadSession(sessionId, detailLevel = "summary") {
+        if (busy) return;
+        busy = true;
+        const refresh = document.getElementById("refresh");
+        if (refresh) refresh.disabled = true;
+        try {
+          app.setAttribute("aria-busy", "true");
+          const result = await callTool("get_codex_trajectory", { sessionId, maxRecords: 1000, includeArchived: true, detailLevel });
+          if (result?.structuredContent) render(result.structuredContent);
+        } catch (error) {
+          busy = false;
+          if (refresh) refresh.disabled = false;
+          const message = String(error?.message || error);
+          app.insertAdjacentHTML("afterbegin", `<div class="notice error" role="alert"><strong>${labels.loadError}:</strong> ${escapeHtml(message)}</div>`);
+        } finally {
+          app.setAttribute("aria-busy", "false");
+        }
+      }
+
+      function lane(kind) {
+        if (kind === "tool" || kind === "subagent") return 2;
+        if (kind === "assistant" || kind === "reasoning") return 1;
+        return 0;
+      }
+
+      function timeToX(time) {
+        return ((time - viewport.start) / Math.max(1, viewport.end - viewport.start)) * 100;
+      }
+
+      function xToTime(clientX) {
+        const rect = document.getElementById("timeline").getBoundingClientRect();
+        const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+        return viewport.start + ratio * (viewport.end - viewport.start);
+      }
+
+      function drawTimeline() {
+        const timeline = document.getElementById("timeline");
+        if (!timeline) return;
+        timeline.querySelectorAll(".span,.turn-boundary").forEach(node => node.remove());
+        for (const turn of data.turns || []) {
+          const start = Date.parse(turn.startedAt || "");
+          if (!Number.isFinite(start) || start < viewport.start || start > viewport.end) continue;
+          const boundary = document.createElement("div");
+          boundary.className = "turn-boundary";
+          boundary.style.left = `${timeToX(start)}%`;
+          boundary.title = `${labels.turn} ${turn.index}`;
+          timeline.appendChild(boundary);
+        }
+        for (const record of data.records) {
+          const range = recordRange(record);
+          if (!range || range.end < viewport.start || range.start > viewport.end) continue;
+          const start = Math.max(range.start, viewport.start);
+          const end = Math.min(range.end, viewport.end);
+          const span = document.createElement("button");
+          span.type = "button";
+          span.className = `span ${record.status === "error" ? "error" : ""} ${record.id === selectedId ? "selected" : ""}`;
+          span.dataset.kind = record.kind;
+          span.style.left = `${Math.max(0, timeToX(start))}%`;
+          span.style.width = `${Math.max(.35, timeToX(end) - timeToX(start))}%`;
+          span.style.top = `${8 + lane(record.kind) * 27}px`;
+          span.title = `#${record.index} ${record.event} · ${duration(record.durationMs)}`;
+          span.addEventListener("click", event => { event.stopPropagation(); selectRecord(record.id); });
+          timeline.appendChild(span);
+        }
+        const selection = document.getElementById("selection");
+        if (selectedRange) {
+          selection.style.display = "block";
+          selection.style.left = `${timeToX(selectedRange.start)}%`;
+          selection.style.width = `${Math.max(.2, timeToX(selectedRange.end) - timeToX(selectedRange.start))}%`;
+        } else selection.style.display = "none";
+        document.getElementById("tickStart").textContent = date(viewport.start);
+        document.getElementById("tickMiddle").textContent = `+${duration((viewport.end - viewport.start) / 2)}`;
+        document.getElementById("tickEnd").textContent = `+${duration(viewport.end - viewport.start)}`;
+        const chip = document.getElementById("rangeChip");
+        chip.className = selectedRange ? "range-chip" : "";
+        chip.textContent = selectedRange ? `${labels.range}: ${duration(selectedRange.end - selectedRange.start)}` : "";
+      }
+
+      function timelinePointerDown(event) {
+        if (event.target.classList.contains("span")) return;
+        event.currentTarget.setPointerCapture(event.pointerId);
+        if (event.button === 2) {
+          drag = { mode: "pan", x: event.clientX, viewport: { ...viewport } };
+        } else if (event.button === 0) {
+          const at = xToTime(event.clientX);
+          drag = { mode: "select", start: at, current: at };
+          selectedRange = { start: at, end: at };
+          drawTimeline();
+        }
+      }
+
+      function timelinePointerMove(event) {
+        if (!drag) return;
+        if (drag.mode === "select") {
+          drag.current = xToTime(event.clientX);
+          selectedRange = { start: Math.min(drag.start, drag.current), end: Math.max(drag.start, drag.current) };
+          drawTimeline();
+          return;
+        }
+        const rect = event.currentTarget.getBoundingClientRect();
+        const delta = ((event.clientX - drag.x) / rect.width) * (drag.viewport.end - drag.viewport.start);
+        const width = drag.viewport.end - drag.viewport.start;
+        let start = drag.viewport.start - delta;
+        start = Math.max(fullDomain.start, Math.min(fullDomain.end - width, start));
+        viewport = { start, end: start + width };
+        drawTimeline();
+      }
+
+      function timelinePointerUp() {
+        if (drag?.mode === "select" && selectedRange && selectedRange.end - selectedRange.start < 2) selectedRange = null;
+        drag = null;
+        drawTimeline();
+        drawLedger();
+      }
+
+      function timelineWheel(event) {
+        event.preventDefault();
+        const anchor = xToTime(event.clientX);
+        const currentWidth = viewport.end - viewport.start;
+        const fullWidth = fullDomain.end - fullDomain.start;
+        const nextWidth = Math.max(10, Math.min(fullWidth, currentWidth * Math.exp(event.deltaY * .0015)));
+        const ratio = (anchor - viewport.start) / currentWidth;
+        let start = anchor - nextWidth * ratio;
+        start = Math.max(fullDomain.start, Math.min(fullDomain.end - nextWidth, start));
+        viewport = { start, end: start + nextWidth };
+        drawTimeline();
+      }
+
+      function visibleRecords() {
+        const needle = search.trim().toLowerCase();
+        return data.records.filter(record => {
+          if (kind !== "all" && record.kind !== kind) return false;
+          if (selectedRange) {
+            const range = recordRange(record);
+            if (!range || range.end < selectedRange.start || range.start > selectedRange.end) return false;
+          }
+          if (!needle) return true;
+          return [record.event, record.summary, record.input, record.output, record.callId].some(value => String(value || "").toLowerCase().includes(needle));
+        });
+      }
+
+      function drawLedger() {
+        const ledger = document.getElementById("ledger");
+        if (!ledger) return;
+        const records = visibleRecords();
+        ledger.innerHTML = "";
+        let previousTurn = null;
+        for (const record of records) {
+          if (record.turn !== previousTurn) {
+            previousTurn = record.turn;
+            const turn = (data.turns || []).find(item => item.index === record.turn) || {};
+            const header = document.createElement("tr");
+            header.className = "turn-row";
+            header.innerHTML = `<td colspan="5">${labels.turn} ${record.turn} · ${escapeHtml(turn.status || "")} · ${duration(turn.durationMs)}${Number.isFinite(turn.timeToFirstTokenMs) ? ` · TTFT ${duration(turn.timeToFirstTokenMs)}` : ""}</td>`;
+            ledger.appendChild(header);
+          }
+          const row = document.createElement("tr");
+          row.className = `record ${record.id === selectedId ? "selected" : ""}`;
+          row.dataset.id = record.id;
+          row.tabIndex = 0;
+          row.innerHTML = `<td class="index">#${record.index}</td><td class="mono">T${record.turn}${record.step ? `/S${record.step}` : ""}</td><td><div class="event"><span class="dot ${escapeHtml(record.kind)}"></span><span class="event-name ${record.status === "error" ? "status-error" : record.status === "running" ? "status-running" : ""}">${escapeHtml(record.event)}</span></div></td><td class="summary" title="${escapeHtml(record.summary)}">${escapeHtml(record.summary)}</td><td class="duration">${duration(record.durationMs)}</td>`;
+          row.addEventListener("click", () => selectRecord(record.id));
+          row.addEventListener("keydown", event => {
+            if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectRecord(record.id); }
+          });
+          ledger.appendChild(row);
+        }
+        if (!records.length) {
+          const row = document.createElement("tr");
+          row.innerHTML = `<td colspan="5"><div class="empty">${labels.noMatch}</div></td>`;
+          ledger.appendChild(row);
+        }
+        drawInspector();
+      }
+
+      function selectRecord(id) {
+        selectedId = id;
+        drawTimeline();
+        drawLedger();
+        document.querySelector(`tr[data-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "nearest" });
+      }
+
+      function detailSection(title, value, open = false) {
+        if (!value) return "";
+        return `<details ${open ? "open" : ""}><summary>${escapeHtml(title)}</summary><pre>${escapeHtml(value)}</pre></details>`;
+      }
+
+      function drawInspector() {
+        const inspector = document.getElementById("inspector");
+        if (!inspector) return;
+        const record = data.records.find(item => item.id === selectedId);
+        if (!record) { inspector.innerHTML = `<div class="empty">${labels.inspect}</div>`; return; }
+        const usage = record.usage ? JSON.stringify(record.usage, null, 2) : "";
+        const metadata = record.metadata && Object.keys(record.metadata).length ? JSON.stringify(record.metadata, null, 2) : "";
+        inspector.innerHTML = `<h2>#${record.index} ${escapeHtml(record.event)}</h2><div class="inspect-meta">T${record.turn}${record.step ? ` / S${record.step}` : ""} · <span class="${record.status === "error" ? "status-error" : record.status === "running" ? "status-running" : ""}">${escapeHtml(record.status)}</span></div>
+          <div class="inspect-grid">
+            <div class="inspect-item"><span>${labels.time}</span><strong>${duration(record.durationMs)}</strong></div>
+            <div class="inspect-item"><span>${labels.callId}</span><strong title="${escapeHtml(record.callId || "")}">${escapeHtml(record.callId || "—")}</strong></div>
+            <div class="inspect-item"><span>${labels.started}</span><strong>${escapeHtml(date(record.startedAt))}</strong></div>
+            <div class="inspect-item"><span>${labels.completed}</span><strong>${escapeHtml(date(record.completedAt))}</strong></div>
+          </div>
+          <div>${escapeHtml(record.summary)}</div>
+          ${record.error ? detailSection(labels.status, record.error, true) : ""}
+          ${detailSection(labels.input, record.input, true)}${detailSection(labels.output, record.output, true)}${detailSection(labels.usage, usage)}${detailSection(labels.metadata, metadata)}`;
+      }
+
+      window.addEventListener("message", event => {
+        if (event.source !== window.parent) return;
+        const message = event.data;
+        if (!message || message.jsonrpc !== "2.0") return;
+        if (message.id !== undefined && pending.has(message.id)) {
+          const handler = pending.get(message.id);
+          pending.delete(message.id);
+          if (message.error) handler.reject(message.error); else handler.resolve(message.result);
+          return;
+        }
+        if (message.method === "ui/notifications/tool-result" && message.params?.structuredContent) render(message.params.structuredContent);
+      }, { passive: true });
+
+      const initial = window.openai?.toolOutput;
+      if (initial?.session) render(initial);
+    })();
+  </script>
+</body>
+</html>

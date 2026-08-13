@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.coverage
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.venv/
+coverage.xml
+htmlcov/
+playwright-report/
+test-results/
+dist/
+*.zip
+*.tar.gz
+*.sha256
+.DS_Store

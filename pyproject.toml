@@ -1,0 +1,49 @@
+[project]
+name = "codex-trajectory"
+version = "0.1.0"
+description = "Privacy-aware trajectory viewer for local Codex task logs"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "icesixgod" }]
+dependencies = []
+
+[dependency-groups]
+dev = [
+  "mypy>=1.15,<2",
+  "playwright>=1.50,<2",
+  "pyyaml>=6,<7",
+  "pytest>=8.3,<9",
+  "pytest-cov>=6,<7",
+  "ruff>=0.11,<1",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+addopts = "--strict-config --strict-markers"
+pythonpath = ["plugins/codex-trajectory/scripts"]
+testpaths = ["plugins/codex-trajectory/tests"]
+markers = ["ui: browser acceptance tests that require a local Chromium installation"]
+
+[tool.coverage.run]
+branch = true
+source = ["codex_trajectory"]
+
+[tool.coverage.report]
+fail_under = 95
+show_missing = true
+skip_covered = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+files = ["plugins/codex-trajectory/scripts"]

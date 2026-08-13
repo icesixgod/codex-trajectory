@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/icesixgod/codex-trajectory/blob/main/schemas/trajectory-v1.schema.json",
+  "title": "Codex Trajectory v1",
+  "type": "object",
+  "required": ["schemaVersion", "detailLevel", "generatedAt", "session", "stats", "turns", "records", "warnings"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "detailLevel": {"enum": ["summary", "full"]},
+    "generatedAt": {"type": "string", "format": "date-time"},
+    "session": {
+      "type": "object",
+      "required": ["id", "title", "archived"],
+      "properties": {
+        "id": {"type": "string"},
+        "title": {"type": "string"},
+        "cwd": {"type": ["string", "null"]},
+        "model": {"type": ["string", "null"]},
+        "effort": {"type": ["string", "null"]},
+        "startedAt": {"type": ["string", "null"], "format": "date-time"},
+        "updatedAt": {"type": ["string", "null"], "format": "date-time"},
+        "archived": {"type": "boolean"},
+        "git": {"type": ["object", "null"]}
+      },
+      "additionalProperties": true
+    },
+    "stats": {"type": "object"},
+    "turns": {"type": "array", "items": {"type": "object"}},
+    "records": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["index", "id", "turn", "kind", "event", "summary", "status"],
+        "properties": {
+          "index": {"type": "integer", "minimum": 1},
+          "id": {"type": "string"},
+          "turn": {"type": "integer", "minimum": 1},
+          "step": {"type": ["integer", "null"]},
+          "kind": {"enum": ["user", "assistant", "reasoning", "tool", "subagent", "compaction"]},
+          "event": {"type": "string"},
+          "summary": {"type": "string"},
+          "startedAt": {"type": ["string", "null"]},
+          "completedAt": {"type": ["string", "null"]},
+          "durationMs": {"type": ["integer", "null"], "minimum": 0},
+          "status": {"enum": ["running", "complete", "error", "aborted"]},
+          "input": {"type": ["string", "null"]},
+          "output": {"type": ["string", "null"]},
+          "metadata": {"type": "object"}
+        },
+        "additionalProperties": true
+      }
+    },
+    "warnings": {"type": "array", "items": {"type": "object"}},
+    "recentSessions": {"type": "array", "items": {"type": "object"}}
+  },
+  "additionalProperties": false
+}
