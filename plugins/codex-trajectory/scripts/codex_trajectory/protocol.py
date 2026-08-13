@@ -68,16 +68,19 @@ def handle(method: str, params: Any) -> dict[str, Any]:
 
 def send(message: dict[str, Any]) -> None:
     """Write one newline-delimited JSON-RPC message."""
-    sys.stdout.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
-    sys.stdout.flush()
+    encoded = (json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n").encode(
+        "utf-8"
+    )
+    sys.stdout.buffer.write(encoded)
+    sys.stdout.buffer.flush()
 
 
 def main() -> None:
     """Run the stdio MCP loop."""
-    for line in sys.stdin:
+    for encoded_line in sys.stdin.buffer:
         try:
-            message = json.loads(line)
-        except json.JSONDecodeError:
+            message = json.loads(encoded_line.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
             continue
         if not isinstance(message, dict):
             continue
