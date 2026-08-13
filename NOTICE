@@ -1,10 +1,18 @@
 Codex Trajectory
 Copyright (c) 2026 icesixgod
 
-The trajectory event ledger, turn grouping, timeline, search, selection, and
-inspector concepts are adapted from DeepSeek Harness, copyright (c) 2026
-DeepSeek, licensed under the MIT License:
+Portions of the trajectory event ledger, turn grouping, timeline projection
+and interaction, search, selection, and inspector implementation are adapted
+from the following DeepSeek Harness component:
 
-https://github.com/deepseek-ai/deepseek-harness
+  @deepseek-ai/dsh-client-ui-trajectory
+  https://github.com/deepseek-ai/deepseek-harness/tree/master/packages/client/ui-trajectory
+  Copyright (c) 2026 DeepSeek
+  Licensed under the MIT License
 
-No DeepSeek Harness runtime, Cordis integration, or React source is bundled.
+The complete DeepSeek Harness MIT License is included in
+LICENSES/DeepSeek-Harness.txt.
+
+Codex Trajectory is an independent project and is not affiliated with or
+endorsed by DeepSeek. No DeepSeek Harness package, Cordis runtime, React
+runtime, TanStack Virtual package, or diff package is bundled.

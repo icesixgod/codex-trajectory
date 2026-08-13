@@ -170,10 +170,44 @@ def validate_schema() -> None:
     )
 
 
+def validate_attribution() -> None:
+    """Validate third-party license texts and attribution statements."""
+    dsh_license = (ROOT / "LICENSES" / "DeepSeek-Harness.txt").read_text(encoding="utf-8")
+    require(dsh_license.startswith("MIT License\n"), "DeepSeek Harness MIT title is missing")
+    require(
+        "Copyright (c) 2026 DeepSeek" in dsh_license,
+        "DeepSeek Harness copyright notice is missing",
+    )
+    require(
+        "The above copyright notice and this permission notice shall be included" in dsh_license,
+        "DeepSeek Harness MIT permission notice is incomplete",
+    )
+    notice = (ROOT / "NOTICE").read_text(encoding="utf-8")
+    normalized_notice = " ".join(notice.split())
+    require(
+        "@deepseek-ai/dsh-client-ui-trajectory" in notice,
+        "NOTICE must identify the adapted DeepSeek Harness component",
+    )
+    require(
+        "LICENSES/DeepSeek-Harness.txt" in notice,
+        "NOTICE must link the complete DeepSeek Harness license",
+    )
+    require(
+        "not affiliated with or endorsed by DeepSeek" in normalized_notice,
+        "NOTICE must disclaim DeepSeek affiliation and endorsement",
+    )
+    code_of_conduct = (ROOT / "CODE_OF_CONDUCT.md").read_text(encoding="utf-8")
+    require(
+        "https://creativecommons.org/licenses/by/4.0/" in code_of_conduct,
+        "Contributor Covenant CC BY 4.0 attribution is missing",
+    )
+
+
 def validate_repository_contents() -> None:
     """Reject private residue and require the public release documents."""
     required = [
         "LICENSE",
+        "LICENSES/DeepSeek-Harness.txt",
         "NOTICE",
         "PRIVACY.md",
         "SECURITY.md",
@@ -201,6 +235,7 @@ def main() -> None:
     validate_skill()
     validate_mcp()
     validate_schema()
+    validate_attribution()
     validate_repository_contents()
     print(f"Codex Trajectory {version} release metadata is valid.")
 

@@ -10,6 +10,7 @@ from pathlib import PurePosixPath
 
 REQUIRED = {
     "LICENSE",
+    "LICENSES/DeepSeek-Harness.txt",
     "NOTICE",
     "README.md",
     "README.zh-CN.md",
