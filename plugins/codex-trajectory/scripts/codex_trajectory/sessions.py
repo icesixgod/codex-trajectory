@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -53,40 +54,38 @@ def session_files(include_archived: bool) -> list[Path]:
     return sorted(paths, key=modified, reverse=True)
 
 
-def read_jsonl(path: Path) -> tuple[list[JsonEntry], list[dict[str, Any]]]:
-    """Read valid JSON objects and report malformed complete lines."""
-    entries: list[JsonEntry] = []
-    warnings: list[dict[str, Any]] = []
+def iter_jsonl(path: Path, warnings: list[dict[str, Any]] | None = None) -> Iterator[JsonEntry]:
+    """Yield valid JSON objects while optionally collecting line diagnostics."""
+    diagnostics = warnings if warnings is not None else []
     with path.open("r", encoding="utf-8") as handle:
-        lines = handle.readlines()
-    for line_number, line in enumerate(lines, 1):
-        try:
-            value = json.loads(line)
-        except json.JSONDecodeError as error:
-            is_incomplete_tail = line_number == len(lines) and not line.endswith("\n")
-            if not is_incomplete_tail:
-                warnings.append(
+        for line_number, line in enumerate(handle, 1):
+            try:
+                value = json.loads(line)
+            except json.JSONDecodeError as error:
+                if line.endswith("\n"):
+                    diagnostics.append(
+                        {
+                            "code": "malformed_jsonl",
+                            "line": line_number,
+                            "message": (
+                                f"Skipped malformed JSONL line {line_number}: {error.msg}."
+                            ),
+                        }
+                    )
+                continue
+            if isinstance(value, dict):
+                yield line_number, value
+            else:
+                diagnostics.append(
                     {
-                        "code": "malformed_jsonl",
+                        "code": "non_object_jsonl",
                         "line": line_number,
-                        "message": f"Skipped malformed JSONL line {line_number}: {error.msg}.",
+                        "message": f"Skipped non-object JSONL line {line_number}.",
                     }
                 )
-            continue
-        if isinstance(value, dict):
-            entries.append((line_number, value))
-        else:
-            warnings.append(
-                {
-                    "code": "non_object_jsonl",
-                    "line": line_number,
-                    "message": f"Skipped non-object JSONL line {line_number}.",
-                }
-            )
-    return entries, warnings
 
 
-def iter_jsonl(path: Path) -> list[JsonEntry]:
-    """Return valid JSON objects when diagnostics are not needed."""
-    entries, _ = read_jsonl(path)
-    return entries
+def read_jsonl(path: Path) -> tuple[list[JsonEntry], list[dict[str, Any]]]:
+    """Read valid JSON objects and report malformed complete lines."""
+    warnings: list[dict[str, Any]] = []
+    return list(iter_jsonl(path, warnings)), warnings

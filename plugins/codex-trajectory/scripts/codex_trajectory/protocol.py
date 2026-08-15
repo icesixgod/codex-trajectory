@@ -15,13 +15,17 @@ from .projection import (
     ui_html,
 )
 
+SUPPORTED_PROTOCOL_VERSION = "2025-06-18"
+
 
 def handle(method: str, params: Any) -> dict[str, Any]:
     """Handle one MCP JSON-RPC request."""
     values = params if isinstance(params, dict) else {}
     if method == "initialize":
         requested = values.get("protocolVersion")
-        protocol = requested if isinstance(requested, str) else "2025-06-18"
+        protocol = (
+            requested if requested == SUPPORTED_PROTOCOL_VERSION else SUPPORTED_PROTOCOL_VERSION
+        )
         return {
             "protocolVersion": protocol,
             "capabilities": {"tools": {}, "resources": {}},

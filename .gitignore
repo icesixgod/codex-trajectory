@@ -14,3 +14,7 @@ dist/
 *.tar.gz
 *.sha256
 .DS_Store
+
+# Local Codex workspace metadata
+AGENTS.md
+.workspace-ledger/

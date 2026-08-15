@@ -4,6 +4,13 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## [Unreleased]
 
+### Fixed
+
+- Preserve MCP completion failures when projecting the corresponding tool output.
+- Stream JSONL parsing and retain only the requested record tail in memory.
+- Negotiate only the MCP protocol version implemented by the server.
+- Recover the interactive viewer after tool-level loading errors.
+
 ### Changed
 
 - Include the complete DeepSeek Harness MIT License and clarify the adapted implementation's provenance and independence.

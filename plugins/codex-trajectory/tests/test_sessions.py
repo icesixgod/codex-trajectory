@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from codex_trajectory.sessions import codex_home as resolve_codex_home
-from codex_trajectory.sessions import read_jsonl, session_files, session_roots
+from codex_trajectory.sessions import iter_jsonl, read_jsonl, session_files, session_roots
 from conftest import write_rollout
 
 
@@ -29,6 +29,15 @@ def test_non_object_jsonl_is_reported(tmp_path: Path) -> None:
     entries, warnings = read_jsonl(path)
     assert entries == [(2, {})]
     assert warnings[0]["code"] == "non_object_jsonl"
+
+
+def test_jsonl_iteration_is_streaming(tmp_path: Path) -> None:
+    path = tmp_path / "stream.jsonl"
+    path.write_text('{}\n{"value":1}\n', encoding="utf-8")
+    entries = iter_jsonl(path)
+
+    assert iter(entries) is entries
+    assert list(entries) == [(1, {}), (2, {"value": 1})]
 
 
 def test_default_home_and_missing_roots(monkeypatch, tmp_path: Path) -> None:

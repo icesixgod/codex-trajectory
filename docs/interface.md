@@ -14,6 +14,6 @@ Session identifiers must exactly match or unambiguously prefix an identifier dis
 
 `schemaVersion` is `1`. Turns use `task_started`, `task_complete`, and `turn_aborted` events where available. Because Codex rollout logs do not persist an authoritative model-step identifier, the projection begins step one with the first model response and increments the approximate step after a tool result when model output resumes.
 
-Tool duration is measured between persisted call and output timestamps unless a completion event provides a duration. Unknown event types are ignored. A malformed complete JSONL line produces a warning; an invalid final line without a newline is treated as an in-progress write and silently deferred.
+Tool duration is measured between persisted call and output timestamps unless a completion event provides a duration. Explicit completion failures, including MCP `result.Err` values, remain failures when the later tool output is projected. Unknown event types are ignored. A malformed complete JSONL line produces a warning; an invalid final line without a newline is treated as an in-progress write and silently deferred.
 
-The last `maxRecords` projected records are returned with stable original `index` values. Aggregate statistics continue to describe the complete parsed task.
+The log is parsed incrementally, and only the last `maxRecords` projected records are retained and returned with stable original `index` values. Aggregate statistics continue to describe the complete parsed task.

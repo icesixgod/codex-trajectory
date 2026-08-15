@@ -120,6 +120,12 @@ def demo_trajectories() -> dict[str, dict[str, Any]]:
             "cwd": "~/work/docs",
             "model": "gpt-5",
         },
+        {
+            "id": "session-missing",
+            "title": "Unavailable task",
+            "cwd": "~/work/missing",
+            "model": "gpt-5",
+        },
     ]
     return {
         "session-alpha": _trajectory(sessions[0], sessions, first_records, 2),
@@ -211,6 +217,11 @@ viewer.addEventListener("load", () => notify(trajectory()));
 window.addEventListener("message", event => {{
   if (event.source !== viewer.contentWindow || event.data?.method !== "tools/call") return;
   const args = event.data.params?.arguments || {{}};
+  if (args.sessionId === "session-missing") {{
+    const result = {{isError: true, content: [{{type: "text", text: "Task disappeared"}}]}};
+    viewer.contentWindow.postMessage({{jsonrpc:"2.0",id:event.data.id,result}}, "*");
+    return;
+  }}
   const result = {{structuredContent: trajectory(args.sessionId, args.detailLevel)}};
   viewer.contentWindow.postMessage({{jsonrpc:"2.0",id:event.data.id,result}}, "*");
 }});

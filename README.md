@@ -41,6 +41,8 @@ Full details are opt-in through `detailLevel: "full"` or the viewer's confirmati
 
 The output uses [`schemaVersion: 1`](schemas/trajectory-v1.schema.json). Codex logs do not expose DeepSeek Harness step boundaries directly, so a new approximate step begins when model output resumes after one or more tool results. Unknown event types are ignored; malformed complete JSONL lines are reported in `warnings`, while an unfinished tail line is tolerated during active writes. See [the interface reference](docs/interface.md).
 
+Session logs are parsed incrementally. Only the requested record tail is retained in memory, while aggregate statistics still describe the complete parsed task.
+
 ## Development
 
 ```sh
@@ -59,6 +61,6 @@ Portions of the event-ledger, timeline, selection, and inspector implementation 
 
 Codex Trajectory is an independent project and is not affiliated with or endorsed by DeepSeek. Codex uses a different persisted event vocabulary, and this repository bundles no DeepSeek Harness package, Cordis runtime, React runtime, TanStack Virtual package, or `diff` package.
 
-**友情链接**
+**Friendly Links**
 
 [Linux.do](https://linux.do/)

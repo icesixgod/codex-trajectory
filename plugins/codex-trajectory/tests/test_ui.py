@@ -86,6 +86,20 @@ def test_full_details_refresh_and_task_switch_safety(page: Page) -> None:
     assert frame.locator("tr.record").count() == 3
 
 
+def test_tool_error_is_reported_without_locking_controls(page: Page, harness_url: str) -> None:
+    page.goto(f"{harness_url}/en")
+    frame = viewer(page)
+    frame.get_by_text("Safe summary", exact=True).wait_for()
+    frame.locator("#sessionSelect").select_option("session-missing")
+
+    alert = frame.get_by_role("alert")
+    assert "Task disappeared" in alert.inner_text()
+    assert frame.get_by_role("button", name="Refresh").is_enabled()
+
+    frame.locator("#sessionSelect").select_option("session-beta")
+    frame.get_by_role("heading", name="Review the documentation").wait_for()
+
+
 def test_timeline_selection_native_wheel_zoom_and_reset(page: Page) -> None:
     frame = viewer(page)
     timeline = frame.locator("#timeline")

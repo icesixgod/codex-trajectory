@@ -371,13 +371,18 @@
         try {
           app.setAttribute("aria-busy", "true");
           const result = await callTool("get_codex_trajectory", { sessionId, maxRecords: 1000, includeArchived: true, detailLevel });
-          if (result?.structuredContent) render(result.structuredContent);
+          if (result?.isError) {
+            const message = (result.content || []).map(item => item?.text).filter(Boolean).join(" ");
+            throw new Error(message || labels.loadError);
+          }
+          if (!result?.structuredContent) throw new Error(labels.loadError);
+          render(result.structuredContent);
         } catch (error) {
-          busy = false;
-          if (refresh) refresh.disabled = false;
           const message = String(error?.message || error);
           app.insertAdjacentHTML("afterbegin", `<div class="notice error" role="alert"><strong>${labels.loadError}:</strong> ${escapeHtml(message)}</div>`);
         } finally {
+          busy = false;
+          if (refresh) refresh.disabled = false;
           app.setAttribute("aria-busy", "false");
         }
       }

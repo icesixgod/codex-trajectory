@@ -49,6 +49,8 @@ def test_tool_validation(name: str, arguments: dict[str, object], message: str) 
 def test_protocol_methods_and_resource(codex_home: Path) -> None:
     initialized = handle("initialize", {"protocolVersion": "2025-06-18"})
     assert initialized["serverInfo"]["version"] == "0.1.0"
+    negotiated = handle("initialize", {"protocolVersion": "2099-01-01"})
+    assert negotiated["protocolVersion"] == "2025-06-18"
     assert handle("ping", {}) == {}
     assert len(handle("tools/list", {})["tools"]) == 3
     assert handle("resources/list", {})["resources"][0]["uri"] == UI_URI

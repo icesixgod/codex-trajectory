@@ -102,6 +102,51 @@ def test_record_tail_preserves_original_indexes(tmp_path: Path) -> None:
     assert [record["index"] for record in result["records"]] == sorted(
         record["index"] for record in result["records"]
     )
+    assert result["stats"]["failedTools"] == 1
+
+
+@pytest.mark.parametrize(
+    "completion",
+    [
+        {"success": False},
+        {"result": {"Err": "user cancelled MCP tool call"}},
+    ],
+)
+def test_completion_failure_is_not_overwritten_by_plain_output(
+    tmp_path: Path, completion: dict[str, object]
+) -> None:
+    events: list[dict[str, object]] = [
+        {
+            "timestamp": "2026-08-14T00:00:00Z",
+            "type": "event_msg",
+            "payload": {"type": "task_started"},
+        },
+        {
+            "timestamp": "2026-08-14T00:00:01Z",
+            "type": "response_item",
+            "payload": {"type": "function_call", "call_id": "failed", "name": "demo"},
+        },
+        {
+            "timestamp": "2026-08-14T00:00:02Z",
+            "type": "event_msg",
+            "payload": {"type": "mcp_tool_call_end", "call_id": "failed", **completion},
+        },
+        {
+            "timestamp": "2026-08-14T00:00:03Z",
+            "type": "response_item",
+            "payload": {
+                "type": "function_call_output",
+                "call_id": "failed",
+                "output": '[{"type":"text","text":"user cancelled MCP tool call"}]',
+            },
+        },
+    ]
+    result = parse_session(write_rollout(tmp_path / "failure.jsonl", events))
+    tool = result["records"][0]
+
+    assert tool["status"] == "error"
+    assert tool["summary"] == "demo · error"
+    assert result["stats"]["failedTools"] == 1
 
 
 def test_jsonl_diagnostics_distinguish_bad_line_from_incomplete_tail(tmp_path: Path) -> None:

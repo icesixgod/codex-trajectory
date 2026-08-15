@@ -41,6 +41,8 @@ codex plugin add codex-trajectory@icesixgod
 
 输出遵循 [`schemaVersion: 1`](schemas/trajectory-v1.schema.json)。Codex 日志不直接记录 DeepSeek Harness 的步骤边界，因此插件在工具结果后模型再次输出时开启一个近似步骤。未知事件会被忽略；完整但损坏的 JSONL 行会进入 `warnings`，活跃写入产生的未完成尾行则被容忍。接口说明见 [docs/interface.md](docs/interface.md)。
 
+会话日志采用增量解析，内存中只保留请求的记录尾部；聚合统计仍覆盖完整的已解析任务。
+
 ## 开发
 
 ```sh
