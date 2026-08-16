@@ -3,55 +3,290 @@
   "$id": "https://github.com/icesixgod/codex-trajectory/blob/main/schemas/trajectory-v1.schema.json",
   "title": "Codex Trajectory v1",
   "type": "object",
-  "required": ["schemaVersion", "detailLevel", "generatedAt", "session", "stats", "turns", "records", "warnings"],
+  "required": [
+    "schemaVersion",
+    "detailLevel",
+    "generatedAt",
+    "session",
+    "stats",
+    "turns",
+    "records",
+    "warnings"
+  ],
   "properties": {
     "schemaVersion": {"const": 1},
     "detailLevel": {"enum": ["summary", "full"]},
-    "generatedAt": {"type": "string", "format": "date-time"},
-    "session": {
-      "type": "object",
-      "required": ["id", "title", "archived"],
-      "properties": {
-        "id": {"type": "string"},
-        "title": {"type": "string"},
-        "cwd": {"type": ["string", "null"]},
-        "model": {"type": ["string", "null"]},
-        "effort": {"type": ["string", "null"]},
-        "startedAt": {"type": ["string", "null"], "format": "date-time"},
-        "updatedAt": {"type": ["string", "null"], "format": "date-time"},
-        "archived": {"type": "boolean"},
-        "git": {"type": ["object", "null"]}
-      },
-      "additionalProperties": true
+    "generatedAt": {"type": "string", "format": "date-time", "maxLength": 40},
+    "session": {"$ref": "#/$defs/session"},
+    "stats": {"$ref": "#/$defs/stats"},
+    "turns": {
+      "type": "array",
+      "maxItems": 1000,
+      "items": {"$ref": "#/$defs/turn"}
     },
-    "stats": {"type": "object"},
-    "turns": {"type": "array", "items": {"type": "object"}},
     "records": {
       "type": "array",
-      "items": {
-        "type": "object",
-        "required": ["index", "id", "turn", "kind", "event", "summary", "status"],
-        "properties": {
-          "index": {"type": "integer", "minimum": 1},
-          "id": {"type": "string"},
-          "turn": {"type": "integer", "minimum": 1},
-          "step": {"type": ["integer", "null"]},
-          "kind": {"enum": ["user", "assistant", "reasoning", "tool", "subagent", "compaction"]},
-          "event": {"type": "string"},
-          "summary": {"type": "string"},
-          "startedAt": {"type": ["string", "null"]},
-          "completedAt": {"type": ["string", "null"]},
-          "durationMs": {"type": ["integer", "null"], "minimum": 0},
-          "status": {"enum": ["running", "complete", "error", "aborted"]},
-          "input": {"type": ["string", "null"]},
-          "output": {"type": ["string", "null"]},
-          "metadata": {"type": "object"}
-        },
-        "additionalProperties": true
-      }
+      "maxItems": 1000,
+      "items": {"$ref": "#/$defs/record"}
     },
-    "warnings": {"type": "array", "items": {"type": "object"}},
-    "recentSessions": {"type": "array", "items": {"type": "object"}}
+    "warnings": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {"$ref": "#/$defs/warning"}
+    },
+    "recentSessions": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {"$ref": "#/$defs/sessionOverview"}
+    }
+  },
+  "$defs": {
+    "nullableTimestamp": {
+      "oneOf": [
+        {"type": "string", "format": "date-time"},
+        {"type": "null"}
+      ]
+    },
+    "tokenUsage": {
+      "type": "object",
+      "properties": {
+        "input_tokens": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+        "cached_input_tokens": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+        "cache_write_input_tokens": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+        "output_tokens": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+        "reasoning_output_tokens": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+        "total_tokens": {"type": "integer", "minimum": 0, "maximum": 9007199254740991}
+      },
+      "additionalProperties": false
+    },
+    "nullableTokenUsage": {
+      "oneOf": [
+        {"$ref": "#/$defs/tokenUsage"},
+        {"type": "null"}
+      ]
+    },
+    "git": {
+      "type": "object",
+      "properties": {
+        "branch": {"type": "string", "maxLength": 200},
+        "commit_hash": {"type": "string", "pattern": "^[0-9a-fA-F]{4,64}$"}
+      },
+      "additionalProperties": false
+    },
+    "nullableGit": {
+      "oneOf": [
+        {"$ref": "#/$defs/git"},
+        {"type": "null"}
+      ]
+    },
+    "session": {
+      "type": "object",
+      "required": [
+        "id",
+        "title",
+        "cwd",
+        "model",
+        "effort",
+        "originator",
+        "sourceKind",
+        "startedAt",
+        "updatedAt",
+        "archived",
+        "parentThreadId",
+        "agentPath",
+        "git"
+      ],
+      "properties": {
+        "id": {"type": "string", "minLength": 1, "maxLength": 240},
+        "title": {"type": "string", "maxLength": 120},
+        "cwd": {"type": ["string", "null"], "maxLength": 500},
+        "model": {"type": ["string", "null"], "maxLength": 200},
+        "effort": {"type": ["string", "null"], "maxLength": 80},
+        "originator": {"type": ["string", "null"], "maxLength": 120},
+        "sourceKind": {
+          "enum": ["cli", "vscode", "exec", "mcp", "custom", "internal", "subagent", "unknown", null]
+        },
+        "startedAt": {"$ref": "#/$defs/nullableTimestamp"},
+        "updatedAt": {"$ref": "#/$defs/nullableTimestamp"},
+        "archived": {"type": "boolean"},
+        "parentThreadId": {"type": ["string", "null"], "maxLength": 100},
+        "agentPath": {"type": ["string", "null"], "maxLength": 200},
+        "git": {"$ref": "#/$defs/nullableGit"}
+      },
+      "additionalProperties": false
+    },
+    "stats": {
+      "type": "object",
+      "required": [
+        "turns",
+        "records",
+        "visibleRecords",
+        "omittedRecords",
+        "toolCalls",
+        "failedTools",
+        "compactions",
+        "tokens",
+        "contextWindow"
+      ],
+      "properties": {
+        "turns": {"type": "integer", "minimum": 0},
+        "visibleTurns": {"type": "integer", "minimum": 0, "maximum": 1000},
+        "omittedTurns": {"type": "integer", "minimum": 1},
+        "records": {"type": "integer", "minimum": 0},
+        "visibleRecords": {"type": "integer", "minimum": 0, "maximum": 1000},
+        "omittedRecords": {"type": "integer", "minimum": 0},
+        "toolCalls": {"type": "integer", "minimum": 0},
+        "failedTools": {"type": "integer", "minimum": 0},
+        "compactions": {"type": "integer", "minimum": 0},
+        "tokens": {"$ref": "#/$defs/nullableTokenUsage"},
+        "contextWindow": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      },
+      "dependentRequired": {
+        "visibleTurns": ["omittedTurns"],
+        "omittedTurns": ["visibleTurns"]
+      },
+      "additionalProperties": false
+    },
+    "turn": {
+      "type": "object",
+      "required": [
+        "index",
+        "id",
+        "startedAt",
+        "completedAt",
+        "durationMs",
+        "timeToFirstTokenMs",
+        "status",
+        "error",
+        "records",
+        "steps",
+        "modelCalls",
+        "usage",
+        "model"
+      ],
+      "properties": {
+        "index": {"type": "integer", "minimum": 1},
+        "id": {"type": ["string", "null"], "maxLength": 240},
+        "startedAt": {"$ref": "#/$defs/nullableTimestamp"},
+        "completedAt": {"$ref": "#/$defs/nullableTimestamp"},
+        "durationMs": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "timeToFirstTokenMs": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "status": {"enum": ["running", "complete", "error", "aborted"]},
+        "error": {"type": ["string", "null"], "maxLength": 1000},
+        "records": {"type": "integer", "minimum": 0},
+        "steps": {"type": "integer", "minimum": 0},
+        "modelCalls": {"type": "integer", "minimum": 0},
+        "usage": {"$ref": "#/$defs/nullableTokenUsage"},
+        "model": {"type": ["string", "null"], "maxLength": 200}
+      },
+      "additionalProperties": false
+    },
+    "record": {
+      "type": "object",
+      "required": [
+        "index",
+        "id",
+        "turn",
+        "step",
+        "kind",
+        "event",
+        "summary",
+        "startedAt",
+        "completedAt",
+        "durationMs",
+        "status",
+        "callId",
+        "input",
+        "output",
+        "error",
+        "usage",
+        "metadata"
+      ],
+      "properties": {
+        "index": {"type": "integer", "minimum": 1},
+        "id": {"type": "string", "minLength": 1, "maxLength": 240},
+        "turn": {"type": "integer", "minimum": 1},
+        "step": {"type": ["integer", "null"], "minimum": 1},
+        "kind": {"enum": ["user", "assistant", "reasoning", "tool", "subagent", "compaction"]},
+        "event": {"type": "string", "minLength": 1, "maxLength": 260},
+        "summary": {"type": "string", "maxLength": 220},
+        "startedAt": {"$ref": "#/$defs/nullableTimestamp"},
+        "completedAt": {"$ref": "#/$defs/nullableTimestamp"},
+        "durationMs": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "status": {"enum": ["running", "complete", "error", "aborted"]},
+        "callId": {"type": ["string", "null"], "maxLength": 240},
+        "input": {"type": ["string", "null"], "maxLength": 12100},
+        "output": {"type": ["string", "null"], "maxLength": 12100},
+        "error": {"type": ["string", "null"], "maxLength": 1000},
+        "usage": {"$ref": "#/$defs/nullableTokenUsage"},
+        "metadata": {"type": "object", "maxProperties": 20}
+      },
+      "additionalProperties": false
+    },
+    "warning": {
+      "type": "object",
+      "required": ["code", "line", "message"],
+      "properties": {
+        "code": {"type": "string", "minLength": 1, "maxLength": 100},
+        "line": {"type": "integer", "minimum": 1},
+        "message": {"type": "string", "minLength": 1, "maxLength": 500}
+      },
+      "additionalProperties": false
+    },
+    "sessionOverview": {
+      "type": "object",
+      "required": [
+        "id",
+        "title",
+        "cwd",
+        "model",
+        "effort",
+        "collaborationMode",
+        "startedAt",
+        "updatedAt",
+        "turns",
+        "toolCalls",
+        "tokens",
+        "archived",
+        "parentThreadId",
+        "agentPath",
+        "git"
+      ],
+      "properties": {
+        "id": {"type": "string", "minLength": 1, "maxLength": 240},
+        "title": {"type": "string", "maxLength": 100},
+        "cwd": {"type": ["string", "null"], "maxLength": 500},
+        "model": {"type": ["string", "null"], "maxLength": 200},
+        "effort": {"type": ["string", "null"], "maxLength": 80},
+        "collaborationMode": {"type": ["string", "null"], "maxLength": 80},
+        "startedAt": {"$ref": "#/$defs/nullableTimestamp"},
+        "updatedAt": {"$ref": "#/$defs/nullableTimestamp"},
+        "turns": {"type": "integer", "minimum": 0},
+        "toolCalls": {"type": "integer", "minimum": 0},
+        "tokens": {"$ref": "#/$defs/nullableTokenUsage"},
+        "archived": {"type": "boolean"},
+        "parentThreadId": {"type": ["string", "null"], "maxLength": 100},
+        "agentPath": {"type": ["string", "null"], "maxLength": 200},
+        "git": {"$ref": "#/$defs/nullableGit"}
+      },
+      "additionalProperties": false
+    }
   },
   "additionalProperties": false
 }

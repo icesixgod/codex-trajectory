@@ -13,5 +13,6 @@ Use the plugin's read-only MCP tools instead of opening raw files under the Code
 4. Use `detailLevel: full` only after the user explicitly asks to inspect full tool input or output. Treat those values as potentially sensitive and quote no more than the task requires. Never expose `session_meta.base_instructions`, encrypted reasoning, credentials, or environment variables.
 5. Explain that Codex logs do not expose DeepSeek Harness step boundaries directly. The plugin starts a new approximate step when model output resumes after one or more tool results.
 6. When diagnosing latency, compare recorded tool durations and turn timing. Do not infer provider latency from an instantaneous message row.
+7. Treat read warnings as evidence of skipped malformed records. If a paginated lineage fails validation, report that the local task history is inconsistent; do not bypass the plugin by opening inherited rollout files directly.
 
 The tools are read-only. They read local `sessions/` and, when requested, `archived_sessions/` beneath `CODEX_HOME` or `~/.codex`.

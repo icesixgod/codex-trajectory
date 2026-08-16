@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import io
 import json
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from codex_trajectory import __version__, projection, protocol
+from codex_trajectory.json_support import MAX_JSON_NESTING_DEPTH
 from codex_trajectory.projection import UI_URI, call_tool, tool_definitions
-from codex_trajectory.protocol import handle
+from codex_trajectory.protocol import JsonRpcError, handle
 
 
 def test_tool_definitions_are_read_only_and_expose_detail_level() -> None:
@@ -46,9 +50,27 @@ def test_tool_validation(name: str, arguments: dict[str, object], message: str) 
     assert message in result["content"][0]["text"]
 
 
+def test_tool_filesystem_errors_do_not_expose_local_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    secret = tmp_path / "sessions" / "secret-rollout.jsonl"
+
+    def fail_to_list(*args: object, **kwargs: object) -> list[dict[str, object]]:
+        raise OSError(13, "Permission denied", secret)
+
+    monkeypatch.setattr(projection, "list_session_overviews", fail_to_list)
+
+    result = call_tool("list_codex_sessions", {})
+    message = result["content"][0]["text"]
+
+    assert result["isError"] is True
+    assert message == "Could not read local Codex task data."
+    assert str(secret) not in message
+
+
 def test_protocol_methods_and_resource(codex_home: Path) -> None:
     initialized = handle("initialize", {"protocolVersion": "2025-06-18"})
-    assert initialized["serverInfo"]["version"] == "0.1.0"
+    assert initialized["serverInfo"]["version"] == __version__
     negotiated = handle("initialize", {"protocolVersion": "2099-01-01"})
     assert negotiated["protocolVersion"] == "2025-06-18"
     assert handle("ping", {}) == {}
@@ -81,8 +103,19 @@ def test_protocol_methods_and_resource(codex_home: Path) -> None:
     assert shown["_meta"]["ui"]["resourceUri"] == UI_URI
     with pytest.raises(ValueError, match="Unknown resource"):
         handle("resources/read", {"uri": "ui://unknown"})
-    with pytest.raises(ValueError, match="Unsupported"):
+    with pytest.raises(ValueError, match="Method not found"):
         handle("unknown/method", {})
+    with pytest.raises(JsonRpcError, match="parameters") as invalid_params:
+        handle("tools/list", [])
+    assert invalid_params.value.code == -32602
+    with pytest.raises(JsonRpcError, match="arguments") as invalid_arguments:
+        handle("tools/call", {"name": "list_codex_sessions", "arguments": []})
+    assert invalid_arguments.value.code == -32602
+    for invalid_name in ("", "x" * 257):
+        with pytest.raises(JsonRpcError, match="non-empty"):
+            handle("tools/call", {"name": invalid_name, "arguments": {}})
+    with pytest.raises(JsonRpcError, match="Unknown tool"):
+        handle("tools/call", {"name": "missing", "arguments": {}})
 
 
 def test_stdio_server_handshake_and_unicode(codex_home: Path) -> None:
@@ -112,8 +145,151 @@ def test_stdio_server_handshake_and_unicode(codex_home: Path) -> None:
         check=True,
     )
     responses = [json.loads(line) for line in process.stdout.splitlines()]
-    assert len(responses) == 3
-    assert responses[0]["result"]["serverInfo"]["name"] == "codex-trajectory"
-    assert responses[1]["id"] == "二"
-    assert responses[1]["result"]["structuredContent"]["count"] == 1
-    assert responses[2]["error"]["code"] == -32603
+    assert len(responses) == 6
+    assert responses[0]["error"]["code"] == -32700
+    assert responses[1]["error"]["code"] == -32600
+    assert responses[2]["error"]["code"] == -32600
+    assert responses[3]["result"]["serverInfo"]["name"] == "codex-trajectory"
+    assert responses[4]["id"] == "二"
+    assert responses[4]["result"]["structuredContent"]["count"] == 1
+    assert responses[5]["error"]["code"] == -32601
+
+
+def test_stdio_rejects_oversized_nonstandard_and_invalid_notification_messages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = (
+        b"x" * 140
+        + b"\n"
+        + b'{"jsonrpc":"2.0","id":1,"method":"ping","params":{"value":NaN}}\n'
+        + b'{"jsonrpc":"2.0","id":2,"id":3,"method":"ping"}\n'
+        + b'{"jsonrpc":"2.0"}\n'
+        + b'{"jsonrpc":"2.0","id":null,"method":"ping"}\n'
+        + b'{"jsonrpc":"2.0","method":"ping"}\n'
+    )
+    output = io.BytesIO()
+    monkeypatch.setattr(protocol, "MAX_RPC_LINE_BYTES", 128)
+    monkeypatch.setattr(protocol.sys, "stdin", SimpleNamespace(buffer=io.BytesIO(source)))
+    monkeypatch.setattr(protocol.sys, "stdout", SimpleNamespace(buffer=output))
+
+    protocol.main()
+
+    responses = [json.loads(line) for line in output.getvalue().splitlines()]
+    assert [response["error"]["code"] for response in responses] == [
+        -32700,
+        -32700,
+        -32700,
+        -32600,
+        -32600,
+    ]
+    assert responses[-1]["id"] is None
+
+
+def test_stdio_rejects_excessively_nested_json_without_stopping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    nested = b"[" * (MAX_JSON_NESTING_DEPTH + 1) + b"0" + b"]" * (MAX_JSON_NESTING_DEPTH + 1)
+    source = (
+        b'{"jsonrpc":"2.0","id":1,"method":"ping","params":{"value":'
+        + nested
+        + b"}}\n"
+        + b'{"jsonrpc":"2.0","id":2,"method":"ping"}\n'
+    )
+    output = io.BytesIO()
+    monkeypatch.setattr(protocol.sys, "stdin", SimpleNamespace(buffer=io.BytesIO(source)))
+    monkeypatch.setattr(protocol.sys, "stdout", SimpleNamespace(buffer=output))
+
+    protocol.main()
+
+    responses = [json.loads(line) for line in output.getvalue().splitlines()]
+    assert responses[0]["id"] is None
+    assert responses[0]["error"]["code"] == -32700
+    assert responses[1] == {"jsonrpc": "2.0", "id": 2, "result": {}}
+
+
+def test_stdio_accepts_fractional_json_rpc_ids_and_rejects_nonfinite_ids(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = (
+        b'{"jsonrpc":"2.0","id":1.5,"method":"ping"}\n'
+        b'{"jsonrpc":"2.0","id":1e400,"method":"ping"}\n'
+        + b'{"jsonrpc":"2.0","id":'
+        + b"9" * 257
+        + b',"method":"ping"}\n'
+    )
+    output = io.BytesIO()
+    monkeypatch.setattr(protocol.sys, "stdin", SimpleNamespace(buffer=io.BytesIO(source)))
+    monkeypatch.setattr(protocol.sys, "stdout", SimpleNamespace(buffer=output))
+
+    protocol.main()
+
+    responses = [json.loads(line) for line in output.getvalue().splitlines()]
+    assert responses[0] == {"jsonrpc": "2.0", "id": 1.5, "result": {}}
+    assert responses[1]["id"] is None
+    assert responses[1]["error"]["code"] == -32700
+    assert responses[2]["id"] is None
+    assert responses[2]["error"]["code"] == -32700
+
+
+def test_stdio_preserves_escaped_lone_surrogate_ids(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = b'{"jsonrpc":"2.0","id":"\\ud800","method":"ping"}\n'
+    output = io.BytesIO()
+    monkeypatch.setattr(protocol.sys, "stdin", SimpleNamespace(buffer=io.BytesIO(source)))
+    monkeypatch.setattr(protocol.sys, "stdout", SimpleNamespace(buffer=output))
+
+    protocol.main()
+
+    response = json.loads(output.getvalue())
+    assert response == {"jsonrpc": "2.0", "id": chr(0xD800), "result": {}}
+
+
+def test_stdio_sanitizes_value_and_internal_dispatch_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = (
+        b'{"jsonrpc":"2.0","id":1,"method":"value-error"}\n'
+        b'{"jsonrpc":"2.0","id":2,"method":"internal-error"}\n'
+        b'{"jsonrpc":"2.0","id":true,"method":"ping"}\n'
+        b'{"jsonrpc":"2.0","id":{},"method":"ping"}\n'
+    )
+    output = io.BytesIO()
+
+    def fail(method: str, params: object) -> dict[str, object]:
+        if method == "value-error":
+            raise ValueError("safe validation failure")
+        raise RuntimeError("private implementation detail")
+
+    monkeypatch.setattr(protocol, "handle", fail)
+    monkeypatch.setattr(protocol.sys, "stdin", SimpleNamespace(buffer=io.BytesIO(source)))
+    monkeypatch.setattr(protocol.sys, "stdout", SimpleNamespace(buffer=output))
+
+    protocol.main()
+
+    responses = [json.loads(line) for line in output.getvalue().splitlines()]
+    assert [response["error"]["code"] for response in responses] == [
+        -32602,
+        -32603,
+        -32600,
+        -32600,
+    ]
+    assert "private implementation detail" not in output.getvalue().decode()
+
+
+def test_send_treats_a_broken_stdout_pipe_as_clean_shutdown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class BrokenPipe:
+        def write(self, value: bytes) -> int:
+            raise BrokenPipeError
+
+        def flush(self) -> None:
+            raise AssertionError("flush must not run after a broken write")
+
+    monkeypatch.setattr(protocol.sys, "stdout", SimpleNamespace(buffer=BrokenPipe()))
+
+    with pytest.raises(SystemExit) as shutdown:
+        protocol.send({"jsonrpc": "2.0", "id": 1, "result": {}})
+
+    assert shutdown.value.code == 0

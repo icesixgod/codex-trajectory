@@ -5,13 +5,22 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
+import shutil
+
+# This smoke test intentionally launches the packaged MCP entry point with fixed arguments.
+import subprocess  # nosec B404
 import tempfile
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).parents[1]
 PLUGIN = ROOT / "plugins" / "codex-trajectory"
+
+
+def require(condition: bool, message: str) -> None:
+    """Fail the smoke test explicitly, including under ``python -O``."""
+    if not condition:
+        raise RuntimeError(message)
 
 
 def request(identifier: int, method: str, params: dict[str, Any] | None = None) -> str:
@@ -24,6 +33,13 @@ def request(identifier: int, method: str, params: dict[str, Any] | None = None) 
 
 def main() -> None:
     """Start the runtime and validate MCP discovery, UI, and Unicode output."""
+    manifest = json.loads((PLUGIN / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
+    expected_version = manifest.get("version")
+    if not isinstance(expected_version, str):
+        raise RuntimeError("Plugin manifest version is missing.")
+    uv = shutil.which("uv")
+    if uv is None:
+        raise RuntimeError("uv is required for the MCP smoke test.")
     with tempfile.TemporaryDirectory() as temporary:
         codex_home = Path(temporary)
         session = codex_home / "sessions" / "2026" / "rollout-smoke.jsonl"
@@ -32,7 +48,7 @@ def main() -> None:
             {
                 "timestamp": "2026-08-14T00:00:00Z",
                 "type": "session_meta",
-                "payload": {"session_id": "smoke-session", "cwd": str(codex_home / "project")},
+                "payload": {"id": "smoke-session", "cwd": str(codex_home / "project")},
             },
             {
                 "timestamp": "2026-08-14T00:00:01Z",
@@ -57,8 +73,8 @@ def main() -> None:
         ]
         environment = os.environ.copy()
         environment["CODEX_HOME"] = str(codex_home)
-        completed = subprocess.run(
-            ["uv", "run", "--script", "./scripts/codex_trajectory_mcp.py"],
+        completed = subprocess.run(  # nosec B603
+            [uv, "run", "--script", "./scripts/codex_trajectory_mcp.py"],
             cwd=PLUGIN,
             env=environment,
             input="\n".join(messages) + "\n",
@@ -72,18 +88,30 @@ def main() -> None:
         raise RuntimeError(completed.stderr or f"MCP exited with {completed.returncode}")
     responses = [json.loads(line) for line in completed.stdout.splitlines()]
     by_id = {response["id"]: response for response in responses if "id" in response}
-    assert by_id[1]["result"]["serverInfo"]["version"] == "0.1.0"
-    assert {tool["name"] for tool in by_id[2]["result"]["tools"]} == {
-        "list_codex_sessions",
-        "get_codex_trajectory",
-        "show_codex_trajectory",
-    }
-    assert by_id[3]["result"]["resources"][0]["uri"].startswith("ui://")
-    assert "Codex Trajectory" in by_id[4]["result"]["contents"][0]["text"]
+    require(
+        by_id[1]["result"]["serverInfo"]["version"] == expected_version,
+        "MCP server version does not match the manifest.",
+    )
+    require(
+        {tool["name"] for tool in by_id[2]["result"]["tools"]}
+        == {"list_codex_sessions", "get_codex_trajectory", "show_codex_trajectory"},
+        "MCP tool discovery is incomplete.",
+    )
+    require(
+        by_id[3]["result"]["resources"][0]["uri"].startswith("ui://"),
+        "MCP UI resource is missing.",
+    )
+    require(
+        "Codex Trajectory" in by_id[4]["result"]["contents"][0]["text"],
+        "MCP UI resource content is invalid.",
+    )
     structured = by_id[5]["result"]["structuredContent"]
-    assert structured["schemaVersion"] == 1
-    assert structured["detailLevel"] == "summary"
-    assert "Unicode" in json.dumps(structured, ensure_ascii=False)
+    require(structured["schemaVersion"] == 1, "Unexpected trajectory schema version.")
+    require(structured["detailLevel"] == "summary", "Smoke test did not use summary mode.")
+    require(
+        "Unicode" in json.dumps(structured, ensure_ascii=False),
+        "Unicode content did not survive the MCP round trip.",
+    )
     print("MCP stdio smoke passed.")
 
 

@@ -8,12 +8,19 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   quality:
+    name: Quality and compatibility
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@ae62891fec2bb8e7d6c99fc78c9fec3a63790f8d # v10.0.0
         with:
           version: "0.7.22"
           enable-cache: true
@@ -22,7 +29,7 @@ jobs:
       - run: uv run ruff check .
       - run: uv run mypy
       - run: uv run pytest --cov --cov-report=term-missing
-      - run: uv run python scripts/validate_release.py --version 0.1.0
+      - run: uv run python scripts/validate_release.py --version 0.2.0
       - run: uv run python scripts/smoke_mcp.py
 
   runtime:
@@ -32,10 +39,12 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        python: ["3.10", "3.12"]
+        python: ["3.10", "3.12", "3.14"]
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@ae62891fec2bb8e7d6c99fc78c9fec3a63790f8d # v10.0.0
         with:
           version: "0.7.22"
           enable-cache: true
@@ -45,10 +54,13 @@ jobs:
           UV_PYTHON: ${{ matrix.python }}
 
   ui:
+    name: Browser UI
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@ae62891fec2bb8e7d6c99fc78c9fec3a63790f8d # v10.0.0
         with:
           version: "0.7.22"
           enable-cache: true
@@ -59,16 +71,19 @@ jobs:
           RUN_UI_TESTS: "1"
 
   package:
+    name: Release archive
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@ae62891fec2bb8e7d6c99fc78c9fec3a63790f8d # v10.0.0
         with:
           version: "0.7.22"
       - name: Build and inspect release archives
         shell: bash
         run: |
           mkdir -p /tmp/codex-trajectory-dist
-          git archive --format=zip --prefix="codex-trajectory-0.1.0/" --output="/tmp/codex-trajectory-dist/codex-trajectory-v0.1.0.zip" HEAD
-          git archive --format=tar --prefix="codex-trajectory-0.1.0/" HEAD | gzip -n > "/tmp/codex-trajectory-dist/codex-trajectory-v0.1.0.tar.gz"
-          uv run --no-project python scripts/check_archives.py /tmp/codex-trajectory-dist/codex-trajectory-v0.1.0.zip /tmp/codex-trajectory-dist/codex-trajectory-v0.1.0.tar.gz
+          git archive --format=zip --prefix="codex-trajectory-0.2.0/" --output="/tmp/codex-trajectory-dist/codex-trajectory-v0.2.0.zip" HEAD
+          git archive --format=tar --prefix="codex-trajectory-0.2.0/" HEAD | gzip -n > "/tmp/codex-trajectory-dist/codex-trajectory-v0.2.0.tar.gz"
+          uv run --no-project python scripts/check_archives.py /tmp/codex-trajectory-dist/codex-trajectory-v0.2.0.zip /tmp/codex-trajectory-dist/codex-trajectory-v0.2.0.tar.gz

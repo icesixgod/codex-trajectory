@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; font-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <title>Codex Trajectory</title>
   <style>
     :root {
@@ -24,6 +25,11 @@
       --tool: #e49a37;
       --subagent: #2da6a0;
       --compaction: #7c879c;
+      --token-new: #5b6cff;
+      --token-cached: #2da6a0;
+      --token-write: #e49a37;
+      --token-visible: #7c68ee;
+      --token-reasoning: #a968cf;
       --shadow: 0 8px 28px rgba(29, 39, 68, .08);
     }
     @media (prefers-color-scheme: dark) {
@@ -91,12 +97,47 @@
       border-bottom: 1px solid var(--line);
     }
     .privacy-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 18px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--accent-soft) 55%, var(--panel)); }
-    .privacy-copy { color: var(--muted); }
+    .privacy-copy { min-width: 0; color: var(--muted); }
     .privacy-copy strong { color: var(--text); }
+    .privacy-warning { margin-top: 4px; color: var(--text); }
+    .privacy-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
     .privacy-action { white-space: nowrap; }
+    .privacy-confirm { color: #fff; border-color: var(--accent); background: var(--accent); }
+    .privacy-confirm:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 88%, #000); }
     .stat { min-width: 0; padding: 7px 9px; border-radius: 9px; background: color-mix(in srgb, var(--panel) 82%, transparent); }
     .stat-label { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
     .stat-value { margin-top: 2px; font-size: 15px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .token-panel { padding: 13px 18px 15px; border-bottom: 1px solid var(--line); }
+    .token-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+    .token-badges { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+    .token-badge { padding: 3px 7px; border-radius: 999px; color: var(--muted); background: var(--panel-2); font-size: 10px; white-space: nowrap; }
+    .token-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(108px, 1fr)); gap: 7px; }
+    .token-metric { min-width: 0; padding: 8px 9px; border: 1px solid var(--line); border-radius: 9px; }
+    .token-metric-label { color: var(--muted); font-size: 10px; }
+    .token-metric-value { margin-top: 2px; font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; }
+    .token-bars { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-top: 9px; }
+    .token-breakdown { padding: 9px; border-radius: 9px; background: var(--panel-2); }
+    .token-breakdown-head { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 6px; font-size: 11px; }
+    .token-breakdown-head strong { font-variant-numeric: tabular-nums; }
+    .token-bar { display: flex; height: 9px; overflow: hidden; border-radius: 999px; background: color-mix(in srgb, var(--line) 72%, transparent); }
+    .token-segment { min-width: 2px; height: 100%; }
+    .token-new { background: var(--token-new); }
+    .token-cached { background: var(--token-cached); }
+    .token-write { background: var(--token-write); }
+    .token-visible { background: var(--token-visible); }
+    .token-reasoning { background: var(--token-reasoning); }
+    .token-legend { display: flex; flex-wrap: wrap; gap: 5px 12px; margin-top: 6px; color: var(--muted); font-size: 10px; }
+    .token-legend-item { display: inline-flex; align-items: center; gap: 4px; }
+    .token-legend-dot { width: 7px; height: 7px; border-radius: 2px; flex: none; }
+    .token-table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 9px; scrollbar-gutter: stable; }
+    .token-row { display: grid; grid-template-columns: 74px 82px repeat(5, minmax(90px, 1fr)); min-width: 720px; border-top: 1px solid var(--line); }
+    .token-row:first-child { border-top: 0; }
+    .token-cell { min-width: 0; padding: 7px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .token-cell.numeric { text-align: right; font-variant-numeric: tabular-nums; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .token-row.header { color: var(--muted); background: var(--panel-2); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+    .token-turns { margin-top: 10px; }
+    .token-turns > summary { font-size: 11px; }
+    .token-turns .token-table-wrap { border: 0; border-top: 1px solid var(--line); border-radius: 0; }
     .overview { padding: 12px 18px 14px; border-bottom: 1px solid var(--line); }
     .section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
     .section-title { font-weight: 700; }
@@ -142,22 +183,47 @@
     #kindFilter { padding: 7px 9px; }
     .range-chip { padding: 5px 8px; color: var(--accent); background: var(--accent-soft); border-radius: 999px; white-space: nowrap; }
     .content { display: grid; grid-template-columns: minmax(0, 1fr) 340px; min-height: 360px; }
-    .ledger-wrap { min-width: 0; max-height: 560px; overflow: auto; scrollbar-gutter: stable; }
-    table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-    thead { position: sticky; top: 0; z-index: 5; background: var(--panel); box-shadow: 0 1px var(--line); }
-    th { color: var(--muted); text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: .05em; padding: 8px 7px; }
-    th:nth-child(1) { width: 54px; }
-    th:nth-child(2) { width: 66px; }
-    th:nth-child(3) { width: 150px; }
-    th:nth-child(5) { width: 86px; text-align: right; }
-    td { padding: 8px 7px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    .ledger-wrap { min-width: 0; max-height: 560px; padding-inline: 18px; overflow-x: hidden; overflow-y: auto; scrollbar-gutter: stable; }
+    table { width: 100%; min-width: 0; border-collapse: separate; border-spacing: 0; table-layout: fixed; }
+    col:nth-child(1) { width: 7%; }
+    col:nth-child(2) { width: 8%; }
+    col:nth-child(3) { width: 16%; }
+    col:nth-child(4) { width: 15%; }
+    col:nth-child(5) { width: 9%; }
+    col:nth-child(6), col:nth-child(7), col:nth-child(8) { width: 15%; }
+    th { color: var(--muted); text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: .05em; padding: 7px 8px; }
+    th:nth-child(1) { width: 7%; }
+    th:nth-child(2) { width: 8%; }
+    th:nth-child(3) { width: 16%; }
+    th:nth-child(4) { width: 15%; }
+    th:nth-child(5) { width: 9%; text-align: right; }
+    th:nth-child(6), th:nth-child(7), th:nth-child(8) { width: 15%; text-align: right; }
+    td { padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
     tr.record { cursor: pointer; }
     tr.record:hover td { background: var(--panel-2); }
     tr.record.selected td { background: var(--accent-soft); }
-    .turn-row td { padding: 9px 7px 6px; border-top: 2px solid var(--line-strong); border-bottom: 1px solid var(--line); color: var(--muted); font-size: 11px; font-weight: 700; background: color-mix(in srgb, var(--panel-2) 68%, transparent); }
-    .index, .duration, .mono { font-variant-numeric: tabular-nums; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .turn-group { position: relative; }
+    .turn-row { cursor: pointer; }
+    .turn-row td { padding: 0; border-top: 2px solid var(--line-strong); border-bottom: 1px solid var(--line); color: var(--muted); background: color-mix(in srgb, var(--panel-2) 68%, transparent); }
+    .turn-row:hover td { color: var(--text); background: var(--panel-2); }
+    .turn-toggle { display: flex; width: 100%; min-height: 44px; align-items: center; gap: 8px; padding: 6px 8px; border: 0; border-radius: 0; color: inherit; background: transparent; text-align: left; }
+    .turn-toggle:hover { color: var(--text); }
+    .turn-toggle:focus-visible { position: relative; z-index: 1; outline: 2px solid var(--accent); outline-offset: -2px; }
+    .turn-caret { width: 11px; flex: none; color: var(--accent); text-align: center; }
+    .turn-copy { min-width: 0; }
+    .turn-title { display: block; color: var(--text); font-size: 12px; font-weight: 750; }
+    .turn-meta { display: block; margin-top: 1px; overflow: hidden; color: var(--muted); font-size: 10px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+    .turn-row .turn-token { padding: 6px 8px; vertical-align: middle; text-align: right; }
+    .turn-token-label { display: block; overflow: hidden; font-size: 9px; font-weight: 700; letter-spacing: .035em; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
+    .turn-token-value { display: block; margin-top: 2px; color: var(--text); font-size: 12px; font-weight: 750; font-variant-numeric: tabular-nums; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .turn-column-row { position: sticky; top: 0; z-index: 5; }
+    .turn-column-row th { overflow: hidden; border-bottom: 1px solid var(--line); background: var(--panel); box-shadow: 0 1px var(--line); text-overflow: ellipsis; white-space: nowrap; }
+    .turn-summary-cell + .turn-token, .turn-column-row th:nth-child(6), tr.record td:nth-child(6) { border-left: 1px solid var(--line); }
+    .index, .duration, .record-token, .mono { overflow: hidden; font-variant-numeric: tabular-nums; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; text-overflow: ellipsis; white-space: nowrap; }
     .duration { text-align: right; color: var(--muted); }
-    .event { display: flex; align-items: center; gap: 7px; min-width: 0; }
+    .record-token { text-align: right; color: var(--muted); }
+    .record-token.has-usage { color: var(--text); font-weight: 650; }
+    .event { display: flex; align-items: center; gap: 8px; min-width: 0; }
     .dot { width: 7px; height: 7px; flex: none; border-radius: 50%; background: var(--compaction); }
     .dot.user { background: var(--user); }
     .dot.assistant { background: var(--assistant); }
@@ -165,6 +231,10 @@
     .dot.tool { background: var(--tool); }
     .dot.subagent { background: var(--subagent); }
     .event-name, .summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .event-name { min-width: 0; }
+    .event-cell[data-ledger-tooltip], .summary[data-ledger-tooltip] { cursor: help; }
+    .ledger-tooltip { position: fixed; z-index: 30; max-width: min(460px, calc(100vw - 24px)); padding: 9px 11px; border: 1px solid var(--line-strong); border-radius: 9px; color: var(--text); background: var(--panel); box-shadow: var(--shadow); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; pointer-events: none; white-space: pre-wrap; }
+    .ledger-tooltip[hidden] { display: none; }
     .status-error { color: var(--danger); }
     .status-running { color: var(--accent); }
     .inspector { border-left: 1px solid var(--line); max-height: 560px; overflow: auto; padding: 14px; scrollbar-gutter: stable; }
@@ -190,11 +260,12 @@
       .top-actions, #sessionSelect { width: 100%; }
       #sessionSelect { flex: 1; }
       .stats { grid-template-columns: repeat(3, 1fr); }
+      .token-head { flex-direction: column; }
+      .token-badges { justify-content: flex-start; }
+      .token-bars { grid-template-columns: 1fr; }
       .content { grid-template-columns: 1fr; }
       .inspector { border-left: 0; border-top: 1px solid var(--line); max-height: 420px; }
       .ledger-wrap { max-height: 470px; }
-      th:nth-child(2), td:nth-child(2) { display: none; }
-      th:nth-child(3) { width: 115px; }
       .toolbar { flex-wrap: wrap; }
       .privacy-bar { align-items: flex-start; flex-direction: column; }
     }
@@ -216,6 +287,12 @@
       let viewport = null;
       let drag = null;
       let busy = false;
+      let fullConfirmationOpen = false;
+      let expandedTurns = new Set();
+      let ledgerTooltipTarget = null;
+
+      const REFRESH_MAX_RECORDS = 500;
+      const REQUEST_TIMEOUT_MS = 60_000;
 
       const requestedLanguage = new URLSearchParams(window.location.search).get("lang");
       const language = requestedLanguage || navigator.language || document.documentElement.lang || "en";
@@ -225,34 +302,51 @@
         eyebrow: "本地任务轨迹", overview: "时间概览", hint: "拖选区间 · 滚轮缩放 · 右键清除",
         turns: "轮次", records: "记录", tools: "工具", failures: "失败", tokens: "Token", duration: "总时长",
         search: "搜索事件、摘要、输入或输出…", all: "全部类型", refresh: "刷新", reset: "重置视图",
-        index: "索引", turnStep: "轮次/步骤", event: "事件", summary: "内容", time: "耗时",
+        index: "索引", step: "步骤", event: "事件", summary: "内容", time: "耗时",
         inspect: "选择一条记录查看详情", input: "输入", output: "输出", metadata: "元数据", usage: "Token 用量",
         status: "状态", started: "开始", completed: "完成", callId: "调用 ID", noMatch: "当前筛选条件没有匹配记录。",
         omitted: "当前显示尾部记录；有更早记录未载入。", range: "时间区间", clear: "清除区间", current: "当前/最近任务", turn: "轮次",
         safeMode: "安全摘要", safeDescription: "工具输入、输出和原始元数据已隐藏。", fullMode: "完整详情", fullDescription: "完整详情已加载，仅应在你信任当前任务内容时使用。",
-        loadFull: "加载完整详情", confirmFull: "完整详情可能包含源代码、命令输出和敏感信息。确定加载吗？", loading: "正在加载轨迹…", loadError: "无法加载轨迹", warnings: "读取警告",
+        loadFull: "加载完整详情", confirmFull: "完整详情可能包含源代码、命令输出和敏感信息。仅在你信任当前任务内容时继续。", confirmLoadFull: "继续加载", cancel: "取消", loading: "正在加载轨迹…", loadError: "无法加载轨迹", requestTimeout: "请求超时。", warnings: "读取警告",
+        tokenDetails: "Token 详情", tokenDetailsNote: "累计用量；缓存属于输入，推理属于输出", totalTokens: "总 Token", inputTokens: "输入",
+        cachedInput: "缓存读取", cacheWrite: "缓存写入", uncachedInput: "非缓存输入", outputTokens: "输出", reasoningTokens: "推理输出", visibleOutput: "可见输出",
+        cacheHit: "缓存命中", modelRequests: "模型请求", contextWindow: "上下文窗口", inputBreakdown: "输入构成", outputBreakdown: "输出构成",
+        byTurn: "按轮次", calls: "请求数", noTokenData: "此任务没有记录 Token 用量。", expandTurn: "展开轮次", collapseTurn: "折叠轮次", modelLabel: "模型",
       } : {
         eyebrow: "Local task trajectory", overview: "Timing overview", hint: "Drag to select · wheel to zoom · right-click to clear",
         turns: "Turns", records: "Records", tools: "Tools", failures: "Failures", tokens: "Tokens", duration: "Duration",
         search: "Search events, summaries, input, or output…", all: "All types", refresh: "Refresh", reset: "Reset view",
-        index: "Index", turnStep: "Turn/step", event: "Event", summary: "Content", time: "Time",
+        index: "Index", step: "Step", event: "Event", summary: "Content", time: "Time",
         inspect: "Select a record to inspect its details", input: "Input", output: "Output", metadata: "Metadata", usage: "Token usage",
         status: "Status", started: "Started", completed: "Completed", callId: "Call ID", noMatch: "No records match the current filters.",
         omitted: "Showing the loaded tail; earlier records are omitted.", range: "Time range", clear: "Clear range", current: "Current/latest task", turn: "Turn",
         safeMode: "Safe summary", safeDescription: "Tool input, output, and raw metadata are hidden.", fullMode: "Full details", fullDescription: "Full details are loaded. Use them only when you trust this task's contents.",
-        loadFull: "Load full details", confirmFull: "Full details may contain source code, command output, and sensitive data. Load them?", loading: "Loading trajectory…", loadError: "Could not load trajectory", warnings: "Read warnings",
+        loadFull: "Load full details", confirmFull: "Full details may contain source code, command output, and sensitive data. Continue only if you trust this task's contents.", confirmLoadFull: "Continue loading", cancel: "Cancel", loading: "Loading trajectory…", loadError: "Could not load trajectory", requestTimeout: "Request timed out.", warnings: "Read warnings",
+        tokenDetails: "Token details", tokenDetailsNote: "Cumulative usage; cache is part of input and reasoning is part of output", totalTokens: "Total tokens", inputTokens: "Input",
+        cachedInput: "Cache reads", cacheWrite: "Cache writes", uncachedInput: "Uncached input", outputTokens: "Output", reasoningTokens: "Reasoning output", visibleOutput: "Visible output",
+        cacheHit: "Cache hit", modelRequests: "Model requests", contextWindow: "Context window", inputBreakdown: "Input breakdown", outputBreakdown: "Output breakdown",
+        byTurn: "By turn", calls: "Requests", noTokenData: "No token usage was recorded for this task.", expandTurn: "Expand turn", collapseTurn: "Collapse turn", modelLabel: "Model",
       };
 
       const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, char => ({
         "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
       })[char]);
       const number = (value) => Number.isFinite(value) ? new Intl.NumberFormat().format(value) : "—";
-      const date = (value) => value ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "medium" }).format(new Date(value)) : "—";
+      const date = (value) => {
+        if (!value) return "—";
+        const parsed = new Date(value);
+        if (!Number.isFinite(parsed.getTime())) return "—";
+        return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "medium" }).format(parsed);
+      };
       const duration = (ms) => {
         if (!Number.isFinite(ms)) return "—";
         if (ms < 1000) return `${Math.round(ms)} ms`;
-        if (ms < 60000) return `${(ms / 1000).toFixed(ms < 10000 ? 2 : 1)} s`;
-        return `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s`;
+        if (ms < 59500) return `${(ms / 1000).toFixed(ms < 10000 ? 2 : 1)} s`;
+        const totalSeconds = Math.round(ms / 1000);
+        const seconds = totalSeconds % 60;
+        const totalMinutes = Math.floor(totalSeconds / 60);
+        if (totalMinutes < 60) return `${totalMinutes}m ${seconds}s`;
+        return `${Math.floor(totalMinutes / 60)}h ${totalMinutes % 60}m ${seconds}s`;
       };
       const recordRange = (record) => {
         const start = Date.parse(record.startedAt || "");
@@ -265,11 +359,25 @@
       function request(method, params) {
         const id = nextRequestId++;
         window.parent.postMessage({ jsonrpc: "2.0", id, method, params }, "*");
-        return new Promise((resolve, reject) => pending.set(id, { resolve, reject }));
+        return new Promise((resolve, reject) => {
+          const timeout = window.setTimeout(() => {
+            pending.delete(id);
+            reject(new Error(labels.requestTimeout));
+          }, REQUEST_TIMEOUT_MS);
+          pending.set(id, { resolve, reject, timeout });
+        });
+      }
+
+      function withTimeout(promise) {
+        let timeout;
+        const expired = new Promise((_, reject) => {
+          timeout = window.setTimeout(() => reject(new Error(labels.requestTimeout)), REQUEST_TIMEOUT_MS);
+        });
+        return Promise.race([Promise.resolve(promise), expired]).finally(() => window.clearTimeout(timeout));
       }
 
       async function callTool(name, args) {
-        if (window.openai?.callTool) return window.openai.callTool(name, args);
+        if (window.openai?.callTool) return withTimeout(window.openai.callTool(name, args));
         return request("tools/call", { name, arguments: args });
       }
 
@@ -284,24 +392,186 @@
 
       function render(next) {
         if (!next?.session || !Array.isArray(next.records)) return;
+        const previousSessionId = data?.session?.id;
+        const previousLastTurn = data?.records?.at(-1)?.turn;
+        const nextLastTurn = next.records.at(-1)?.turn;
+        const resetToLatest = previousSessionId !== next.session.id || previousLastTurn !== nextLastTurn || expandedTurns.size === 0;
+        const previousSelectedId = selectedId;
+        const previousScrollTop = document.querySelector(".ledger-wrap")?.scrollTop;
+        if (resetToLatest) expandedTurns = new Set(Number.isFinite(nextLastTurn) ? [nextLastTurn] : []);
         data = next;
         busy = false;
+        fullConfirmationOpen = false;
         fullDomain = computeDomain();
         viewport = { ...fullDomain };
         selectedRange = null;
-        selectedId = next.records.at(-1)?.id || null;
+        selectedId = !resetToLatest && next.records.some(record => record.id === previousSelectedId) ? previousSelectedId : next.records.at(-1)?.id || null;
         drawShell();
+        const ledgerWrap = document.querySelector(".ledger-wrap");
+        if (ledgerWrap) ledgerWrap.scrollTop = resetToLatest ? ledgerWrap.scrollHeight : previousScrollTop || 0;
       }
 
       function stat(label, value) {
         return `<div class="stat"><div class="stat-label">${escapeHtml(label)}</div><div class="stat-value">${escapeHtml(value)}</div></div>`;
       }
 
+      const firstNumber = (...values) => values.find(value => Number.isFinite(value)) ?? 0;
+
+      function usageView(raw = {}) {
+        const input = firstNumber(raw.input_tokens, raw.prompt_tokens);
+        const cached = firstNumber(raw.cached_input_tokens, raw.input_tokens_details?.cached_tokens, raw.prompt_tokens_details?.cached_tokens);
+        const cacheWrite = firstNumber(raw.cache_write_input_tokens, raw.input_tokens_details?.cache_write_tokens, raw.prompt_tokens_details?.cache_write_tokens);
+        const output = firstNumber(raw.output_tokens, raw.completion_tokens);
+        const reasoning = firstNumber(raw.reasoning_output_tokens, raw.output_tokens_details?.reasoning_tokens, raw.completion_tokens_details?.reasoning_tokens);
+        return {
+          total: firstNumber(raw.total_tokens, input + output),
+          input,
+          cached,
+          cacheWrite,
+          uncached: Math.max(0, input - cached - cacheWrite),
+          output,
+          reasoning,
+          visible: Math.max(0, output - reasoning),
+        };
+      }
+
+      function hasTokenUsage(raw) {
+        return raw && typeof raw === "object" && Object.values(raw).some(value => Number.isFinite(value));
+      }
+
+      function aggregateUsage(items) {
+        const result = {};
+        for (const raw of items) {
+          if (!raw || typeof raw !== "object") continue;
+          for (const [key, value] of Object.entries(raw)) {
+            if (Number.isFinite(value)) result[key] = (result[key] || 0) + value;
+          }
+        }
+        return result;
+      }
+
+      function percentage(value, total) {
+        if (!Number.isFinite(value) || !Number.isFinite(total) || total <= 0) return "—";
+        return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(value / total * 100)}%`;
+      }
+
+      function tokenMetric(key, label, value) {
+        return `<div class="token-metric" data-token-metric="${escapeHtml(key)}"><div class="token-metric-label">${escapeHtml(label)}</div><div class="token-metric-value">${escapeHtml(number(value))}</div></div>`;
+      }
+
+      function tokenSegment(className, label, value, total) {
+        if (!Number.isFinite(value) || value <= 0 || !Number.isFinite(total) || total <= 0) return "";
+        const width = Math.max(0, Math.min(100, value / total * 100));
+        return `<span class="token-segment ${className}" style="width:${width}%" title="${escapeHtml(label)} · ${escapeHtml(number(value))}"></span>`;
+      }
+
+      function tokenLegendItem(className, label, value) {
+        return `<span class="token-legend-item"><span class="token-legend-dot ${className}"></span>${escapeHtml(label)} ${escapeHtml(number(value))}</span>`;
+      }
+
+      function tokenBreakdown(title, total, segments) {
+        return `<div class="token-breakdown"><div class="token-breakdown-head"><span>${escapeHtml(title)}</span><strong>${escapeHtml(number(total))}</strong></div>
+          <div class="token-bar">${segments.map(segment => tokenSegment(segment.className, segment.label, segment.value, total)).join("")}</div>
+          <div class="token-legend">${segments.map(segment => tokenLegendItem(segment.className, segment.label, segment.value)).join("")}</div></div>`;
+      }
+
+      function tokenDetailsPanel(stats, turns, records) {
+        const usageRecords = records.filter(record => hasTokenUsage(record.usage));
+        const rawTotal = hasTokenUsage(stats.tokens) ? stats.tokens : aggregateUsage(usageRecords.map(record => record.usage));
+        if (!hasTokenUsage(rawTotal)) {
+          return `<section class="token-panel" id="tokenDetails"><div class="section-title">${labels.tokenDetails}</div><div class="section-note">${labels.noTokenData}</div></section>`;
+        }
+        const total = usageView(rawTotal);
+        const modelRequests = turns.reduce((sum, turn) => sum + (Number.isFinite(turn.modelCalls) ? turn.modelCalls : usageRecords.filter(record => record.turn === turn.index).length), 0);
+        const contextBadge = Number.isFinite(stats.contextWindow) ? `<span class="token-badge">${labels.contextWindow} ${number(stats.contextWindow)}</span>` : "";
+        return `<section class="token-panel" id="tokenDetails" aria-labelledby="tokenDetailsTitle">
+          <div class="token-head"><div><div class="section-title" id="tokenDetailsTitle">${labels.tokenDetails}</div><div class="section-note">${labels.tokenDetailsNote}</div></div><div class="token-badges"><span class="token-badge">${labels.cacheHit} ${percentage(total.cached, total.input)}</span><span class="token-badge">${labels.modelRequests} ${number(modelRequests)}</span>${contextBadge}</div></div>
+          <div class="token-metrics">${tokenMetric("total", labels.totalTokens, total.total)}${tokenMetric("input", labels.inputTokens, total.input)}${tokenMetric("cached", labels.cachedInput, total.cached)}${tokenMetric("cache-write", labels.cacheWrite, total.cacheWrite)}${tokenMetric("uncached", labels.uncachedInput, total.uncached)}${tokenMetric("output", labels.outputTokens, total.output)}${tokenMetric("reasoning", labels.reasoningTokens, total.reasoning)}</div>
+          <div class="token-bars">${tokenBreakdown(labels.inputBreakdown, total.input, [{ className: "token-new", label: labels.uncachedInput, value: total.uncached }, { className: "token-cached", label: labels.cachedInput, value: total.cached }, { className: "token-write", label: labels.cacheWrite, value: total.cacheWrite }])}${tokenBreakdown(labels.outputBreakdown, total.output, [{ className: "token-visible", label: labels.visibleOutput, value: total.visible }, { className: "token-reasoning", label: labels.reasoningTokens, value: total.reasoning }])}</div>
+          <details class="token-turns"><summary>${labels.byTurn}</summary><div class="token-table-wrap" role="table"><div class="token-row header" role="row"><div class="token-cell">${labels.turn}</div><div class="token-cell numeric">${labels.calls}</div><div class="token-cell numeric">${labels.totalTokens}</div><div class="token-cell numeric">${labels.inputTokens}</div><div class="token-cell numeric">${labels.cacheHit}</div><div class="token-cell numeric">${labels.outputTokens}</div><div class="token-cell numeric">${labels.reasoningTokens}</div></div><div id="tokenTurnRows"></div></div></details>
+        </section>`;
+      }
+
+      function drawTokenTurnRows() {
+        const container = document.getElementById("tokenTurnRows");
+        if (!container || container.dataset.rendered === "true") return;
+        const usageRecords = data.records.filter(record => hasTokenUsage(record.usage));
+        container.innerHTML = (data.turns || []).map(turn => {
+          const raw = hasTokenUsage(turn.usage) ? turn.usage : aggregateUsage(usageRecords.filter(record => record.turn === turn.index).map(record => record.usage));
+          if (!hasTokenUsage(raw)) return "";
+          const usage = usageView(raw);
+          const calls = Number.isFinite(turn.modelCalls) ? turn.modelCalls : usageRecords.filter(record => record.turn === turn.index).length;
+          return `<div class="token-row token-turn-row" data-turn="${turn.index}" role="row"><div class="token-cell">T${turn.index}</div><div class="token-cell numeric">${number(calls)}</div><div class="token-cell numeric">${number(usage.total)}</div><div class="token-cell numeric">${number(usage.input)}</div><div class="token-cell numeric">${percentage(usage.cached, usage.input)}</div><div class="token-cell numeric">${number(usage.output)}</div><div class="token-cell numeric">${number(usage.reasoning)}</div></div>`;
+        }).join("");
+        container.dataset.rendered = "true";
+      }
+
+      function recordTokens(record) {
+        if (!hasTokenUsage(record.usage)) return { input: "—", cached: "—", output: "—", hasUsage: false };
+        const usage = usageView(record.usage);
+        return { input: number(usage.uncached), cached: number(usage.cached), output: number(usage.output), hasUsage: true };
+      }
+
+      function ledgerTooltipAttribute(value, always = false) {
+        if (!value) return "";
+        return ` data-ledger-tooltip="${escapeHtml(value)}"${always ? ' data-tooltip-always="true"' : ""}`;
+      }
+
+      function hideLedgerTooltip() {
+        const tooltip = document.getElementById("ledgerTooltip");
+        if (ledgerTooltipTarget) ledgerTooltipTarget.removeAttribute("aria-describedby");
+        ledgerTooltipTarget = null;
+        if (tooltip) tooltip.hidden = true;
+      }
+
+      function showLedgerTooltip(target, force = false) {
+        const text = target.dataset.ledgerTooltip;
+        const tooltip = document.getElementById("ledgerTooltip");
+        if (!text || !tooltip) return;
+        const truncated = target.scrollWidth > target.clientWidth + 1 || target.scrollHeight > target.clientHeight + 1;
+        if (!force && !truncated) { hideLedgerTooltip(); return; }
+        hideLedgerTooltip();
+        tooltip.textContent = text;
+        tooltip.style.visibility = "hidden";
+        tooltip.hidden = false;
+        const targetRect = target.getBoundingClientRect();
+        const tooltipRect = tooltip.getBoundingClientRect();
+        const left = Math.max(12, Math.min(targetRect.left, window.innerWidth - tooltipRect.width - 12));
+        let top = targetRect.top - tooltipRect.height - 7;
+        if (top < 12) top = Math.min(window.innerHeight - tooltipRect.height - 12, targetRect.bottom + 7);
+        tooltip.style.left = `${left}px`;
+        tooltip.style.top = `${top}px`;
+        tooltip.style.visibility = "visible";
+        target.setAttribute("aria-describedby", "ledgerTooltip");
+        ledgerTooltipTarget = target;
+      }
+
+      function bindLedgerTooltips() {
+        const ledger = document.getElementById("ledger");
+        const wrap = ledger?.parentElement;
+        if (!ledger || !wrap) return;
+        ledger.addEventListener("pointerover", event => {
+          const target = event.target.closest(".event-cell[data-ledger-tooltip], .summary[data-ledger-tooltip]");
+          if (target && ledger.contains(target)) showLedgerTooltip(target, target.dataset.tooltipAlways === "true");
+        });
+        ledger.addEventListener("pointerout", event => {
+          if (ledgerTooltipTarget && !ledgerTooltipTarget.contains(event.relatedTarget)) hideLedgerTooltip();
+        });
+        ledger.addEventListener("focusin", event => {
+          const row = event.target.closest("tr.record[data-ledger-tooltip]");
+          if (row) showLedgerTooltip(row, true);
+        });
+        ledger.addEventListener("focusout", hideLedgerTooltip);
+        ledger.addEventListener("keydown", event => { if (event.key === "Escape") hideLedgerTooltip(); });
+        wrap.addEventListener("scroll", hideLedgerTooltip, { passive: true });
+      }
+
       function drawShell() {
         const stats = data.stats || {};
         const turns = data.turns || [];
+        const fullDetails = data.detailLevel === "full";
         const totalDuration = turns.reduce((sum, turn) => sum + (Number.isFinite(turn.durationMs) ? turn.durationMs : 0), 0);
-        const tokenTotal = stats.tokens?.total_tokens;
+        const tokenTotal = hasTokenUsage(stats.tokens) ? usageView(stats.tokens).total : undefined;
         app.innerHTML = `
           <section class="shell">
             <header class="topbar">
@@ -309,13 +579,14 @@
               <div class="top-actions"><select id="sessionSelect" aria-label="${labels.current}"></select><button id="refresh" type="button">${labels.refresh}</button></div>
             </header>
             <div class="privacy-bar" role="status">
-              <div class="privacy-copy"><strong>${data.detailLevel === "full" ? labels.fullMode : labels.safeMode}</strong> · ${data.detailLevel === "full" ? labels.fullDescription : labels.safeDescription}</div>
-              ${data.detailLevel === "full" ? "" : `<button type="button" class="privacy-action" id="loadFull">${labels.loadFull}</button>`}
+              <div class="privacy-copy"><div><strong>${fullDetails ? labels.fullMode : labels.safeMode}</strong> · ${fullDetails ? labels.fullDescription : labels.safeDescription}</div>${!fullDetails && fullConfirmationOpen ? `<div class="privacy-warning" id="fullDetailsWarning" role="alert">${labels.confirmFull}</div>` : ""}</div>
+              ${fullDetails ? "" : fullConfirmationOpen ? `<div class="privacy-actions"><button type="button" id="cancelFull">${labels.cancel}</button><button type="button" class="privacy-action privacy-confirm" id="confirmFull" aria-describedby="fullDetailsWarning">${labels.confirmLoadFull}</button></div>` : `<button type="button" class="privacy-action" id="loadFull">${labels.loadFull}</button>`}
             </div>
             <div class="stats">
               ${stat(labels.turns, number(stats.turns))}${stat(labels.records, number(stats.records))}${stat(labels.tools, number(stats.toolCalls))}
               ${stat(labels.failures, number(stats.failedTools))}${stat(labels.tokens, number(tokenTotal))}${stat(labels.duration, duration(totalDuration))}
             </div>
+            ${tokenDetailsPanel(stats, turns, data.records)}
             <section class="overview">
               <div class="section-head"><div><span class="section-title">${labels.overview}</span> <span class="section-note">${labels.hint}</span></div><button id="resetView" type="button">${labels.reset}</button></div>
               <div class="timeline-wrap"><div id="timeline" role="application" aria-label="${labels.overview}"><div id="selection"></div></div><div class="ticks"><span id="tickStart"></span><span id="tickMiddle"></span><span id="tickEnd"></span></div></div>
@@ -327,11 +598,13 @@
             </div>
             ${stats.omittedRecords ? `<div class="notice">${labels.omitted} ${number(stats.omittedRecords)}</div>` : ""}
             ${(data.warnings || []).length ? `<div class="notice" role="status"><strong>${labels.warnings}:</strong> ${escapeHtml(data.warnings.map(item => item.message).join(" "))}</div>` : ""}
-            <div class="content"><div class="ledger-wrap"><table><thead><tr><th>${labels.index}</th><th>${labels.turnStep}</th><th>${labels.event}</th><th>${labels.summary}</th><th>${labels.time}</th></tr></thead><tbody id="ledger"></tbody></table></div><aside class="inspector" id="inspector"></aside></div>
+            <div class="content"><div class="ledger-wrap"><table id="ledger"><colgroup><col><col><col><col><col><col><col><col></colgroup></table></div><aside class="inspector" id="inspector"></aside></div>
+            <div class="ledger-tooltip" id="ledgerTooltip" role="tooltip" hidden></div>
           </section>`;
         populateSessions();
         document.getElementById("kindFilter").value = kind;
         bindControls();
+        bindLedgerTooltips();
         drawTimeline();
         drawLedger();
       }
@@ -350,9 +623,20 @@
         document.getElementById("kindFilter").addEventListener("change", event => { kind = event.target.value; drawLedger(); });
         document.getElementById("refresh").addEventListener("click", () => loadSession(data.session.id, data.detailLevel));
         document.getElementById("sessionSelect").addEventListener("change", event => loadSession(event.target.value, "summary"));
-        document.getElementById("loadFull")?.addEventListener("click", () => {
-          if (window.confirm(labels.confirmFull)) loadSession(data.session.id, "full");
+        document.querySelector("details.token-turns")?.addEventListener("toggle", event => {
+          if (event.currentTarget.open) drawTokenTurnRows();
         });
+        document.getElementById("loadFull")?.addEventListener("click", () => {
+          fullConfirmationOpen = true;
+          drawShell();
+          document.getElementById("confirmFull")?.focus();
+        });
+        document.getElementById("cancelFull")?.addEventListener("click", () => {
+          fullConfirmationOpen = false;
+          drawShell();
+          document.getElementById("loadFull")?.focus();
+        });
+        document.getElementById("confirmFull")?.addEventListener("click", () => loadSession(data.session.id, "full"));
         document.getElementById("resetView").addEventListener("click", () => { viewport = { ...fullDomain }; selectedRange = null; drawTimeline(); drawLedger(); });
         const timeline = document.getElementById("timeline");
         timeline.addEventListener("pointerdown", timelinePointerDown);
@@ -370,7 +654,7 @@
         if (refresh) refresh.disabled = true;
         try {
           app.setAttribute("aria-busy", "true");
-          const result = await callTool("get_codex_trajectory", { sessionId, maxRecords: 1000, includeArchived: true, detailLevel });
+          const result = await callTool("get_codex_trajectory", { sessionId, maxRecords: REFRESH_MAX_RECORDS, includeArchived: true, detailLevel });
           if (result?.isError) {
             const message = (result.content || []).map(item => item?.text).filter(Boolean).join(" ");
             throw new Error(message || labels.loadError);
@@ -379,6 +663,7 @@
           render(result.structuredContent);
         } catch (error) {
           const message = String(error?.message || error);
+          app.querySelectorAll(":scope > .notice.error").forEach(notice => notice.remove());
           app.insertAdjacentHTML("afterbegin", `<div class="notice error" role="alert"><strong>${labels.loadError}:</strong> ${escapeHtml(message)}</div>`);
         } finally {
           busy = false;
@@ -488,7 +773,8 @@
         const anchor = xToTime(event.clientX);
         const currentWidth = viewport.end - viewport.start;
         const fullWidth = fullDomain.end - fullDomain.start;
-        const nextWidth = Math.max(10, Math.min(fullWidth, currentWidth * Math.exp(event.deltaY * .0015)));
+        const minimumWidth = Math.min(10, fullWidth);
+        const nextWidth = Math.max(minimumWidth, Math.min(fullWidth, currentWidth * Math.exp(event.deltaY * .0015)));
         const ratio = (anchor - viewport.start) / currentWidth;
         let start = anchor - nextWidth * ratio;
         start = Math.max(fullDomain.start, Math.min(fullDomain.end - nextWidth, start));
@@ -505,45 +791,89 @@
             if (!range || range.end < selectedRange.start || range.start > selectedRange.end) return false;
           }
           if (!needle) return true;
-          return [record.event, record.summary, record.input, record.output, record.callId].some(value => String(value || "").toLowerCase().includes(needle));
+          return [record.event, record.summary, record.input, record.output, record.callId, JSON.stringify(record.usage || {})].some(value => String(value || "").toLowerCase().includes(needle));
         });
       }
 
       function drawLedger() {
         const ledger = document.getElementById("ledger");
         if (!ledger) return;
+        hideLedgerTooltip();
         const records = visibleRecords();
-        ledger.innerHTML = "";
-        let previousTurn = null;
+        const filtering = Boolean(search.trim() || kind !== "all" || selectedRange);
+        const groups = [];
         for (const record of records) {
-          if (record.turn !== previousTurn) {
-            previousTurn = record.turn;
-            const turn = (data.turns || []).find(item => item.index === record.turn) || {};
-            const header = document.createElement("tr");
-            header.className = "turn-row";
-            header.innerHTML = `<td colspan="5">${labels.turn} ${record.turn} · ${escapeHtml(turn.status || "")} · ${duration(turn.durationMs)}${Number.isFinite(turn.timeToFirstTokenMs) ? ` · TTFT ${duration(turn.timeToFirstTokenMs)}` : ""}</td>`;
-            ledger.appendChild(header);
+          let group = groups.at(-1);
+          if (!group || group.turn !== record.turn) {
+            group = { turn: record.turn, records: [] };
+            groups.push(group);
           }
-          const row = document.createElement("tr");
-          row.className = `record ${record.id === selectedId ? "selected" : ""}`;
-          row.dataset.id = record.id;
-          row.tabIndex = 0;
-          row.innerHTML = `<td class="index">#${record.index}</td><td class="mono">T${record.turn}${record.step ? `/S${record.step}` : ""}</td><td><div class="event"><span class="dot ${escapeHtml(record.kind)}"></span><span class="event-name ${record.status === "error" ? "status-error" : record.status === "running" ? "status-running" : ""}">${escapeHtml(record.event)}</span></div></td><td class="summary" title="${escapeHtml(record.summary)}">${escapeHtml(record.summary)}</td><td class="duration">${duration(record.durationMs)}</td>`;
-          row.addEventListener("click", () => selectRecord(record.id));
-          row.addEventListener("keydown", event => {
-            if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectRecord(record.id); }
-          });
-          ledger.appendChild(row);
+          group.records.push(record);
+        }
+        const previousScrollTop = ledger.parentElement?.scrollTop || 0;
+        ledger.querySelectorAll("tbody").forEach(group => group.remove());
+        for (const group of groups) {
+          const turn = (data.turns || []).find(item => item.index === group.turn) || {};
+          const expanded = filtering || expandedTurns.has(group.turn);
+          const turnGroup = document.createElement("tbody");
+          turnGroup.className = "turn-group";
+          turnGroup.dataset.turn = group.turn;
+          const header = document.createElement("tr");
+          header.className = `turn-row ${expanded ? "expanded" : "collapsed"}`;
+          header.dataset.turn = group.turn;
+          const recordCount = Number.isFinite(turn.records) ? turn.records : group.records.length;
+          const toggleLabel = expanded ? labels.collapseTurn : labels.expandTurn;
+          const model = turn.model || data.session.model;
+          const modelSummary = model ? ` · <span class="turn-model">${labels.modelLabel} ${escapeHtml(model)}</span>` : "";
+          const turnUsage = hasTokenUsage(turn.usage) ? usageView(turn.usage) : null;
+          const turnToken = (kind, label, value) => {
+            return `<td class="turn-token" data-turn-token-kind="${kind}"><span class="turn-token-label">${label}</span><span class="turn-token-value">${number(value)}</span></td>`;
+          };
+          header.innerHTML = `<td class="turn-summary-cell" colspan="5"><button type="button" class="turn-toggle" data-turn="${group.turn}" aria-expanded="${expanded}" title="${escapeHtml(toggleLabel)}"><span class="turn-caret" aria-hidden="true">${expanded ? "▾" : "▸"}</span><span class="turn-copy"><span class="turn-title">${labels.turn} ${group.turn}</span><span class="turn-meta">${escapeHtml(turn.status || "")} · ${number(recordCount)} ${labels.records} · ${duration(turn.durationMs)}${Number.isFinite(turn.timeToFirstTokenMs) ? ` · TTFT ${duration(turn.timeToFirstTokenMs)}` : ""}${modelSummary}</span></span></button></td>${turnToken("uncached", labels.uncachedInput, turnUsage?.uncached)}${turnToken("cached", labels.cachedInput, turnUsage?.cached)}${turnToken("output", labels.outputTokens, turnUsage?.output)}`;
+          turnGroup.appendChild(header);
+          ledger.appendChild(turnGroup);
+          if (!expanded) continue;
+          const columnHeader = document.createElement("tr");
+          columnHeader.className = "turn-column-row";
+          const columnHeading = label => `<th scope="col" title="${escapeHtml(label)}">${escapeHtml(label)}</th>`;
+          columnHeader.innerHTML = [labels.index, labels.step, labels.event, labels.summary, labels.time, labels.uncachedInput, labels.cachedInput, labels.outputTokens].map(columnHeading).join("");
+          turnGroup.appendChild(columnHeader);
+          for (const record of group.records) {
+            const row = document.createElement("tr");
+            row.className = `record ${record.id === selectedId ? "selected" : ""}`;
+            row.dataset.id = record.id;
+            row.dataset.ledgerTooltip = `${labels.event}: ${record.event}\n${labels.summary}: ${record.summary}`;
+            row.tabIndex = 0;
+            const tokens = recordTokens(record);
+            const tokenClass = `record-token ${tokens.hasUsage ? "has-usage" : ""}`;
+            row.innerHTML = `<td class="index">#${record.index}</td><td class="mono">${record.step ? `S${record.step}` : "—"}</td><td class="event-cell"${ledgerTooltipAttribute(record.event, true)}><div class="event"><span class="dot ${escapeHtml(record.kind)}"></span><span class="event-name ${record.status === "error" ? "status-error" : record.status === "running" ? "status-running" : ""}">${escapeHtml(record.event)}</span></div></td><td class="summary"${ledgerTooltipAttribute(record.summary, true)}>${escapeHtml(record.summary)}</td><td class="duration">${duration(record.durationMs)}</td><td class="${tokenClass}" data-token-kind="uncached">${escapeHtml(tokens.input)}</td><td class="${tokenClass}" data-token-kind="cached">${escapeHtml(tokens.cached)}</td><td class="${tokenClass}" data-token-kind="output">${escapeHtml(tokens.output)}</td>`;
+            row.addEventListener("click", () => selectRecord(record.id));
+            row.addEventListener("keydown", event => {
+              if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectRecord(record.id); }
+            });
+            turnGroup.appendChild(row);
+          }
         }
         if (!records.length) {
+          const emptyGroup = document.createElement("tbody");
           const row = document.createElement("tr");
-          row.innerHTML = `<td colspan="5"><div class="empty">${labels.noMatch}</div></td>`;
-          ledger.appendChild(row);
+          row.innerHTML = `<td colspan="8"><div class="empty">${labels.noMatch}</div></td>`;
+          emptyGroup.appendChild(row);
+          ledger.appendChild(emptyGroup);
         }
+        ledger.querySelectorAll(".turn-row").forEach(row => row.addEventListener("click", () => {
+          const turn = Number(row.dataset.turn);
+          if (!Number.isFinite(turn)) return;
+          if (expandedTurns.has(turn)) expandedTurns.delete(turn); else expandedTurns.add(turn);
+          drawLedger();
+        }));
+        if (ledger.parentElement) ledger.parentElement.scrollTop = previousScrollTop;
         drawInspector();
       }
 
       function selectRecord(id) {
+        const record = data.records.find(item => item.id === id);
+        if (record) expandedTurns.add(record.turn);
         selectedId = id;
         drawTimeline();
         drawLedger();
@@ -581,6 +911,7 @@
         if (message.id !== undefined && pending.has(message.id)) {
           const handler = pending.get(message.id);
           pending.delete(message.id);
+          window.clearTimeout(handler.timeout);
           if (message.error) handler.reject(message.error); else handler.resolve(message.result);
           return;
         }

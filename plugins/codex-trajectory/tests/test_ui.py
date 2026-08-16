@@ -47,8 +47,144 @@ def test_safe_summary_search_filter_keyboard_and_detail_inspector(
     page.goto(f"{harness_url}/en")
     frame = viewer(page)
     frame.get_by_text("Safe summary", exact=True).wait_for()
-    assert frame.locator("tr.record").count() == 9
+    assert frame.locator("tr.record").count() == 5
+    turn_toggles = frame.locator(".turn-toggle")
+    assert turn_toggles.count() == 2
+    assert turn_toggles.first.get_attribute("aria-expanded") == "false"
+    assert turn_toggles.last.get_attribute("aria-expanded") == "true"
+    assert "Model gpt-5" in turn_toggles.first.inner_text()
+    turn_groups = frame.locator("tbody.turn-group")
+    assert turn_groups.count() == 2
+    assert turn_groups.first.locator(".turn-token-label").all_inner_texts() == [
+        "UNCACHED INPUT",
+        "CACHE READS",
+        "OUTPUT",
+    ]
+    assert turn_groups.first.locator(".turn-token-value").all_inner_texts() == ["64", "256", "72"]
+    assert turn_groups.last.locator(".turn-token-value").all_inner_texts() == ["64", "128", "56"]
+    assert turn_groups.locator(".turn-token").evaluate_all(
+        "cells => cells.every(cell => !cell.hasAttribute('title'))"
+    )
+    assert turn_groups.locator(".turn-token-value").evaluate_all(
+        "values => values.every(value => !value.hasAttribute('data-ledger-tooltip'))"
+    )
+    tooltip = frame.locator("#ledgerTooltip")
+    assert frame.locator("thead").count() == 0
+    assert frame.locator(".turn-column-row").count() == 1
+    assert frame.locator(".turn-column-row th").all_inner_texts()[:5] == [
+        "INDEX",
+        "STEP",
+        "EVENT",
+        "CONTENT",
+        "TIME",
+    ]
+    assert frame.locator('tr[data-id="record-2-7"] td').nth(1).inner_text() == "S2"
+    assert frame.locator(".turn-column-row th").evaluate_all(
+        "cells => cells.every(cell => getComputedStyle(cell).overflowX === 'hidden')"
+    )
+    assert (
+        frame.locator(".turn-column-row").evaluate("element => getComputedStyle(element).position")
+        == "sticky"
+    )
     assert frame.get_by_text("Tool input, output, and raw metadata are hidden.").is_visible()
+    token_panel = frame.locator("#tokenDetails")
+    assert token_panel.get_by_text("Token details", exact=True).is_visible()
+    assert (
+        token_panel.locator('[data-token-metric="total"] .token-metric-value').inner_text() == "640"
+    )
+    assert (
+        token_panel.locator('[data-token-metric="cached"] .token-metric-value').inner_text()
+        == "384"
+    )
+    assert token_panel.locator(".token-metric[title]").count() == 0
+    assert frame.locator(".stat[title]").count() == 0
+    assert "cache is part of input and reasoning is part of output" in token_panel.inner_text()
+    assert "Cache hit 75%" in token_panel.locator(".token-badges").inner_text()
+    token_turns = token_panel.locator("details.token-turns")
+    assert token_turns.evaluate("element => element.open") is False
+    assert token_panel.locator(".token-turn-row").count() == 0
+    token_turns.locator("summary").click()
+    assert token_panel.locator(".token-turn-row").count() == 2
+    assert token_panel.locator(".token-turn-row").first.is_visible()
+    assert token_panel.locator(".token-turn-row").first.locator(".token-cell").count() == 7
+    assert token_panel.locator(".token-requests").count() == 0
+    assert (
+        turn_groups.first.locator(".turn-row").evaluate(
+            "element => getComputedStyle(element).cursor"
+        )
+        == "pointer"
+    )
+    turn_groups.first.locator('[data-turn-token-kind="output"]').click()
+    assert frame.locator(".turn-toggle").first.get_attribute("aria-expanded") == "true"
+    assert frame.locator("tr.record").count() == 9
+    frame.locator("tbody.turn-group").first.locator('[data-turn-token-kind="output"]').click()
+    assert frame.locator(".turn-toggle").first.get_attribute("aria-expanded") == "false"
+    assert frame.locator("tr.record").count() == 5
+    turn_toggles.first.click()
+    assert frame.locator("tr.record").count() == 9
+    assert frame.locator(".turn-column-row").count() == 2
+    assert turn_groups.first.locator(".turn-column-row th").all_inner_texts()[-3:] == [
+        "UNCACHED INPUT",
+        "CACHE READS",
+        "OUTPUT",
+    ]
+    event_header = frame.locator(".turn-column-row th").nth(2)
+    content_header = frame.locator(".turn-column-row th").nth(3)
+    event_width = event_header.evaluate("element => element.getBoundingClientRect().width")
+    content_width = content_header.evaluate("element => element.getBoundingClientRect().width")
+    assert event_width > content_width
+    assert event_width <= 150
+    assert content_header.evaluate("element => element.getBoundingClientRect().width") <= 150
+    assert frame.locator(".ledger-wrap").evaluate(
+        "element => element.scrollWidth === element.clientWidth"
+    )
+    long_event = frame.locator('tr[data-id="record-2-7"] .event-name')
+    assert long_event.evaluate("element => element.scrollWidth > element.clientWidth")
+    long_event.hover()
+    assert tooltip.is_visible()
+    assert tooltip.inner_text() == "Subagent activity from the long-running reviewer worker"
+    long_content = frame.locator('tr[data-id="record-2-7"] .summary')
+    assert long_content.evaluate("element => element.scrollWidth > element.clientWidth")
+    long_content.hover()
+    assert tooltip.inner_text() == (
+        "Reviewer completed after checking the full implementation and focused regressions"
+    )
+    short_event = frame.locator('tr[data-id="record-2-6"] .event-name')
+    assert short_event.evaluate("element => element.scrollWidth === element.clientWidth")
+    short_event.hover()
+    assert tooltip.is_visible()
+    assert tooltip.inner_text() == "exec"
+    assert (
+        frame.locator('tr[data-id="record-2-6"] .event-cell').get_attribute("data-ledger-tooltip")
+        == "exec"
+    )
+    assert tooltip.evaluate(
+        """(tooltip, selector) => {
+          const target = document.querySelector(selector);
+          return tooltip.getBoundingClientRect().bottom <= target.getBoundingClientRect().top;
+        }""",
+        'tr[data-id="record-2-6"] .event-cell',
+    )
+    frame.locator('tr[data-id="record-2-7"]').focus()
+    assert "Event: Subagent activity from the long-running reviewer worker" in tooltip.inner_text()
+    assert "Content: Reviewer completed after checking" in tooltip.inner_text()
+    frame.locator('tr[data-id="record-2-7"]').press("Escape")
+    assert not tooltip.is_visible()
+    token_cells = frame.locator('tr[data-id="record-1-4"] .record-token')
+    assert token_cells.count() == 3
+    assert token_cells.all_inner_texts() == ["64", "256", "72"]
+    assert token_cells.evaluate_all(
+        "cells => cells.every(cell => !cell.hasAttribute('data-ledger-tooltip'))"
+    )
+    no_usage_tokens = frame.locator('tr[data-id="record-1-3"] .record-token')
+    assert no_usage_tokens.all_inner_texts() == [
+        "—",
+        "—",
+        "—",
+    ]
+    assert no_usage_tokens.evaluate_all(
+        "cells => cells.every(cell => !cell.hasAttribute('data-ledger-tooltip'))"
+    )
     detail_labels = frame.locator("details summary").all_inner_texts()
     assert "Input" not in detail_labels
     assert "Output" not in detail_labels
@@ -70,8 +206,17 @@ def test_safe_summary_search_filter_keyboard_and_detail_inspector(
 
 def test_full_details_refresh_and_task_switch_safety(page: Page) -> None:
     frame = viewer(page)
-    page.once("dialog", lambda dialog: dialog.accept())
+    assert page.locator("#viewer").get_attribute("sandbox") == "allow-scripts"
     frame.get_by_role("button", name="Load full details").click()
+    warning = frame.locator("#fullDetailsWarning")
+    assert "source code, command output, and sensitive data" in warning.inner_text()
+    assert frame.get_by_text("Safe summary", exact=True).is_visible()
+
+    frame.get_by_role("button", name="Cancel").click()
+    assert frame.get_by_role("button", name="Load full details").is_visible()
+
+    frame.get_by_role("button", name="Load full details").click()
+    frame.get_by_role("button", name="Continue loading").click()
     frame.get_by_text("Full details", exact=True).wait_for()
     frame.locator('tr[data-id="record-1-3"]').click()
     assert "uv run pytest" in frame.locator("#inspector").inner_text()
@@ -84,6 +229,8 @@ def test_full_details_refresh_and_task_switch_safety(page: Page) -> None:
     frame.get_by_text("Safe summary", exact=True).wait_for()
     assert frame.locator("#sessionSelect").input_value() == "session-beta"
     assert frame.locator("tr.record").count() == 3
+    assert frame.locator(".turn-toggle").count() == 1
+    assert frame.locator(".turn-toggle").get_attribute("aria-expanded") == "true"
 
 
 def test_tool_error_is_reported_without_locking_controls(page: Page, harness_url: str) -> None:
@@ -100,7 +247,62 @@ def test_tool_error_is_reported_without_locking_controls(page: Page, harness_url
     frame.get_by_role("heading", name="Review the documentation").wait_for()
 
 
-def test_timeline_selection_native_wheel_zoom_and_reset(page: Page) -> None:
+def test_hostile_task_content_is_rendered_only_as_text(page: Page, harness_url: str) -> None:
+    page.goto(f"{harness_url}/en")
+    frame = viewer(page)
+    frame.get_by_text("Safe summary", exact=True).wait_for()
+    frame.locator("#sessionSelect").select_option("session-xss")
+
+    hostile = '<img src=x onerror="window.__trajectoryXss=true">'
+    assert frame.locator("h1").inner_text() == hostile
+    assert frame.locator("img, svg").count() == 0
+    assert frame.locator(".event-name").inner_text() == hostile
+    assert frame.locator("body").evaluate("element => window.__trajectoryXss") is None
+
+    frame.get_by_role("button", name="Load full details").click()
+    frame.get_by_role("button", name="Continue loading").click()
+    frame.get_by_text("Full details", exact=True).wait_for()
+    frame.locator("tr.record").click()
+    assert hostile in frame.locator("#inspector").inner_text()
+    assert frame.locator("img, svg").count() == 0
+    assert frame.locator("body").evaluate("element => window.__trajectoryXss") is None
+
+
+def test_large_task_materializes_only_the_latest_turn(page: Page, harness_url: str) -> None:
+    page.goto(f"{harness_url}/en")
+    frame = viewer(page)
+    frame.get_by_text("Safe summary", exact=True).wait_for()
+    frame.locator("#sessionSelect").select_option("session-large")
+    frame.get_by_role("heading", name="Inspect a 500-record task").wait_for()
+
+    assert frame.locator(".turn-toggle").count() == 100
+    assert frame.locator("tr.record").count() == 5
+    assert frame.locator(".turn-toggle").first.get_attribute("aria-expanded") == "false"
+    assert frame.locator(".turn-toggle").last.get_attribute("aria-expanded") == "true"
+    assert "Model gpt-5" in frame.locator(".turn-toggle").last.inner_text()
+    assert frame.locator("tbody.turn-group").last.locator(
+        ".turn-token-value"
+    ).all_inner_texts() == ["64", "0", "12"]
+    assert frame.locator(".turn-column-row").count() == 1
+    assert frame.locator(".token-turn-row").count() == 0
+    ledger_bounds = frame.locator(".ledger-wrap").evaluate(
+        "element => { const bounds = element.getBoundingClientRect(); "
+        "return { left: bounds.left, right: bounds.right }; }"
+    )
+    table_bounds = frame.locator("#ledger").evaluate(
+        "element => { const bounds = element.getBoundingClientRect(); "
+        "return { left: bounds.left, right: bounds.right }; }"
+    )
+    assert table_bounds["left"] - ledger_bounds["left"] >= 18
+    assert ledger_bounds["right"] - table_bounds["right"] >= 18
+
+    frame.locator(".turn-toggle").first.click()
+    assert frame.locator("tr.record").count() == 10
+    assert frame.locator(".turn-column-row").count() == 2
+
+
+def test_timeline_selection_native_wheel_zoom_and_reset(page: Page, harness_url: str) -> None:
+    page.goto(f"{harness_url}/en")
     frame = viewer(page)
     timeline = frame.locator("#timeline")
     bounds = timeline.bounding_box()
@@ -137,11 +339,45 @@ def test_english_desktop_and_chinese_mobile_layout(page: Page, harness_url: str)
     page.goto(f"{harness_url}/zh")
     frame = viewer(page)
     frame.get_by_text("安全摘要", exact=True).wait_for()
-    assert frame.get_by_role("button", name="加载完整详情").is_visible()
+    frame.get_by_role("button", name="加载完整详情").click()
+    assert frame.get_by_role("button", name="继续加载").is_visible()
+    assert frame.get_by_role("button", name="取消").is_visible()
+    assert frame.get_by_text("Token 详情", exact=True).is_visible()
+    assert frame.locator(".token-metric[title]").count() == 0
+    assert frame.locator("tr.record").count() == 5
+    assert frame.locator(".turn-toggle").first.get_attribute("aria-expanded") == "false"
+    assert frame.locator(".turn-toggle").last.get_attribute("aria-expanded") == "true"
+    assert "模型 gpt-5" in frame.locator(".turn-toggle").last.inner_text()
+    assert frame.locator("tbody.turn-group").last.locator(
+        ".turn-token-label"
+    ).all_inner_texts() == ["非缓存输入", "缓存读取", "输出"]
+    assert frame.locator("tbody.turn-group").last.locator(
+        ".turn-token-value"
+    ).all_inner_texts() == ["64", "128", "56"]
+    frame.locator("tbody.turn-group").first.locator('[data-turn-token-kind="output"]').click()
+    assert frame.locator(".turn-toggle").first.get_attribute("aria-expanded") == "true"
+    assert frame.locator("tr.record").count() == 9
+    frame.locator("tbody.turn-group").first.locator('[data-turn-token-kind="output"]').click()
+    assert frame.locator(".turn-toggle").first.get_attribute("aria-expanded") == "false"
+    assert frame.locator("tr.record").count() == 5
+    turn_columns = frame.locator(".turn-column-row th")
+    assert turn_columns.all_inner_texts()[:5] == ["索引", "步骤", "事件", "内容", "耗时"]
+    assert frame.locator('tr[data-id="record-2-7"] td').nth(1).inner_text() == "S2"
+    assert turn_columns.all_inner_texts()[-3:] == ["非缓存输入", "缓存读取", "输出"]
+    assert turn_columns.last.is_visible()
     assert (
-        frame.locator("thead th").nth(1).evaluate("element => getComputedStyle(element).display")
-        == "none"
+        turn_columns.nth(1).evaluate("element => getComputedStyle(element).display") == "table-cell"
     )
+    assert turn_columns.nth(2).evaluate(
+        "element => element.getBoundingClientRect().width"
+    ) > turn_columns.nth(3).evaluate("element => element.getBoundingClientRect().width")
+    ledger_wrap = frame.locator(".ledger-wrap")
+    assert ledger_wrap.evaluate("element => element.scrollWidth === element.clientWidth")
+    assert ledger_wrap.evaluate("element => getComputedStyle(element).overflowX") == "hidden"
+    assert turn_columns.nth(2).evaluate("element => element.getBoundingClientRect().width") <= 100
+    assert turn_columns.last.evaluate(
+        "element => element.getBoundingClientRect().right"
+    ) <= ledger_wrap.evaluate("element => element.getBoundingClientRect().right")
     assert (
         frame.locator(".content").evaluate(
             "element => getComputedStyle(element).gridTemplateColumns"
