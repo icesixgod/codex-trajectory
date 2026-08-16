@@ -104,6 +104,7 @@ def test_safe_summary_search_filter_keyboard_and_detail_inspector(
     assert token_turns.evaluate("element => element.open") is False
     assert token_panel.locator(".token-turn-row").count() == 0
     token_turns.locator("summary").click()
+    token_panel.locator(".token-turn-row").first.wait_for()
     assert token_panel.locator(".token-turn-row").count() == 2
     assert token_panel.locator(".token-turn-row").first.is_visible()
     assert token_panel.locator(".token-turn-row").first.locator(".token-cell").count() == 7
@@ -204,8 +205,10 @@ def test_safe_summary_search_filter_keyboard_and_detail_inspector(
     assert frame.locator("#inspector h2").inner_text().startswith("#1")
 
 
-def test_full_details_refresh_and_task_switch_safety(page: Page) -> None:
+def test_full_details_refresh_and_task_switch_safety(page: Page, harness_url: str) -> None:
+    page.goto(f"{harness_url}/en")
     frame = viewer(page)
+    frame.get_by_text("Safe summary", exact=True).wait_for()
     assert page.locator("#viewer").get_attribute("sandbox") == "allow-scripts"
     frame.get_by_role("button", name="Load full details").click()
     warning = frame.locator("#fullDetailsWarning")
@@ -218,6 +221,7 @@ def test_full_details_refresh_and_task_switch_safety(page: Page) -> None:
     frame.get_by_role("button", name="Load full details").click()
     frame.get_by_role("button", name="Continue loading").click()
     frame.get_by_text("Full details", exact=True).wait_for()
+    frame.locator(".turn-toggle").first.click()
     frame.locator('tr[data-id="record-1-3"]').click()
     assert "uv run pytest" in frame.locator("#inspector").inner_text()
 
