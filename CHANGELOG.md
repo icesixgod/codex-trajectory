@@ -9,6 +9,7 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 ### Added
 
 - Add a Token details panel with usage breakdowns, cache-hit rate, collapsed per-turn totals, and indexed ledger-row uncached-input, cached-input, and output usage.
+- Add an exclusive `beforeRecord` cursor, pagination metadata, and a bilingual “Load earlier records” viewer button that prepends bounded pages without moving the ledger viewport.
 - Show each turn's active model plus separate uncached-input, cache-read, and output totals.
 - Validate that the plugin manifest, project metadata, runtime package, changelog, and release notes all agree on the tagged version.
 - Support Codex paginated `history_base` lineages and canonical persisted turn items in addition to legacy rollouts.
@@ -17,6 +18,9 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 - Preserve MCP completion failures when projecting the corresponding tool output.
 - Stream JSONL parsing and retain only the requested record tail in memory.
+- Show large Token totals in full with responsive numeric sizing instead of truncating values with an ellipsis.
+- Remove the unsupported Cache writes metric and derive uncached input solely from input minus cache reads.
+- Keep bounded tool correlation independent of the selected page so late terminal results remain visible without changing stable record indexes between requests.
 - Negotiate only the MCP protocol version implemented by the server.
 - Recover the interactive viewer after tool-level loading errors.
 - Replace the sandbox-blocked full-detail modal with an inline confirmation flow.

@@ -294,6 +294,142 @@ def test_record_tail_preserves_original_indexes(tmp_path: Path) -> None:
         record["index"] for record in result["records"]
     )
     assert result["stats"]["failedTools"] == 1
+    assert result["pagination"] == {
+        "firstRecord": result["records"][0]["index"],
+        "lastRecord": result["stats"]["records"],
+        "earlierRecords": result["records"][0]["index"] - 1,
+        "laterRecords": 0,
+        "hasEarlier": True,
+        "hasLater": False,
+        "nextBeforeRecord": result["records"][0]["index"],
+    }
+
+
+def test_record_pages_are_adjacent_stable_and_keep_aggregate_stats(tmp_path: Path) -> None:
+    events = rollout_events()
+    for index in range(140):
+        events.insert(
+            -1,
+            {
+                "timestamp": f"2026-08-14T00:02:{index % 60:02d}.000Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "id": f"page-{index}",
+                    "role": "assistant",
+                    "content": [{"text": f"page record {index}"}],
+                },
+            },
+        )
+    path = write_rollout(tmp_path / "paged.jsonl", events)
+
+    newest = parse_session(path, max_records=50)
+    middle = parse_session(
+        path,
+        max_records=50,
+        before_record=newest["pagination"]["nextBeforeRecord"],
+    )
+    oldest = parse_session(
+        path,
+        max_records=50,
+        before_record=middle["pagination"]["nextBeforeRecord"],
+    )
+
+    newest_indexes = [record["index"] for record in newest["records"]]
+    middle_indexes = [record["index"] for record in middle["records"]]
+    oldest_indexes = [record["index"] for record in oldest["records"]]
+    assert middle_indexes[-1] + 1 == newest_indexes[0]
+    assert oldest_indexes[-1] + 1 == middle_indexes[0]
+    assert len(set(newest_indexes + middle_indexes + oldest_indexes)) == len(
+        newest_indexes + middle_indexes + oldest_indexes
+    )
+    for key in (
+        "turns",
+        "records",
+        "toolCalls",
+        "failedTools",
+        "compactions",
+        "tokens",
+        "contextWindow",
+    ):
+        assert newest["stats"][key] == middle["stats"][key] == oldest["stats"][key]
+    assert middle["pagination"]["hasEarlier"] is True
+    assert middle["pagination"]["hasLater"] is True
+    assert middle["pagination"]["laterRecords"] == len(newest_indexes)
+    assert all(
+        any(turn["index"] == record["turn"] for turn in page["turns"])
+        for page in (newest, middle, oldest)
+        for record in page["records"]
+    )
+    TRAJECTORY_VALIDATOR.validate(newest)
+    TRAJECTORY_VALIDATOR.validate(middle)
+    TRAJECTORY_VALIDATOR.validate(oldest)
+
+
+def test_before_first_record_returns_an_empty_bounded_page(tmp_path: Path) -> None:
+    result = parse_session(write_rollout(tmp_path / "empty-page.jsonl"), before_record=1)
+
+    assert result["records"] == []
+    assert result["stats"]["visibleRecords"] == 0
+    assert result["stats"]["omittedRecords"] == result["stats"]["records"]
+    assert result["pagination"] == {
+        "firstRecord": None,
+        "lastRecord": None,
+        "earlierRecords": 0,
+        "laterRecords": result["stats"]["records"],
+        "hasEarlier": False,
+        "hasLater": True,
+        "nextBeforeRecord": None,
+    }
+    TRAJECTORY_VALIDATOR.validate(result)
+
+
+def test_tool_correlation_keeps_indexes_stable_across_page_sizes(tmp_path: Path) -> None:
+    events = rollout_events()
+    output_position = next(
+        index
+        for index, event in enumerate(events)
+        if event.get("payload", {}).get("type") == "function_call_output"
+    )
+    for index in range(60):
+        events.insert(
+            output_position + index,
+            {
+                "timestamp": f"2026-08-14T00:00:{index % 60:02d}.500Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "id": f"between-call-and-output-{index}",
+                    "role": "assistant",
+                    "content": [{"text": str(index)}],
+                },
+            },
+        )
+    path = write_rollout(tmp_path / "tool-across-page.jsonl", events)
+
+    bounded = parse_session(path, max_records=50)
+    complete = parse_session(path, max_records=200)
+    earlier = parse_session(
+        path,
+        max_records=50,
+        before_record=bounded["pagination"]["nextBeforeRecord"],
+    )
+
+    assert bounded["stats"]["records"] == complete["stats"]["records"]
+    assert bounded["stats"]["toolCalls"] == complete["stats"]["toolCalls"]
+    assert [record["index"] for record in bounded["records"]] == [
+        record["index"] for record in complete["records"][-50:]
+    ]
+    assert [record["id"] for record in bounded["records"]] == [
+        record["id"] for record in complete["records"][-50:]
+    ]
+    expected_earlier = [
+        record for record in complete["records"] if record["index"] < bounded["records"][0]["index"]
+    ][-50:]
+    assert [record["index"] for record in earlier["records"]] == [
+        record["index"] for record in expected_earlier
+    ]
+    assert earlier["stats"]["records"] == complete["stats"]["records"]
 
 
 @pytest.mark.parametrize(
@@ -468,6 +604,7 @@ def test_helper_edge_cases() -> None:
     assert numeric_token_usage({"input_tokens": 2, "flag": True, "nested": {}}) == {
         "input_tokens": 2
     }
+    assert numeric_token_usage({"cache_write_input_tokens": 7}) == {}
     assert numeric_token_usage(None) == {}
     assert numeric_token_usage({"input_tokens": 2**53}) == {}
     assert merge_token_usage({"input_tokens": 2**53 - 2}, {"input_tokens": 2}) == {

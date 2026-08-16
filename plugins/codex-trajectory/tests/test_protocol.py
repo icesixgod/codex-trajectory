@@ -25,6 +25,7 @@ def test_tool_definitions_are_read_only_and_expose_detail_level() -> None:
     ]
     assert all(tool["annotations"]["readOnlyHint"] for tool in tools)
     assert tools[1]["inputSchema"]["properties"]["detailLevel"]["default"] == "summary"
+    assert tools[1]["inputSchema"]["properties"]["beforeRecord"]["minimum"] == 1
     assert tools[2]["_meta"]["ui"]["resourceUri"] == UI_URI
 
 
@@ -38,6 +39,9 @@ def test_tool_definitions_are_read_only_and_expose_detail_level() -> None:
         ("list_codex_sessions", {"extra": 1}, "Unknown argument"),
         ("get_codex_trajectory", {"maxRecords": 49}, "between 50 and 1000"),
         ("get_codex_trajectory", {"maxRecords": True}, "integer"),
+        ("get_codex_trajectory", {"beforeRecord": True}, "integer"),
+        ("get_codex_trajectory", {"beforeRecord": 0}, "between 1 and"),
+        ("get_codex_trajectory", {"beforeRecord": 2**53}, "between 1 and"),
         ("get_codex_trajectory", {"sessionId": 4}, "string"),
         ("get_codex_trajectory", {"includeArchived": 1}, "boolean"),
         ("get_codex_trajectory", {"detailLevel": "verbose"}, "detailLevel"),
@@ -91,6 +95,17 @@ def test_protocol_methods_and_resource(codex_home: Path) -> None:
             "arguments": {"sessionId": "session-alpha", "detailLevel": "summary"},
         },
     )
+    earlier = handle(
+        "tools/call",
+        {
+            "name": "get_codex_trajectory",
+            "arguments": {
+                "sessionId": "session-alpha",
+                "maxRecords": 50,
+                "beforeRecord": 5,
+            },
+        },
+    )
     shown = handle(
         "tools/call",
         {
@@ -99,6 +114,9 @@ def test_protocol_methods_and_resource(codex_home: Path) -> None:
         },
     )
     assert trajectory["structuredContent"]["detailLevel"] == "summary"
+    assert trajectory["structuredContent"]["pagination"]["lastRecord"] == 9
+    assert [record["index"] for record in earlier["structuredContent"]["records"]] == [1, 2, 3, 4]
+    assert earlier["structuredContent"]["pagination"]["laterRecords"] == 5
     assert shown["structuredContent"]["detailLevel"] == "full"
     assert shown["_meta"]["ui"]["resourceUri"] == UI_URI
     with pytest.raises(ValueError, match="Unknown resource"):

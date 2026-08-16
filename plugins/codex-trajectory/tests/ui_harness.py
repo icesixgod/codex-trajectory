@@ -110,7 +110,6 @@ def demo_trajectories() -> dict[str, dict[str, Any]]:
             usage_detail={
                 "input_tokens": 320,
                 "cached_input_tokens": 256,
-                "cache_write_input_tokens": 0,
                 "output_tokens": 72,
                 "reasoning_output_tokens": 24,
                 "total_tokens": 392,
@@ -151,7 +150,6 @@ def demo_trajectories() -> dict[str, dict[str, Any]]:
             usage_detail={
                 "input_tokens": 192,
                 "cached_input_tokens": 128,
-                "cache_write_input_tokens": 0,
                 "output_tokens": 56,
                 "reasoning_output_tokens": 16,
                 "total_tokens": 248,
@@ -172,7 +170,6 @@ def demo_trajectories() -> dict[str, dict[str, Any]]:
             usage_detail={
                 "input_tokens": 64,
                 "cached_input_tokens": 32,
-                "cache_write_input_tokens": 0,
                 "output_tokens": 12,
                 "reasoning_output_tokens": 4,
                 "total_tokens": 76,
@@ -190,6 +187,37 @@ def demo_trajectories() -> dict[str, dict[str, Any]]:
         )
         for turn in range(1, 101)
         for offset in range(1, 6)
+    ]
+    paged_records = [
+        _record(
+            (turn - 1) * 5 + offset,
+            turn,
+            "assistant" if offset == 5 else "reasoning",
+            "Assistant message" if offset == 5 else "Reasoning summary",
+            f"Paged task turn {turn} record {offset}",
+            (turn - 1) * 5_000 + offset * 500,
+        )
+        for turn in range(1, 242)
+        for offset in range(1, 6)
+    ]
+    big_token_records = [
+        _record(1, 1, "user", "User message", "Inspect a very large token total", 0),
+        _record(
+            2,
+            1,
+            "assistant",
+            "Assistant message",
+            "Very large task complete",
+            500,
+            1_000,
+            usage_detail={
+                "input_tokens": 118_700_200_000,
+                "cached_input_tokens": 115_665_200_000,
+                "output_tokens": 534_137_188,
+                "reasoning_output_tokens": 400_000_000,
+                "total_tokens": 119_234_337_188,
+            },
+        ),
     ]
     hostile_records = [
         _record(
@@ -231,6 +259,18 @@ def demo_trajectories() -> dict[str, dict[str, Any]]:
             "model": "gpt-5",
         },
         {
+            "id": "session-paged",
+            "title": "Inspect a 1,205-record task",
+            "cwd": "~/work/paged-task",
+            "model": "gpt-5",
+        },
+        {
+            "id": "session-big-tokens",
+            "title": "Inspect a 119-billion-token task",
+            "cwd": "~/work/big-token-task",
+            "model": "gpt-5",
+        },
+        {
             "id": "session-xss",
             "title": hostile,
             "cwd": hostile,
@@ -241,7 +281,9 @@ def demo_trajectories() -> dict[str, dict[str, Any]]:
         "session-alpha": _trajectory(sessions[0], sessions, first_records, 2),
         "session-beta": _trajectory(sessions[1], sessions, second_records, 1),
         "session-large": _trajectory(sessions[3], sessions, large_records, 100),
-        "session-xss": _trajectory(sessions[4], sessions, hostile_records, 1),
+        "session-paged": _trajectory(sessions[4], sessions, paged_records, 241),
+        "session-big-tokens": _trajectory(sessions[5], sessions, big_token_records, 1),
+        "session-xss": _trajectory(sessions[6], sessions, hostile_records, 1),
     }
 
 
@@ -280,6 +322,15 @@ def _trajectory(
         "detailLevel": "full",
         "session": session,
         "recentSessions": recent_sessions,
+        "pagination": {
+            "firstRecord": records[0]["index"] if records else None,
+            "lastRecord": records[-1]["index"] if records else None,
+            "earlierRecords": 0,
+            "laterRecords": 0,
+            "hasEarlier": False,
+            "hasLater": False,
+            "nextBeforeRecord": None,
+        },
         "turns": turns,
         "records": records,
         "warnings": [],
@@ -318,10 +369,39 @@ def wrapper_html(language: str) -> str:
 <script>
 const trajectories = {payload};
 const viewer = document.getElementById("viewer");
-function trajectory(sessionId = "session-alpha", detailLevel = "summary") {{
+window.__trajectoryCalls = [];
+function trajectory(
+  sessionId = "session-alpha",
+  detailLevel = "summary",
+  maxRecords = 500,
+  beforeRecord = null
+) {{
   const source = trajectories[sessionId] || trajectories["session-alpha"];
   const copy = structuredClone(source);
   copy.detailLevel = detailLevel;
+  const limit = Number.isInteger(maxRecords) ? Math.max(50, Math.min(1000, maxRecords)) : 500;
+  const eligible = copy.records.filter(
+    record => beforeRecord === null || record.index < beforeRecord
+  );
+  copy.records = eligible.slice(-limit);
+  const visibleTurns = new Set(copy.records.map(record => record.turn));
+  copy.turns = copy.turns.filter(turn => visibleTurns.has(turn.index));
+  const firstRecord = copy.records.at(0)?.index ?? null;
+  const lastRecord = copy.records.at(-1)?.index ?? null;
+  const totalRecords = source.stats.records;
+  const earlierRecords = firstRecord === null ? 0 : Math.max(0, firstRecord - 1);
+  const laterRecords = lastRecord === null ? totalRecords : Math.max(0, totalRecords - lastRecord);
+  copy.pagination = {{
+    firstRecord,
+    lastRecord,
+    earlierRecords,
+    laterRecords,
+    hasEarlier: earlierRecords > 0,
+    hasLater: laterRecords > 0,
+    nextBeforeRecord: earlierRecords > 0 ? firstRecord : null,
+  }};
+  copy.stats.visibleRecords = copy.records.length;
+  copy.stats.omittedRecords = earlierRecords + laterRecords;
   if (detailLevel !== "full") {{
     copy.records = copy.records.map(record => (
       {{...record, input: null, output: null, metadata: {{}}}}
@@ -339,12 +419,20 @@ viewer.addEventListener("load", () => notify(trajectory()));
 window.addEventListener("message", event => {{
   if (event.source !== viewer.contentWindow || event.data?.method !== "tools/call") return;
   const args = event.data.params?.arguments || {{}};
+  window.__trajectoryCalls.push(structuredClone(args));
   if (args.sessionId === "session-missing") {{
     const result = {{isError: true, content: [{{type: "text", text: "Task disappeared"}}]}};
     viewer.contentWindow.postMessage({{jsonrpc:"2.0",id:event.data.id,result}}, "*");
     return;
   }}
-  const result = {{structuredContent: trajectory(args.sessionId, args.detailLevel)}};
+  const result = {{
+    structuredContent: trajectory(
+      args.sessionId,
+      args.detailLevel,
+      args.maxRecords,
+      args.beforeRecord ?? null
+    )
+  }};
   viewer.contentWindow.postMessage({{jsonrpc:"2.0",id:event.data.id,result}}, "*");
 }});
 </script></body></html>"""

@@ -301,6 +301,97 @@ def test_large_task_materializes_only_the_latest_turn(page: Page, harness_url: s
     assert frame.locator(".turn-column-row").count() == 2
 
 
+def test_load_earlier_records_pages_without_duplicates_or_scroll_jump(
+    page: Page, harness_url: str
+) -> None:
+    page.goto(f"{harness_url}/en")
+    frame = viewer(page)
+    frame.get_by_text("Safe summary", exact=True).wait_for()
+    frame.locator("#sessionSelect").select_option("session-paged")
+    frame.get_by_role("heading", name="Inspect a 1,205-record task").wait_for()
+
+    pagination = frame.locator(".pagination-bar")
+    assert "500 / 1,205 records loaded" in pagination.inner_text()
+    assert frame.locator("tbody.turn-group").count() == 100
+    assert frame.locator("tbody.turn-group").first.get_attribute("data-turn") == "142"
+    assert frame.locator("tbody.turn-group").last.get_attribute("data-turn") == "241"
+    assert frame.locator("tr.record").count() == 5
+    ledger = frame.locator(".ledger-wrap")
+    before_bottom = ledger.evaluate(
+        "element => element.scrollHeight - element.scrollTop - element.clientHeight"
+    )
+
+    frame.get_by_role("button", name="Load earlier records").click()
+    frame.get_by_text("1,000 / 1,205 records loaded", exact=False).wait_for()
+    after_bottom = ledger.evaluate(
+        "element => element.scrollHeight - element.scrollTop - element.clientHeight"
+    )
+    assert abs(after_bottom - before_bottom) <= 2
+    assert frame.locator("tbody.turn-group").count() == 200
+    assert frame.locator("tbody.turn-group").first.get_attribute("data-turn") == "42"
+    assert frame.locator("tbody.turn-group").last.get_attribute("data-turn") == "241"
+    assert frame.locator("tr.record").count() == 5
+
+    calls = page.evaluate("window.__trajectoryCalls")
+    assert calls[-1]["sessionId"] == "session-paged"
+    assert calls[-1]["maxRecords"] == 500
+    assert calls[-1]["beforeRecord"] == 706
+
+    frame.get_by_role("button", name="Load earlier records").click()
+    pagination.wait_for(state="detached")
+    assert frame.locator("tbody.turn-group").count() == 241
+    assert frame.locator("tbody.turn-group").first.get_attribute("data-turn") == "1"
+    assert frame.locator("tbody.turn-group").last.get_attribute("data-turn") == "241"
+    assert frame.locator("tbody.turn-group").evaluate_all(
+        "groups => new Set(groups.map(group => group.dataset.turn)).size === groups.length"
+    )
+    calls = page.evaluate("window.__trajectoryCalls")
+    assert calls[-1]["beforeRecord"] == 206
+
+
+def test_hundred_billion_token_values_are_fully_visible(page: Page, harness_url: str) -> None:
+    page.goto(f"{harness_url}/en")
+    frame = viewer(page)
+    frame.get_by_text("Safe summary", exact=True).wait_for()
+    frame.locator("#sessionSelect").select_option("session-big-tokens")
+    frame.get_by_role("heading", name="Inspect a 119-billion-token task").wait_for()
+
+    expected = {
+        "total": "119,234,337,188",
+        "input": "118,700,200,000",
+        "cached": "115,665,200,000",
+        "uncached": "3,035,000,000",
+        "output": "534,137,188",
+        "reasoning": "400,000,000",
+    }
+    for key, value in expected.items():
+        metric = frame.locator(f'[data-token-metric="{key}"] .token-metric-value')
+        assert metric.inner_text() == value
+        assert metric.evaluate("element => element.scrollWidth <= element.clientWidth + 1")
+        assert "…" not in metric.inner_text()
+    assert frame.get_by_text("Cache writes", exact=True).count() == 0
+    assert frame.locator(".token-metric").count() == 6
+    assert (
+        frame.locator('[data-token-metric="total"] .token-metric-value').evaluate(
+            "element => getComputedStyle(element).textOverflow"
+        )
+        == "clip"
+    )
+    frame.locator("details.token-turns summary").click()
+    numeric_cells = frame.locator(".token-turn-row .token-cell.numeric")
+    assert numeric_cells.all_inner_texts() == [
+        "1",
+        "119,234,337,188",
+        "118,700,200,000",
+        "97.4%",
+        "534,137,188",
+        "400,000,000",
+    ]
+    assert numeric_cells.evaluate_all(
+        "cells => cells.every(cell => cell.scrollWidth <= cell.clientWidth + 1)"
+    )
+
+
 def test_timeline_selection_native_wheel_zoom_and_reset(page: Page, harness_url: str) -> None:
     page.goto(f"{harness_url}/en")
     frame = viewer(page)

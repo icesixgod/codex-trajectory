@@ -27,7 +27,6 @@
       --compaction: #7c879c;
       --token-new: #5b6cff;
       --token-cached: #2da6a0;
-      --token-write: #e49a37;
       --token-visible: #7c68ee;
       --token-reasoning: #a968cf;
       --shadow: 0 8px 28px rgba(29, 39, 68, .08);
@@ -106,15 +105,17 @@
     .privacy-confirm:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 88%, #000); }
     .stat { min-width: 0; padding: 7px 9px; border-radius: 9px; background: color-mix(in srgb, var(--panel) 82%, transparent); }
     .stat-label { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
-    .stat-value { margin-top: 2px; font-size: 15px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .stat-value { margin-top: 2px; font-size: 15px; font-weight: 700; white-space: nowrap; }
     .token-panel { padding: 13px 18px 15px; border-bottom: 1px solid var(--line); }
     .token-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
     .token-badges { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
     .token-badge { padding: 3px 7px; border-radius: 999px; color: var(--muted); background: var(--panel-2); font-size: 10px; white-space: nowrap; }
-    .token-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(108px, 1fr)); gap: 7px; }
+    .token-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 7px; }
     .token-metric { min-width: 0; padding: 8px 9px; border: 1px solid var(--line); border-radius: 9px; }
     .token-metric-label { color: var(--muted); font-size: 10px; }
-    .token-metric-value { margin-top: 2px; font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; }
+    .token-metric-value { margin-top: 2px; font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: -.025em; white-space: nowrap; }
+    .number-long { font-size: 12px; }
+    .number-xlong { font-size: 10px; letter-spacing: -.045em; }
     .token-bars { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-top: 9px; }
     .token-breakdown { padding: 9px; border-radius: 9px; background: var(--panel-2); }
     .token-breakdown-head { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 6px; font-size: 11px; }
@@ -123,17 +124,16 @@
     .token-segment { min-width: 2px; height: 100%; }
     .token-new { background: var(--token-new); }
     .token-cached { background: var(--token-cached); }
-    .token-write { background: var(--token-write); }
     .token-visible { background: var(--token-visible); }
     .token-reasoning { background: var(--token-reasoning); }
     .token-legend { display: flex; flex-wrap: wrap; gap: 5px 12px; margin-top: 6px; color: var(--muted); font-size: 10px; }
     .token-legend-item { display: inline-flex; align-items: center; gap: 4px; }
     .token-legend-dot { width: 7px; height: 7px; border-radius: 2px; flex: none; }
     .token-table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 9px; scrollbar-gutter: stable; }
-    .token-row { display: grid; grid-template-columns: 74px 82px repeat(5, minmax(90px, 1fr)); min-width: 720px; border-top: 1px solid var(--line); }
+    .token-row { display: grid; grid-template-columns: 74px 82px repeat(5, minmax(160px, 1fr)); min-width: 960px; border-top: 1px solid var(--line); }
     .token-row:first-child { border-top: 0; }
     .token-cell { min-width: 0; padding: 7px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .token-cell.numeric { text-align: right; font-variant-numeric: tabular-nums; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .token-cell.numeric { overflow: visible; text-align: right; text-overflow: clip; font-size: 11px; font-variant-numeric: tabular-nums; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
     .token-row.header { color: var(--muted); background: var(--panel-2); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
     .token-turns { margin-top: 10px; }
     .token-turns > summary { font-size: 11px; }
@@ -250,6 +250,8 @@
     pre { margin: 0; padding: 10px; max-height: 260px; overflow: auto; white-space: pre-wrap; word-break: break-word; font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
     .notice { margin: 10px 18px; padding: 8px 10px; border-radius: 8px; color: var(--muted); background: var(--panel-2); }
     .notice.error { color: var(--danger); border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent); }
+    .pagination-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 10px 18px; padding: 8px 10px; border-radius: 8px; color: var(--muted); background: var(--panel-2); }
+    .pagination-bar button { flex: none; color: var(--text); background: var(--panel); }
     .loading { min-height: 260px; display: grid; place-items: center; color: var(--muted); }
     .spinner { width: 20px; height: 20px; margin: 0 auto 8px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
@@ -260,6 +262,7 @@
       .top-actions, #sessionSelect { width: 100%; }
       #sessionSelect { flex: 1; }
       .stats { grid-template-columns: repeat(3, 1fr); }
+      .stat-value { overflow-wrap: anywhere; white-space: normal; }
       .token-head { flex-direction: column; }
       .token-badges { justify-content: flex-start; }
       .token-bars { grid-template-columns: 1fr; }
@@ -268,6 +271,7 @@
       .ledger-wrap { max-height: 470px; }
       .toolbar { flex-wrap: wrap; }
       .privacy-bar { align-items: flex-start; flex-direction: column; }
+      .pagination-bar { align-items: flex-start; flex-direction: column; }
     }
   </style>
 </head>
@@ -279,7 +283,7 @@
       const pending = new Map();
       let nextRequestId = 1;
       let data = null;
-      let selectedId = null;
+      let selectedIndex = null;
       let search = "";
       let kind = "all";
       let selectedRange = null;
@@ -305,11 +309,11 @@
         index: "索引", step: "步骤", event: "事件", summary: "内容", time: "耗时",
         inspect: "选择一条记录查看详情", input: "输入", output: "输出", metadata: "元数据", usage: "Token 用量",
         status: "状态", started: "开始", completed: "完成", callId: "调用 ID", noMatch: "当前筛选条件没有匹配记录。",
-        omitted: "当前显示尾部记录；有更早记录未载入。", range: "时间区间", clear: "清除区间", current: "当前/最近任务", turn: "轮次",
+        omitted: "有部分记录尚未载入。", loadedRecords: "条记录已加载", loadEarlier: "加载更早记录", loadingEarlier: "正在加载…", range: "时间区间", clear: "清除区间", current: "当前/最近任务", turn: "轮次",
         safeMode: "安全摘要", safeDescription: "工具输入、输出和原始元数据已隐藏。", fullMode: "完整详情", fullDescription: "完整详情已加载，仅应在你信任当前任务内容时使用。",
         loadFull: "加载完整详情", confirmFull: "完整详情可能包含源代码、命令输出和敏感信息。仅在你信任当前任务内容时继续。", confirmLoadFull: "继续加载", cancel: "取消", loading: "正在加载轨迹…", loadError: "无法加载轨迹", requestTimeout: "请求超时。", warnings: "读取警告",
         tokenDetails: "Token 详情", tokenDetailsNote: "累计用量；缓存属于输入，推理属于输出", totalTokens: "总 Token", inputTokens: "输入",
-        cachedInput: "缓存读取", cacheWrite: "缓存写入", uncachedInput: "非缓存输入", outputTokens: "输出", reasoningTokens: "推理输出", visibleOutput: "可见输出",
+        cachedInput: "缓存读取", uncachedInput: "非缓存输入", outputTokens: "输出", reasoningTokens: "推理输出", visibleOutput: "可见输出",
         cacheHit: "缓存命中", modelRequests: "模型请求", contextWindow: "上下文窗口", inputBreakdown: "输入构成", outputBreakdown: "输出构成",
         byTurn: "按轮次", calls: "请求数", noTokenData: "此任务没有记录 Token 用量。", expandTurn: "展开轮次", collapseTurn: "折叠轮次", modelLabel: "模型",
       } : {
@@ -319,11 +323,11 @@
         index: "Index", step: "Step", event: "Event", summary: "Content", time: "Time",
         inspect: "Select a record to inspect its details", input: "Input", output: "Output", metadata: "Metadata", usage: "Token usage",
         status: "Status", started: "Started", completed: "Completed", callId: "Call ID", noMatch: "No records match the current filters.",
-        omitted: "Showing the loaded tail; earlier records are omitted.", range: "Time range", clear: "Clear range", current: "Current/latest task", turn: "Turn",
+        omitted: "Some records have not been loaded.", loadedRecords: "records loaded", loadEarlier: "Load earlier records", loadingEarlier: "Loading…", range: "Time range", clear: "Clear range", current: "Current/latest task", turn: "Turn",
         safeMode: "Safe summary", safeDescription: "Tool input, output, and raw metadata are hidden.", fullMode: "Full details", fullDescription: "Full details are loaded. Use them only when you trust this task's contents.",
         loadFull: "Load full details", confirmFull: "Full details may contain source code, command output, and sensitive data. Continue only if you trust this task's contents.", confirmLoadFull: "Continue loading", cancel: "Cancel", loading: "Loading trajectory…", loadError: "Could not load trajectory", requestTimeout: "Request timed out.", warnings: "Read warnings",
         tokenDetails: "Token details", tokenDetailsNote: "Cumulative usage; cache is part of input and reasoning is part of output", totalTokens: "Total tokens", inputTokens: "Input",
-        cachedInput: "Cache reads", cacheWrite: "Cache writes", uncachedInput: "Uncached input", outputTokens: "Output", reasoningTokens: "Reasoning output", visibleOutput: "Visible output",
+        cachedInput: "Cache reads", uncachedInput: "Uncached input", outputTokens: "Output", reasoningTokens: "Reasoning output", visibleOutput: "Visible output",
         cacheHit: "Cache hit", modelRequests: "Model requests", contextWindow: "Context window", inputBreakdown: "Input breakdown", outputBreakdown: "Output breakdown",
         byTurn: "By turn", calls: "Requests", noTokenData: "No token usage was recorded for this task.", expandTurn: "Expand turn", collapseTurn: "Collapse turn", modelLabel: "Model",
       };
@@ -390,29 +394,94 @@
         return { start, end };
       }
 
-      function render(next) {
+      function pageState(snapshot = data) {
+        const records = snapshot?.records || [];
+        const firstRecord = records.at(0)?.index ?? null;
+        const lastRecord = records.at(-1)?.index ?? null;
+        const totalRecords = Number.isFinite(snapshot?.stats?.records) ? snapshot.stats.records : records.length;
+        const earlierRecords = firstRecord === null ? 0 : Math.max(0, firstRecord - 1);
+        const laterRecords = lastRecord === null ? totalRecords : Math.max(0, totalRecords - lastRecord);
+        return {
+          firstRecord,
+          lastRecord,
+          earlierRecords,
+          laterRecords,
+          hasEarlier: earlierRecords > 0,
+          hasLater: laterRecords > 0,
+          nextBeforeRecord: earlierRecords > 0 ? firstRecord : null,
+        };
+      }
+
+      function mergeEarlierPage(current, page) {
+        if (page?.session?.id !== current.session.id || page.detailLevel !== current.detailLevel) {
+          throw new Error(labels.loadError);
+        }
+        const recordsByIndex = new Map();
+        for (const record of [...(page.records || []), ...current.records]) recordsByIndex.set(record.index, record);
+        const records = [...recordsByIndex.values()].sort((left, right) => left.index - right.index);
+        const turnsByIndex = new Map();
+        for (const turn of [...(page.turns || []), ...(current.turns || [])]) turnsByIndex.set(turn.index, turn);
+        const turns = [...turnsByIndex.values()].sort((left, right) => left.index - right.index);
+        const warningKeys = new Set();
+        const warnings = [...(current.warnings || []), ...(page.warnings || [])].filter(warning => {
+          const key = `${warning.code}\u0000${warning.line}\u0000${warning.message}`;
+          if (warningKeys.has(key)) return false;
+          warningKeys.add(key);
+          return true;
+        });
+        const totalRecords = Number.isFinite(current.stats?.records) ? current.stats.records : records.length;
+        const totalTurns = Number.isFinite(current.stats?.turns) ? current.stats.turns : turns.length;
+        const stats = {
+          ...current.stats,
+          visibleRecords: records.length,
+          omittedRecords: Math.max(0, totalRecords - records.length),
+        };
+        if (turns.length < totalTurns) {
+          stats.visibleTurns = turns.length;
+          stats.omittedTurns = totalTurns - turns.length;
+        } else {
+          delete stats.visibleTurns;
+          delete stats.omittedTurns;
+        }
+        const merged = { ...current, stats, turns, records, warnings };
+        merged.pagination = pageState(merged);
+        return merged;
+      }
+
+      function render(next, options = {}) {
         if (!next?.session || !Array.isArray(next.records)) return;
         const previousSessionId = data?.session?.id;
         const previousLastTurn = data?.records?.at(-1)?.turn;
         const nextLastTurn = next.records.at(-1)?.turn;
         const resetToLatest = previousSessionId !== next.session.id || previousLastTurn !== nextLastTurn || expandedTurns.size === 0;
-        const previousSelectedId = selectedId;
-        const previousScrollTop = document.querySelector(".ledger-wrap")?.scrollTop;
+        const previousSelectedIndex = selectedIndex;
+        const previousLedger = document.querySelector(".ledger-wrap");
+        const previousScrollTop = previousLedger?.scrollTop || 0;
+        const previousScrollHeight = previousLedger?.scrollHeight || 0;
         if (resetToLatest) expandedTurns = new Set(Number.isFinite(nextLastTurn) ? [nextLastTurn] : []);
         data = next;
-        busy = false;
         fullConfirmationOpen = false;
         fullDomain = computeDomain();
         viewport = { ...fullDomain };
         selectedRange = null;
-        selectedId = !resetToLatest && next.records.some(record => record.id === previousSelectedId) ? previousSelectedId : next.records.at(-1)?.id || null;
+        selectedIndex = !resetToLatest && next.records.some(record => record.index === previousSelectedIndex) ? previousSelectedIndex : next.records.at(-1)?.index || null;
         drawShell();
         const ledgerWrap = document.querySelector(".ledger-wrap");
-        if (ledgerWrap) ledgerWrap.scrollTop = resetToLatest ? ledgerWrap.scrollHeight : previousScrollTop || 0;
+        if (ledgerWrap) {
+          if (options.prepend) ledgerWrap.scrollTop = previousScrollTop + Math.max(0, ledgerWrap.scrollHeight - previousScrollHeight);
+          else ledgerWrap.scrollTop = resetToLatest ? ledgerWrap.scrollHeight : previousScrollTop;
+        }
       }
 
       function stat(label, value) {
-        return `<div class="stat"><div class="stat-label">${escapeHtml(label)}</div><div class="stat-value">${escapeHtml(value)}</div></div>`;
+        const formatted = String(value);
+        return `<div class="stat"><div class="stat-label">${escapeHtml(label)}</div><div class="stat-value ${numberFitClass(formatted)}">${escapeHtml(formatted)}</div></div>`;
+      }
+
+      function numberFitClass(formatted) {
+        if (formatted.length > 18) return "number-xlong";
+        if (formatted.length > 14) return "number-long";
+        return "";
       }
 
       const firstNumber = (...values) => values.find(value => Number.isFinite(value)) ?? 0;
@@ -420,15 +489,13 @@
       function usageView(raw = {}) {
         const input = firstNumber(raw.input_tokens, raw.prompt_tokens);
         const cached = firstNumber(raw.cached_input_tokens, raw.input_tokens_details?.cached_tokens, raw.prompt_tokens_details?.cached_tokens);
-        const cacheWrite = firstNumber(raw.cache_write_input_tokens, raw.input_tokens_details?.cache_write_tokens, raw.prompt_tokens_details?.cache_write_tokens);
         const output = firstNumber(raw.output_tokens, raw.completion_tokens);
         const reasoning = firstNumber(raw.reasoning_output_tokens, raw.output_tokens_details?.reasoning_tokens, raw.completion_tokens_details?.reasoning_tokens);
         return {
           total: firstNumber(raw.total_tokens, input + output),
           input,
           cached,
-          cacheWrite,
-          uncached: Math.max(0, input - cached - cacheWrite),
+          uncached: Math.max(0, input - cached),
           output,
           reasoning,
           visible: Math.max(0, output - reasoning),
@@ -456,7 +523,8 @@
       }
 
       function tokenMetric(key, label, value) {
-        return `<div class="token-metric" data-token-metric="${escapeHtml(key)}"><div class="token-metric-label">${escapeHtml(label)}</div><div class="token-metric-value">${escapeHtml(number(value))}</div></div>`;
+        const formatted = number(value);
+        return `<div class="token-metric" data-token-metric="${escapeHtml(key)}"><div class="token-metric-label">${escapeHtml(label)}</div><div class="token-metric-value ${numberFitClass(formatted)}">${escapeHtml(formatted)}</div></div>`;
       }
 
       function tokenSegment(className, label, value, total) {
@@ -486,8 +554,8 @@
         const contextBadge = Number.isFinite(stats.contextWindow) ? `<span class="token-badge">${labels.contextWindow} ${number(stats.contextWindow)}</span>` : "";
         return `<section class="token-panel" id="tokenDetails" aria-labelledby="tokenDetailsTitle">
           <div class="token-head"><div><div class="section-title" id="tokenDetailsTitle">${labels.tokenDetails}</div><div class="section-note">${labels.tokenDetailsNote}</div></div><div class="token-badges"><span class="token-badge">${labels.cacheHit} ${percentage(total.cached, total.input)}</span><span class="token-badge">${labels.modelRequests} ${number(modelRequests)}</span>${contextBadge}</div></div>
-          <div class="token-metrics">${tokenMetric("total", labels.totalTokens, total.total)}${tokenMetric("input", labels.inputTokens, total.input)}${tokenMetric("cached", labels.cachedInput, total.cached)}${tokenMetric("cache-write", labels.cacheWrite, total.cacheWrite)}${tokenMetric("uncached", labels.uncachedInput, total.uncached)}${tokenMetric("output", labels.outputTokens, total.output)}${tokenMetric("reasoning", labels.reasoningTokens, total.reasoning)}</div>
-          <div class="token-bars">${tokenBreakdown(labels.inputBreakdown, total.input, [{ className: "token-new", label: labels.uncachedInput, value: total.uncached }, { className: "token-cached", label: labels.cachedInput, value: total.cached }, { className: "token-write", label: labels.cacheWrite, value: total.cacheWrite }])}${tokenBreakdown(labels.outputBreakdown, total.output, [{ className: "token-visible", label: labels.visibleOutput, value: total.visible }, { className: "token-reasoning", label: labels.reasoningTokens, value: total.reasoning }])}</div>
+          <div class="token-metrics">${tokenMetric("total", labels.totalTokens, total.total)}${tokenMetric("input", labels.inputTokens, total.input)}${tokenMetric("cached", labels.cachedInput, total.cached)}${tokenMetric("uncached", labels.uncachedInput, total.uncached)}${tokenMetric("output", labels.outputTokens, total.output)}${tokenMetric("reasoning", labels.reasoningTokens, total.reasoning)}</div>
+          <div class="token-bars">${tokenBreakdown(labels.inputBreakdown, total.input, [{ className: "token-new", label: labels.uncachedInput, value: total.uncached }, { className: "token-cached", label: labels.cachedInput, value: total.cached }])}${tokenBreakdown(labels.outputBreakdown, total.output, [{ className: "token-visible", label: labels.visibleOutput, value: total.visible }, { className: "token-reasoning", label: labels.reasoningTokens, value: total.reasoning }])}</div>
           <details class="token-turns"><summary>${labels.byTurn}</summary><div class="token-table-wrap" role="table"><div class="token-row header" role="row"><div class="token-cell">${labels.turn}</div><div class="token-cell numeric">${labels.calls}</div><div class="token-cell numeric">${labels.totalTokens}</div><div class="token-cell numeric">${labels.inputTokens}</div><div class="token-cell numeric">${labels.cacheHit}</div><div class="token-cell numeric">${labels.outputTokens}</div><div class="token-cell numeric">${labels.reasoningTokens}</div></div><div id="tokenTurnRows"></div></div></details>
         </section>`;
       }
@@ -569,6 +637,7 @@
       function drawShell() {
         const stats = data.stats || {};
         const turns = data.turns || [];
+        const pagination = pageState(data);
         const fullDetails = data.detailLevel === "full";
         const totalDuration = turns.reduce((sum, turn) => sum + (Number.isFinite(turn.durationMs) ? turn.durationMs : 0), 0);
         const tokenTotal = hasTokenUsage(stats.tokens) ? usageView(stats.tokens).total : undefined;
@@ -596,7 +665,7 @@
               <select id="kindFilter" aria-label="${labels.all}"><option value="all">${labels.all}</option>${["user","assistant","reasoning","tool","subagent","compaction"].map(value => `<option value="${value}">${value}</option>`).join("")}</select>
               <span id="rangeChip"></span>
             </div>
-            ${stats.omittedRecords ? `<div class="notice">${labels.omitted} ${number(stats.omittedRecords)}</div>` : ""}
+            ${pagination.hasEarlier ? `<div class="pagination-bar"><span role="status">${number(data.records.length)} / ${number(stats.records)} ${labels.loadedRecords}</span><button id="loadEarlier" type="button">${labels.loadEarlier}</button></div>` : stats.omittedRecords ? `<div class="notice">${labels.omitted} ${number(stats.omittedRecords)}</div>` : ""}
             ${(data.warnings || []).length ? `<div class="notice" role="status"><strong>${labels.warnings}:</strong> ${escapeHtml(data.warnings.map(item => item.message).join(" "))}</div>` : ""}
             <div class="content"><div class="ledger-wrap"><table id="ledger"><colgroup><col><col><col><col><col><col><col><col></colgroup></table></div><aside class="inspector" id="inspector"></aside></div>
             <div class="ledger-tooltip" id="ledgerTooltip" role="tooltip" hidden></div>
@@ -623,6 +692,7 @@
         document.getElementById("kindFilter").addEventListener("change", event => { kind = event.target.value; drawLedger(); });
         document.getElementById("refresh").addEventListener("click", () => loadSession(data.session.id, data.detailLevel));
         document.getElementById("sessionSelect").addEventListener("change", event => loadSession(event.target.value, "summary"));
+        document.getElementById("loadEarlier")?.addEventListener("click", loadEarlierRecords);
         document.querySelector("details.token-turns")?.addEventListener("toggle", event => {
           if (event.currentTarget.open) drawTokenTurnRows();
         });
@@ -651,7 +721,9 @@
         if (busy) return;
         busy = true;
         const refresh = document.getElementById("refresh");
+        const sessionSelect = document.getElementById("sessionSelect");
         if (refresh) refresh.disabled = true;
+        if (sessionSelect) sessionSelect.disabled = true;
         try {
           app.setAttribute("aria-busy", "true");
           const result = await callTool("get_codex_trajectory", { sessionId, maxRecords: REFRESH_MAX_RECORDS, includeArchived: true, detailLevel });
@@ -662,14 +734,73 @@
           if (!result?.structuredContent) throw new Error(labels.loadError);
           render(result.structuredContent);
         } catch (error) {
-          const message = String(error?.message || error);
-          app.querySelectorAll(":scope > .notice.error").forEach(notice => notice.remove());
-          app.insertAdjacentHTML("afterbegin", `<div class="notice error" role="alert"><strong>${labels.loadError}:</strong> ${escapeHtml(message)}</div>`);
+          showLoadError(error);
         } finally {
           busy = false;
-          if (refresh) refresh.disabled = false;
+          document.getElementById("refresh")?.removeAttribute("disabled");
+          document.getElementById("sessionSelect")?.removeAttribute("disabled");
           app.setAttribute("aria-busy", "false");
         }
+      }
+
+      async function loadEarlierRecords() {
+        if (busy) return;
+        const cursor = pageState(data).nextBeforeRecord;
+        if (!Number.isFinite(cursor) || cursor <= 1) return;
+        busy = true;
+        const button = document.getElementById("loadEarlier");
+        if (button) {
+          button.disabled = true;
+          button.textContent = labels.loadingEarlier;
+        }
+        document.getElementById("refresh")?.setAttribute("disabled", "");
+        document.getElementById("sessionSelect")?.setAttribute("disabled", "");
+        try {
+          app.setAttribute("aria-busy", "true");
+          const result = await callTool("get_codex_trajectory", {
+            sessionId: data.session.id,
+            maxRecords: REFRESH_MAX_RECORDS,
+            beforeRecord: cursor,
+            includeArchived: true,
+            detailLevel: data.detailLevel,
+          });
+          if (result?.isError) {
+            const message = (result.content || []).map(item => item?.text).filter(Boolean).join(" ");
+            throw new Error(message || labels.loadError);
+          }
+          const page = result?.structuredContent;
+          const indexes = Array.isArray(page?.records) ? page.records.map(record => record.index) : [];
+          const invalidIndexes = indexes.some((index, position) => (
+            !Number.isFinite(index)
+            || index < 1
+            || index >= cursor
+            || (position > 0 && index <= indexes[position - 1])
+          ));
+          if (!page || !indexes.length || invalidIndexes || indexes.at(-1) !== cursor - 1) {
+            throw new Error(labels.loadError);
+          }
+          const merged = mergeEarlierPage(data, page);
+          if (merged.records.length <= data.records.length) throw new Error(labels.loadError);
+          render(merged, { prepend: true });
+        } catch (error) {
+          showLoadError(error);
+        } finally {
+          busy = false;
+          document.getElementById("refresh")?.removeAttribute("disabled");
+          document.getElementById("sessionSelect")?.removeAttribute("disabled");
+          const currentButton = document.getElementById("loadEarlier");
+          if (currentButton) {
+            currentButton.disabled = false;
+            currentButton.textContent = labels.loadEarlier;
+          }
+          app.setAttribute("aria-busy", "false");
+        }
+      }
+
+      function showLoadError(error) {
+        const message = String(error?.message || error);
+        app.querySelectorAll(":scope > .notice.error").forEach(notice => notice.remove());
+        app.insertAdjacentHTML("afterbegin", `<div class="notice error" role="alert"><strong>${labels.loadError}:</strong> ${escapeHtml(message)}</div>`);
       }
 
       function lane(kind) {
@@ -708,13 +839,13 @@
           const end = Math.min(range.end, viewport.end);
           const span = document.createElement("button");
           span.type = "button";
-          span.className = `span ${record.status === "error" ? "error" : ""} ${record.id === selectedId ? "selected" : ""}`;
+          span.className = `span ${record.status === "error" ? "error" : ""} ${record.index === selectedIndex ? "selected" : ""}`;
           span.dataset.kind = record.kind;
           span.style.left = `${Math.max(0, timeToX(start))}%`;
           span.style.width = `${Math.max(.35, timeToX(end) - timeToX(start))}%`;
           span.style.top = `${8 + lane(record.kind) * 27}px`;
           span.title = `#${record.index} ${record.event} · ${duration(record.durationMs)}`;
-          span.addEventListener("click", event => { event.stopPropagation(); selectRecord(record.id); });
+          span.addEventListener("click", event => { event.stopPropagation(); selectRecord(record.index); });
           timeline.appendChild(span);
         }
         const selection = document.getElementById("selection");
@@ -840,16 +971,17 @@
           turnGroup.appendChild(columnHeader);
           for (const record of group.records) {
             const row = document.createElement("tr");
-            row.className = `record ${record.id === selectedId ? "selected" : ""}`;
+            row.className = `record ${record.index === selectedIndex ? "selected" : ""}`;
             row.dataset.id = record.id;
+            row.dataset.index = record.index;
             row.dataset.ledgerTooltip = `${labels.event}: ${record.event}\n${labels.summary}: ${record.summary}`;
             row.tabIndex = 0;
             const tokens = recordTokens(record);
             const tokenClass = `record-token ${tokens.hasUsage ? "has-usage" : ""}`;
             row.innerHTML = `<td class="index">#${record.index}</td><td class="mono">${record.step ? `S${record.step}` : "—"}</td><td class="event-cell"${ledgerTooltipAttribute(record.event, true)}><div class="event"><span class="dot ${escapeHtml(record.kind)}"></span><span class="event-name ${record.status === "error" ? "status-error" : record.status === "running" ? "status-running" : ""}">${escapeHtml(record.event)}</span></div></td><td class="summary"${ledgerTooltipAttribute(record.summary, true)}>${escapeHtml(record.summary)}</td><td class="duration">${duration(record.durationMs)}</td><td class="${tokenClass}" data-token-kind="uncached">${escapeHtml(tokens.input)}</td><td class="${tokenClass}" data-token-kind="cached">${escapeHtml(tokens.cached)}</td><td class="${tokenClass}" data-token-kind="output">${escapeHtml(tokens.output)}</td>`;
-            row.addEventListener("click", () => selectRecord(record.id));
+            row.addEventListener("click", () => selectRecord(record.index));
             row.addEventListener("keydown", event => {
-              if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectRecord(record.id); }
+              if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectRecord(record.index); }
             });
             turnGroup.appendChild(row);
           }
@@ -871,13 +1003,13 @@
         drawInspector();
       }
 
-      function selectRecord(id) {
-        const record = data.records.find(item => item.id === id);
+      function selectRecord(index) {
+        const record = data.records.find(item => item.index === index);
         if (record) expandedTurns.add(record.turn);
-        selectedId = id;
+        selectedIndex = index;
         drawTimeline();
         drawLedger();
-        document.querySelector(`tr[data-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "nearest" });
+        document.querySelector(`tr[data-index="${index}"]`)?.scrollIntoView({ block: "nearest" });
       }
 
       function detailSection(title, value, open = false) {
@@ -888,7 +1020,7 @@
       function drawInspector() {
         const inspector = document.getElementById("inspector");
         if (!inspector) return;
-        const record = data.records.find(item => item.id === selectedId);
+        const record = data.records.find(item => item.index === selectedIndex);
         if (!record) { inspector.innerHTML = `<div class="empty">${labels.inspect}</div>`; return; }
         const usage = record.usage ? JSON.stringify(record.usage, null, 2) : "";
         const metadata = record.metadata && Object.keys(record.metadata).length ? JSON.stringify(record.metadata, null, 2) : "";

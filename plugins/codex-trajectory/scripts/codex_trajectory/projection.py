@@ -39,6 +39,7 @@ SERVER_NAME = "codex-trajectory"
 SERVER_VERSION = __version__
 UI_URI = "ui://codex-trajectory/trajectory-v1.html"
 DEFAULT_MAX_RECORDS = 500
+MIN_RECORDS = 50
 MAX_RECORDS = 1_000
 MAX_TURNS = 1_000
 MAX_WARNINGS = 100
@@ -530,7 +531,6 @@ def numeric_token_usage(value: Any) -> dict[str, int | float]:
     allowed = {
         "input_tokens",
         "cached_input_tokens",
-        "cache_write_input_tokens",
         "output_tokens",
         "reasoning_output_tokens",
         "total_tokens",
@@ -557,14 +557,15 @@ def parse_session(
     path: Path,
     max_records: int = DEFAULT_MAX_RECORDS,
     detail_level: DetailLevel = "summary",
+    before_record: int | None = None,
 ) -> dict[str, Any]:
-    """Project one Codex rollout log into a turn-aware trajectory."""
+    """Project one Codex rollout log into a turn-aware trajectory page."""
     detail_level = normalize_detail_level(detail_level)
     include_details = detail_level == "full"
-    limited = max(50, min(int(max_records), MAX_RECORDS))
+    limited = max(MIN_RECORDS, min(int(max_records), MAX_RECORDS))
     records: deque[dict[str, Any]] = deque(maxlen=limited)
     visible_record_ids: set[str] = set()
-    visible_calls: dict[str, dict[str, Any]] = {}
+    tracked_calls: OrderedDict[str, dict[str, Any]] = OrderedDict()
     call_states: OrderedDict[str, dict[str, bool]] = OrderedDict()
     turns: deque[dict[str, Any]] = deque(maxlen=MAX_TURNS)
     retained_turns: dict[int, dict[str, Any]] = {}
@@ -698,6 +699,22 @@ def parse_session(
             "_durationAuthoritative": False,
             "_outputAuthoritative": False,
         }
+        if kind == "tool" and call_id:
+            tracked_calls[call_id] = record
+            tracked_calls.move_to_end(call_id)
+            while len(tracked_calls) > MAX_TRACKED_CALLS:
+                tracked_calls.popitem(last=False)
+        if counts_as_tool:
+            tool_calls += 1
+        elif kind == "compaction":
+            compactions += 1
+        turn["records"] += 1
+
+        # ``before_record`` is an exclusive cursor over stable projected indexes.
+        # Keep parsing the complete source so aggregate stats and terminal tool
+        # updates remain correct, but only retain records that belong to this page.
+        if before_record is not None and all_record_count >= before_record:
+            return record
         if len(records) == limited:
             evicted = records[0]
             visible_record_ids.discard(str(evicted.get("id") or ""))
@@ -709,21 +726,35 @@ def parse_session(
                 else:
                     retained_turn_refcounts.pop(evicted_turn, None)
                     retained_turns.pop(evicted_turn, None)
-            evicted_call_id = evicted.get("callId")
-            if isinstance(evicted_call_id, str) and visible_calls.get(evicted_call_id) is evicted:
-                del visible_calls[evicted_call_id]
         records.append(record)
         retained_turns[current_turn] = turn
         retained_turn_refcounts[current_turn] = retained_turn_refcounts.get(current_turn, 0) + 1
         visible_record_ids.add(record_id)
-        if counts_as_tool:
-            tool_calls += 1
-        elif kind == "compaction":
-            compactions += 1
-        if kind == "tool" and call_id:
-            visible_calls[call_id] = record
-        turn["records"] += 1
         return record
+
+    def late_tool_marker(record: dict[str, Any], timestamp: int | None) -> dict[str, Any] | None:
+        """Materialize a terminal marker when call and result cannot share the smallest page."""
+        record_index = record.get("index")
+        if not isinstance(record_index, int) or all_record_count - record_index < MIN_RECORDS:
+            return None
+        raw_call_id = record.get("callId")
+        call_id = raw_call_id if isinstance(raw_call_id, str) else None
+        marker_id = f"tool-result-{call_id or 'unknown'}-{all_record_count + 1}"
+        return add_record(
+            timestamp=timestamp,
+            kind="tool",
+            event=str(record.get("event") or "Tool result"),
+            summary=f"{record.get('event') or 'Tool result'} · running",
+            step=record.get("step") if isinstance(record.get("step"), int) else None,
+            record_id=marker_id,
+            input_detail=record.get("input") if isinstance(record.get("input"), str) else None,
+            status="running",
+            call_id=call_id,
+            metadata_detail=(
+                record.get("metadata") if isinstance(record.get("metadata"), dict) else None
+            ),
+            count_tool=False,
+        )
 
     def mark_tool_error(record: dict[str, Any], message: str) -> None:
         """Mark one retained tool record and its aggregate state as failed."""
@@ -795,7 +826,7 @@ def parse_session(
         """Create or finish a tool record from an authoritative terminal event."""
         nonlocal after_tool_result, last_model_record
         call_id = protocol_identifier(call_id)
-        record = visible_calls.get(call_id) if call_id else None
+        record = tracked_calls.get(call_id) if call_id else None
         if record is None:
             record_time = started_at if started_at is not None else timestamp
             if current_step == 0:
@@ -835,6 +866,18 @@ def parse_session(
                 record["input"] = json_text(input_value)
             if metadata_detail:
                 record["metadata"].update(metadata_detail)
+        marker = late_tool_marker(record, timestamp)
+        if marker is not None:
+            finish_tool(
+                record,
+                timestamp=timestamp,
+                output=output_value,
+                failed=failed,
+                duration_ms=duration_ms,
+                authoritative=True,
+                error_message="Tool completion event reported an error.",
+            )
+            record = marker
         finish_tool(
             record,
             timestamp=timestamp,
@@ -1500,7 +1543,7 @@ def parse_session(
             continue
         if entry_type == "response_item" and payload_type == "tool_search_output":
             call_id = protocol_identifier(payload.get("call_id")) or ""
-            record = visible_calls.get(call_id)
+            record = tracked_calls.get(call_id)
             matched_evicted_call = call_id in call_states
             if record is None:
                 record = add_record(
@@ -1522,11 +1565,21 @@ def parse_session(
                         f"Tool search result on line {line_number} had no matching call record.",
                     )
             status = safe_text(payload.get("status"), 80) or "completed"
+            failed = status.casefold() in {"failed", "incomplete", "error"}
+            marker = late_tool_marker(record, timestamp)
+            if marker is not None:
+                finish_tool(
+                    record,
+                    timestamp=timestamp,
+                    output=payload.get("tools"),
+                    failed=failed,
+                )
+                record = marker
             finish_tool(
                 record,
                 timestamp=timestamp,
                 output=payload.get("tools"),
-                failed=status.casefold() in {"failed", "incomplete", "error"},
+                failed=failed,
             )
             after_tool_result = True
             continue
@@ -1581,7 +1634,7 @@ def parse_session(
         }:
             call_id = protocol_identifier(payload.get("call_id")) or ""
             output = payload.get("output")
-            completed_record = visible_calls.get(call_id)
+            completed_record = tracked_calls.get(call_id)
             matched_evicted_call = call_id in call_states
             if completed_record is None:
                 completed_record = add_record(
@@ -1603,6 +1656,15 @@ def parse_session(
                         f"Tool result on line {line_number} had no matching call record.",
                     )
             is_error = completed_record["status"] == "error" or output_is_error(output)
+            marker = late_tool_marker(completed_record, timestamp)
+            if marker is not None:
+                finish_tool(
+                    completed_record,
+                    timestamp=timestamp,
+                    output=output,
+                    failed=is_error,
+                )
+                completed_record = marker
             finish_tool(
                 completed_record,
                 timestamp=timestamp,
@@ -1819,8 +1881,12 @@ def parse_session(
         if record["status"] == "running":
             record["summary"] = shorten(f"{record['event']} · running")
 
-    omitted = max(0, all_record_count - len(records))
     visible_records = list(records)
+    first_record = visible_records[0]["index"] if visible_records else None
+    last_record = visible_records[-1]["index"] if visible_records else None
+    earlier_records = first_record - 1 if first_record is not None else 0
+    later_records = all_record_count - last_record if last_record is not None else all_record_count
+    omitted = earlier_records + later_records
     for record in visible_records:
         for private_key in tuple(key for key in record if key.startswith("_")):
             del record[private_key]
@@ -1857,6 +1923,15 @@ def parse_session(
         "detailLevel": detail_level,
         "generatedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "session": session,
+        "pagination": {
+            "firstRecord": first_record,
+            "lastRecord": last_record,
+            "earlierRecords": earlier_records,
+            "laterRecords": later_records,
+            "hasEarlier": earlier_records > 0,
+            "hasLater": later_records > 0,
+            "nextBeforeRecord": first_record if earlier_records > 0 else None,
+        },
         "stats": {
             "turns": current_turn,
             **(
@@ -1884,7 +1959,7 @@ def parse_session(
 
 def trajectory_result(arguments: dict[str, Any], with_ui: bool) -> dict[str, Any]:
     """Resolve and project a session for one MCP tool call."""
-    allowed = {"sessionId", "maxRecords", "includeArchived", "detailLevel"}
+    allowed = {"sessionId", "maxRecords", "beforeRecord", "includeArchived", "detailLevel"}
     reject_unknown_arguments(arguments, allowed)
     include_archived = arguments.get("includeArchived", True)
     if not isinstance(include_archived, bool):
@@ -1895,11 +1970,17 @@ def trajectory_result(arguments: dict[str, Any], with_ui: bool) -> dict[str, Any
     requested_max = arguments.get("maxRecords", DEFAULT_MAX_RECORDS)
     if isinstance(requested_max, bool) or not isinstance(requested_max, int):
         raise ValueError("maxRecords must be an integer.")
-    if not 50 <= requested_max <= MAX_RECORDS:
-        raise ValueError(f"maxRecords must be between 50 and {MAX_RECORDS}.")
+    if not MIN_RECORDS <= requested_max <= MAX_RECORDS:
+        raise ValueError(f"maxRecords must be between {MIN_RECORDS} and {MAX_RECORDS}.")
+    before_record = arguments.get("beforeRecord")
+    if before_record is not None:
+        if isinstance(before_record, bool) or not isinstance(before_record, int):
+            raise ValueError("beforeRecord must be an integer.")
+        if not 1 <= before_record <= MAX_SAFE_INTEGER:
+            raise ValueError(f"beforeRecord must be between 1 and {MAX_SAFE_INTEGER}.")
     detail_level = normalize_detail_level(arguments.get("detailLevel", "summary"))
     path = resolve_session(session_id, include_archived)
-    trajectory = parse_session(path, requested_max, detail_level)
+    trajectory = parse_session(path, requested_max, detail_level, before_record)
     trajectory["recentSessions"] = list_session_overviews(
         limit=20, include_archived=include_archived
     )
@@ -1936,11 +2017,20 @@ def tool_definitions() -> list[dict[str, Any]]:
         },
         "maxRecords": {
             "type": "integer",
-            "minimum": 50,
+            "minimum": MIN_RECORDS,
             "maximum": MAX_RECORDS,
             "default": DEFAULT_MAX_RECORDS,
             "description": (
-                "Maximum tail records returned while preserving stable original indexes."
+                "Maximum records in one page while preserving stable original indexes."
+            ),
+        },
+        "beforeRecord": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": MAX_SAFE_INTEGER,
+            "description": (
+                "Exclusive stable record index for loading the immediately preceding page. "
+                "Omit to load the newest tail."
             ),
         },
         "includeArchived": {

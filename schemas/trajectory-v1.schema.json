@@ -18,6 +18,7 @@
     "detailLevel": {"enum": ["summary", "full"]},
     "generatedAt": {"type": "string", "format": "date-time", "maxLength": 40},
     "session": {"$ref": "#/$defs/session"},
+    "pagination": {"$ref": "#/$defs/pagination"},
     "stats": {"$ref": "#/$defs/stats"},
     "turns": {
       "type": "array",
@@ -52,7 +53,6 @@
       "properties": {
         "input_tokens": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
         "cached_input_tokens": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
-        "cache_write_input_tokens": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
         "output_tokens": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
         "reasoning_output_tokens": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
         "total_tokens": {"type": "integer", "minimum": 0, "maximum": 9007199254740991}
@@ -78,6 +78,48 @@
         {"$ref": "#/$defs/git"},
         {"type": "null"}
       ]
+    },
+    "pagination": {
+      "type": "object",
+      "required": [
+        "firstRecord",
+        "lastRecord",
+        "earlierRecords",
+        "laterRecords",
+        "hasEarlier",
+        "hasLater",
+        "nextBeforeRecord"
+      ],
+      "properties": {
+        "firstRecord": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "lastRecord": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "earlierRecords": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "laterRecords": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "hasEarlier": {"type": "boolean"},
+        "hasLater": {"type": "boolean"},
+        "nextBeforeRecord": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      },
+      "additionalProperties": false
     },
     "session": {
       "type": "object",
