@@ -254,6 +254,165 @@
     .pagination-bar button { flex: none; color: var(--text); background: var(--panel); }
     .loading { min-height: 260px; display: grid; place-items: center; color: var(--muted); }
     .spinner { width: 20px; height: 20px; margin: 0 auto 8px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
+    #openPip[aria-pressed="true"] {
+      color: #fff;
+      border-color: var(--success);
+      background: var(--success);
+    }
+    #nativePipMedia {
+      position: fixed;
+      left: 0;
+      bottom: 0;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      opacity: .001;
+      pointer-events: none;
+    }
+    #nativePipMedia canvas, #nativePipMedia video {
+      display: block;
+      width: 1px;
+      height: 1px;
+    }
+    body.dock-mode {
+      min-height: 100vh;
+      overflow: hidden;
+      background: transparent;
+    }
+    body.dock-mode #app {
+      min-height: 100vh;
+      padding: 0;
+      background: transparent;
+      pointer-events: none;
+    }
+    .dock-shell {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      width: 100vw;
+      height: 100vh;
+      min-height: 0;
+      flex-direction: column;
+      overflow: hidden;
+      border: 0;
+      border-radius: 0;
+      background: var(--panel);
+      pointer-events: auto;
+    }
+    .dock-fixed {
+      position: relative;
+      z-index: 2;
+      flex: none;
+      border-bottom: 1px solid var(--line-strong);
+      background: var(--panel);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, .12);
+    }
+    .dock-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 13px 14px 10px;
+    }
+    .dock-kicker { color: var(--accent); font-size: 10px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+    .dock-title { max-width: calc(100vw - 72px); margin-top: 3px; overflow: hidden; font-size: 15px; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
+    .dock-close { width: 30px; height: 30px; flex: none; padding: 0; border-radius: 999px; font-size: 18px; line-height: 1; }
+    .dock-status {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 7px;
+      min-width: 0;
+      padding: 7px 14px 9px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .dock-live-state { display: inline-flex; min-width: 84px; align-items: center; gap: 7px; white-space: nowrap; }
+    .dock-live-dot { width: 8px; height: 8px; flex: none; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 15%, transparent); }
+    .dock-live-dot.error { background: var(--danger); box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 15%, transparent); }
+    .dock-cursor {
+      display: inline-grid;
+      grid-template-columns: 4ch .7ch 4ch .7ch 8ch;
+      justify-self: start;
+      overflow: hidden;
+      color: var(--text);
+      font: 700 10px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+    .dock-cursor-part { overflow: hidden; text-align: right; text-overflow: ellipsis; }
+    .dock-cursor-separator { color: var(--muted); text-align: center; }
+    .dock-mode-label { justify-self: end; padding: 2px 6px; border-radius: 999px; color: var(--accent); background: var(--accent-soft); font-size: 9px; font-weight: 700; white-space: nowrap; }
+    .dock-overview {
+      margin: 0 12px 12px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel-2);
+    }
+    .dock-overview-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 7px; }
+    .dock-section-label { color: var(--accent); font-size: 9px; font-weight: 750; letter-spacing: .07em; text-transform: uppercase; }
+    .dock-overview-meta { overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+    .dock-total { display: flex; align-items: end; justify-content: space-between; gap: 10px; padding: 9px 10px; border-radius: 9px; background: color-mix(in srgb, var(--accent-soft) 62%, var(--panel)); }
+    .dock-total-value { overflow: hidden; color: var(--accent); font: 800 22px/1.1 ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; letter-spacing: -.035em; text-overflow: ellipsis; white-space: nowrap; }
+    .dock-total-label { flex: none; color: var(--muted); font-size: 9px; text-transform: uppercase; }
+    .dock-token-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 6px; }
+    .dock-token { min-width: 0; padding: 7px 9px; border-radius: 8px; background: color-mix(in srgb, var(--panel) 66%, transparent); }
+    .dock-token-label { overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
+    .dock-token-value { margin-top: 1px; overflow: hidden; color: var(--text); font: 750 13px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
+    .dock-stream { display: flex; min-height: 0; flex: 1; flex-direction: column; background: var(--bg); }
+    .dock-stream-head { display: flex; flex: none; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 13px 8px; }
+    .dock-stream-title { font-size: 11px; font-weight: 750; }
+    .dock-stream-meta { color: var(--muted); font-size: 9px; text-align: right; }
+    .dock-records { min-height: 0; flex: 1; overflow-x: hidden; overflow-y: auto; padding: 0 11px 12px; scrollbar-gutter: stable; overscroll-behavior: contain; }
+    .dock-record { position: relative; margin-top: 7px; padding: 9px 10px 9px 13px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+    .dock-record::before { position: absolute; top: 10px; bottom: 10px; left: 0; width: 3px; border-radius: 0 3px 3px 0; background: var(--compaction); content: ""; }
+    .dock-record.latest { border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); box-shadow: 0 5px 18px color-mix(in srgb, var(--accent) 10%, transparent); }
+    .dock-record.latest::before { background: var(--accent); }
+    .dock-record[data-kind="user"]::before { background: var(--user); }
+    .dock-record[data-kind="assistant"]::before { background: var(--assistant); }
+    .dock-record[data-kind="reasoning"]::before { background: var(--reasoning); }
+    .dock-record[data-kind="tool"]::before { background: var(--tool); }
+    .dock-record[data-kind="subagent"]::before { background: var(--subagent); }
+    .dock-record-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 9px; }
+    .dock-record-cursor { color: var(--accent); font: 700 9px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; }
+    .dock-record-state { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .dock-record-event { margin-top: 4px; overflow: hidden; font-size: 12px; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
+    .dock-record-summary { display: -webkit-box; margin-top: 2px; overflow: hidden; color: var(--muted); font-size: 10px; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+    .dock-record-usage {
+      display: grid;
+      margin-top: 8px;
+      overflow: hidden;
+      border: 1px solid color-mix(in srgb, var(--line) 86%, transparent);
+      border-radius: 8px;
+      background: var(--line);
+    }
+    .dock-usage-row {
+      display: grid;
+      grid-template-columns: minmax(62px, .65fr) minmax(52px, .5fr) minmax(0, 1.85fr);
+      min-width: 0;
+      min-height: 29px;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 8px;
+      background: color-mix(in srgb, var(--panel) 92%, var(--panel-2));
+    }
+    .dock-usage-row + .dock-usage-row { border-top: 1px solid var(--line); }
+    .dock-usage-row.total {
+      grid-template-columns: minmax(0, 1fr) auto;
+      background: color-mix(in srgb, var(--accent-soft) 64%, var(--panel));
+    }
+    .dock-usage-name { overflow: hidden; color: var(--muted); font-size: 8px; font-weight: 700; letter-spacing: .035em; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
+    .dock-usage-row.total .dock-usage-name { color: var(--accent); }
+    .dock-usage-value { justify-self: end; color: var(--text); font: 750 10px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .dock-usage-row.total .dock-usage-value { color: var(--accent); font-size: 11px; font-weight: 800; }
+    .dock-usage-parts { display: flex; min-width: 0; justify-content: flex-end; gap: 10px; overflow: hidden; }
+    .dock-usage-part { display: inline-flex; min-width: 0; align-items: baseline; gap: 4px; white-space: nowrap; }
+    .dock-usage-part-label { overflow: hidden; color: var(--muted); font-size: 8px; text-overflow: ellipsis; }
+    .dock-usage-part-value { color: var(--text); font: 700 8px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; }
+    .dock-no-usage { padding: 6px 8px; color: var(--muted); background: var(--panel-2); font-size: 8px; }
+    .dock-foot { display: flex; flex: none; justify-content: space-between; gap: 8px; padding: 7px 12px max(8px, env(safe-area-inset-bottom)); border-top: 1px solid var(--line); color: var(--muted); background: var(--panel); font-size: 9px; }
+    .dock-foot span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     @keyframes spin { to { transform: rotate(360deg); } }
     @media (max-width: 760px) {
       #app { padding: 0; }
@@ -272,6 +431,19 @@
       .toolbar { flex-wrap: wrap; }
       .privacy-bar { align-items: flex-start; flex-direction: column; }
       .pagination-bar { align-items: flex-start; flex-direction: column; }
+    }
+    @media (max-height: 620px) {
+      .dock-head { padding-block: 9px 7px; }
+      .dock-status { padding-block: 5px 7px; }
+      .dock-overview { margin-bottom: 8px; padding: 8px; }
+      .dock-token { padding-block: 5px; }
+    }
+    @media (max-width: 380px) {
+      .dock-status { grid-template-columns: auto minmax(0, 1fr); }
+      .dock-mode-label { display: none; }
+      .dock-cursor { justify-self: end; }
+      .dock-usage-row:not(.total) { grid-template-columns: minmax(62px, 1fr) auto; gap: 5px 8px; }
+      .dock-usage-parts { grid-column: 1 / -1; justify-content: flex-start; }
     }
   </style>
 </head>
@@ -294,9 +466,34 @@
       let fullConfirmationOpen = false;
       let expandedTurns = new Set();
       let ledgerTooltipTarget = null;
+      let liveData = null;
+      let liveSessionId = null;
+      let liveRevision = null;
+      let liveTimer = null;
+      let liveBusy = false;
+      let liveFailures = 0;
+      let liveError = null;
+      let liveCheckedAt = null;
+      let restoreDetailLevel = "summary";
+      let livePresentation = "none";
+      let displayMode = window.openai?.displayMode || "inline";
+      let presentationBusy = false;
+      let dockFollowLatest = true;
+      let dockScrollTop = 0;
+      let pipCanvas = null;
+      let pipVideo = null;
+      let pipStream = null;
+      let pipWindow = null;
+      let pipReady = false;
+      let pipActive = false;
+      let pipPreparationError = null;
 
       const REFRESH_MAX_RECORDS = 500;
       const REQUEST_TIMEOUT_MS = 60_000;
+      const LIVE_INTERVAL_MS = 1_000;
+      const LIVE_MAX_BACKOFF_MS = 30_000;
+      const PIP_CANVAS_WIDTH = 640;
+      const PIP_CANVAS_HEIGHT = 960;
 
       const requestedLanguage = new URLSearchParams(window.location.search).get("lang");
       const language = requestedLanguage || navigator.language || document.documentElement.lang || "en";
@@ -316,6 +513,9 @@
         cachedInput: "缓存读取", uncachedInput: "非缓存输入", outputTokens: "输出", reasoningTokens: "推理输出", visibleOutput: "可见输出",
         cacheHit: "缓存命中", modelRequests: "模型请求", contextWindow: "上下文窗口", inputBreakdown: "输入构成", outputBreakdown: "输出构成",
         byTurn: "按轮次", calls: "请求数", noTokenData: "此任务没有记录 Token 用量。", expandTurn: "展开轮次", collapseTurn: "折叠轮次", modelLabel: "模型",
+        livePip: "实时小窗", liveTitle: "实时轨迹", exitPip: "关闭实时小窗", live: "实时刷新", syncing: "正在同步", paused: "已暂停", retrying: "重试中", latestEvent: "最新事件", checked: "最近检查", liveSafe: "安全摘要",
+        pipPreparing: "正在准备实时小窗…", pipUnavailable: "当前宿主不支持实时小窗。", pipFailed: "无法打开实时小窗", dockMode: "Codex 右侧栏", returnInline: "返回内联视图",
+        taskTotal: "任务总计", liveOutput: "实时输出", latestBelow: "最新在下方", recentRecords: "最近记录", recordTokens: "本条 Token", noRecordTokens: "本条无 Token 增量",
       } : {
         eyebrow: "Local task trajectory", overview: "Timing overview", hint: "Drag to select · wheel to zoom · right-click to clear",
         turns: "Turns", records: "Records", tools: "Tools", failures: "Failures", tokens: "Tokens", duration: "Duration",
@@ -330,6 +530,9 @@
         cachedInput: "Cache reads", uncachedInput: "Uncached input", outputTokens: "Output", reasoningTokens: "Reasoning output", visibleOutput: "Visible output",
         cacheHit: "Cache hit", modelRequests: "Model requests", contextWindow: "Context window", inputBreakdown: "Input breakdown", outputBreakdown: "Output breakdown",
         byTurn: "By turn", calls: "Requests", noTokenData: "No token usage was recorded for this task.", expandTurn: "Expand turn", collapseTurn: "Collapse turn", modelLabel: "Model",
+        livePip: "Live window", liveTitle: "Live trajectory", exitPip: "Close live window", live: "Live refresh", syncing: "Syncing", paused: "Paused", retrying: "Retrying", latestEvent: "Latest event", checked: "Last checked", liveSafe: "Safe summary",
+        pipPreparing: "Preparing the live window…", pipUnavailable: "This host cannot open a live window.", pipFailed: "Could not open live window", dockMode: "Codex side panel", returnInline: "Return to inline view",
+        taskTotal: "Task total", liveOutput: "Live output", latestBelow: "Newest below", recentRecords: "recent records", recordTokens: "Record tokens", noRecordTokens: "No token delta for this record",
       };
 
       const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, char => ({
@@ -383,6 +586,653 @@
       async function callTool(name, args) {
         if (window.openai?.callTool) return withTimeout(window.openai.callTool(name, args));
         return request("tools/call", { name, arguments: args });
+      }
+
+      function safeLiveSnapshot(snapshot) {
+        const records = (snapshot?.records || []).slice(-50).map(record => ({
+          ...record,
+          input: null,
+          output: null,
+          metadata: {},
+        }));
+        const visibleTurns = new Set(records.map(record => record.turn));
+        const turns = (snapshot?.turns || []).filter(turn => visibleTurns.has(turn.index));
+        return {
+          ...snapshot,
+          detailLevel: "summary",
+          records,
+          turns,
+          stats: {
+            ...(snapshot?.stats || {}),
+            visibleRecords: records.length,
+            omittedRecords: Math.max(0, (snapshot?.stats?.records || records.length) - records.length),
+          },
+        };
+      }
+
+      function nativePipSupported() {
+        return (
+          typeof HTMLVideoElement !== "undefined"
+          && typeof HTMLCanvasElement !== "undefined"
+          && typeof HTMLVideoElement.prototype.requestPictureInPicture === "function"
+          && typeof HTMLCanvasElement.prototype.captureStream === "function"
+          && document.pictureInPictureEnabled !== false
+        );
+      }
+
+      function hostDockSupported() {
+        return typeof window.openai?.requestDisplayMode === "function";
+      }
+
+      function isNativePipMode() {
+        try {
+          return livePresentation === "native-pip"
+            || pipActive
+            || (pipVideo !== null && document.pictureInPictureElement === pipVideo);
+        } catch {
+          return livePresentation === "native-pip" || pipActive;
+        }
+      }
+
+      const isDockMode = () => livePresentation === "docked";
+      const isLiveMode = () => isDockMode() || isNativePipMode();
+
+      async function requestHostDisplayMode(mode) {
+        const requestDisplayMode = window.openai?.requestDisplayMode;
+        if (typeof requestDisplayMode !== "function") throw new Error(labels.pipUnavailable);
+        const result = await withTimeout(requestDisplayMode({ mode }));
+        const resolved = result?.mode || result?.displayMode || mode;
+        if (resolved !== mode) throw new Error(`${labels.pipFailed}: ${resolved}`);
+        displayMode = resolved;
+        return resolved;
+      }
+
+      function canvasColor(name, fallback) {
+        const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+        return value || fallback;
+      }
+
+      function canvasRoundedRect(context, x, y, width, height, radius) {
+        const resolved = Math.min(radius, width / 2, height / 2);
+        context.beginPath();
+        context.moveTo(x + resolved, y);
+        context.lineTo(x + width - resolved, y);
+        context.quadraticCurveTo(x + width, y, x + width, y + resolved);
+        context.lineTo(x + width, y + height - resolved);
+        context.quadraticCurveTo(x + width, y + height, x + width - resolved, y + height);
+        context.lineTo(x + resolved, y + height);
+        context.quadraticCurveTo(x, y + height, x, y + height - resolved);
+        context.lineTo(x, y + resolved);
+        context.quadraticCurveTo(x, y, x + resolved, y);
+        context.closePath();
+      }
+
+      function fitCanvasText(context, value, maxWidth) {
+        const text = String(value ?? "—");
+        if (context.measureText(text).width <= maxWidth) return text;
+        const suffix = "…";
+        let fitted = "";
+        for (const character of Array.from(text)) {
+          if (context.measureText(fitted + character + suffix).width > maxWidth) break;
+          fitted += character;
+        }
+        return fitted + suffix;
+      }
+
+      function wrapCanvasText(context, value, maxWidth, maxLines) {
+        const characters = Array.from(String(value ?? "—"));
+        const lines = [];
+        let line = "";
+        for (const character of characters) {
+          if (line && context.measureText(line + character).width > maxWidth) {
+            lines.push(line.trimEnd());
+            line = character.trimStart();
+            if (lines.length === maxLines) break;
+          } else {
+            line += character;
+          }
+        }
+        if (lines.length < maxLines && line) lines.push(line.trimEnd());
+        const consumed = lines.join("").length;
+        if (characters.length > consumed && lines.length) {
+          lines[lines.length - 1] = fitCanvasText(context, lines[lines.length - 1] + "…", maxWidth);
+        }
+        return lines;
+      }
+
+      function fillCanvasPanel(context, x, y, width, height, color, radius = 18) {
+        canvasRoundedRect(context, x, y, width, height, radius);
+        context.fillStyle = color;
+        context.fill();
+      }
+
+      function liveStateLabel() {
+        if (document.hidden) return labels.paused;
+        if (liveError) return labels.retrying;
+        return labels.live;
+      }
+
+      function liveCursorState(latest, stats) {
+        const turnIndex = Number.isFinite(latest.turn) ? latest.turn : stats.turns;
+        const turn = "T" + number(turnIndex);
+        const step = Number.isFinite(latest.step) ? "S" + latest.step : "S—";
+        const record = Number.isFinite(latest.index) ? "#" + latest.index : "#—";
+        return { turn, step, record, cursor: `${turn} / ${step} / ${record}` };
+      }
+
+      function drawPipCanvas() {
+        if (!pipCanvas) return;
+        const snapshot = liveData || (data ? safeLiveSnapshot(data) : null);
+        const context = pipCanvas.getContext("2d");
+        if (!context) return;
+
+        const background = canvasColor("--bg", "#12141a");
+        const panel = canvasColor("--panel", "#191c24");
+        const panelAlt = canvasColor("--panel-2", "#222631");
+        const text = canvasColor("--text", "#edf0f7");
+        const muted = canvasColor("--muted", "#a1a9ba");
+        const accent = canvasColor("--accent", "#8d99ff");
+        const success = canvasColor("--success", "#5ed39e");
+        const danger = canvasColor("--danger", "#ff7285");
+        context.clearRect(0, 0, PIP_CANVAS_WIDTH, PIP_CANVAS_HEIGHT);
+        context.fillStyle = background;
+        context.fillRect(0, 0, PIP_CANVAS_WIDTH, PIP_CANVAS_HEIGHT);
+
+        if (!snapshot?.session) {
+          context.fillStyle = muted;
+          context.font = "600 24px -apple-system, BlinkMacSystemFont, sans-serif";
+          context.fillText(labels.pipPreparing, 40, 80);
+          return;
+        }
+
+        const latest = snapshot.records?.at(-1) || {};
+        const stats = snapshot.stats || {};
+        const usage = usageView(hasTokenUsage(stats.tokens) ? stats.tokens : {});
+        const status = latest.status || "—";
+        const { cursor } = liveCursorState(latest, stats);
+        const stateLabel = liveStateLabel();
+        const tokenItems = [
+          [labels.totalTokens, usage.total],
+          [labels.uncachedInput, usage.uncached],
+          [labels.cachedInput, usage.cached],
+          [labels.outputTokens, usage.output],
+          [labels.reasoningTokens, usage.reasoning],
+        ];
+
+        context.textBaseline = "alphabetic";
+        context.fillStyle = accent;
+        context.font = "750 19px -apple-system, BlinkMacSystemFont, sans-serif";
+        context.fillText(labels.liveTitle.toUpperCase(), 40, 55);
+        context.fillStyle = text;
+        context.font = "750 34px -apple-system, BlinkMacSystemFont, sans-serif";
+        context.fillText(fitCanvasText(context, snapshot.session.title || snapshot.session.id, 560), 40, 105);
+
+        context.beginPath();
+        context.arc(50, 150, 8, 0, Math.PI * 2);
+        context.fillStyle = liveError ? danger : success;
+        context.fill();
+        context.fillStyle = muted;
+        context.font = "600 20px -apple-system, BlinkMacSystemFont, sans-serif";
+        context.fillText(stateLabel, 72, 157);
+
+        fillCanvasPanel(context, 40, 185, 560, 120, panelAlt);
+        context.fillStyle = text;
+        context.font = "750 43px ui-monospace, SFMono-Regular, Menlo, monospace";
+        context.fillText(fitCanvasText(context, cursor, 510), 64, 247);
+        context.fillStyle = muted;
+        context.font = "600 18px -apple-system, BlinkMacSystemFont, sans-serif";
+        context.fillText(fitCanvasText(context, status + " · " + number(stats.records) + " " + labels.records, 510), 64, 282);
+
+        fillCanvasPanel(context, 40, 330, 560, 180, panel);
+        context.fillStyle = accent;
+        context.font = "750 16px -apple-system, BlinkMacSystemFont, sans-serif";
+        context.fillText(labels.latestEvent.toUpperCase(), 64, 370);
+        context.fillStyle = text;
+        context.font = "750 25px -apple-system, BlinkMacSystemFont, sans-serif";
+        context.fillText(fitCanvasText(context, latest.event || "—", 510), 64, 410);
+        context.fillStyle = muted;
+        context.font = "500 20px -apple-system, BlinkMacSystemFont, sans-serif";
+        wrapCanvasText(context, latest.summary || labels.noMatch, 510, 3).forEach((line, index) => {
+          context.fillText(line, 64, 450 + index * 27);
+        });
+
+        function drawTokenCard(item, x, y, width, height, emphasized = false) {
+          fillCanvasPanel(context, x, y, width, height, emphasized ? panelAlt : panel);
+          context.fillStyle = muted;
+          context.font = "700 15px -apple-system, BlinkMacSystemFont, sans-serif";
+          context.fillText(fitCanvasText(context, item[0].toUpperCase(), width - 40), x + 20, y + 31);
+          context.fillStyle = emphasized ? accent : text;
+          context.font = "750 28px ui-monospace, SFMono-Regular, Menlo, monospace";
+          context.fillText(fitCanvasText(context, number(item[1]), width - 40), x + 20, y + 72);
+        }
+
+        drawTokenCard(tokenItems[0], 40, 540, 560, 98, true);
+        drawTokenCard(tokenItems[1], 40, 660, 270, 98);
+        drawTokenCard(tokenItems[2], 330, 660, 270, 98);
+        drawTokenCard(tokenItems[3], 40, 780, 270, 98);
+        drawTokenCard(tokenItems[4], 330, 780, 270, 98);
+
+        context.fillStyle = muted;
+        context.font = "600 16px -apple-system, BlinkMacSystemFont, sans-serif";
+        context.fillText(labels.liveSafe, 40, 925);
+        const checked = labels.checked + ": " + (liveCheckedAt ? date(liveCheckedAt) : "—");
+        context.textAlign = "right";
+        context.fillText(fitCanvasText(context, checked, 360), 600, 925);
+        context.textAlign = "left";
+
+        pipCanvas.dataset.cursor = cursor;
+        pipCanvas.dataset.tokens = tokenItems.map(item => String(item[1])).join(",");
+        pipCanvas.dataset.latest = latest.summary || "";
+        pipCanvas.dataset.detailLevel = "summary";
+        pipCanvas.dataset.liveState = stateLabel;
+        pipCanvas.dataset.payload = JSON.stringify({
+          detailLevel: "summary",
+          sessionId: snapshot.session.id,
+          cursor,
+          latest: {
+            event: latest.event || "",
+            summary: latest.summary || "",
+            status,
+          },
+          tokens: tokenItems.map(item => item[1]),
+        });
+      }
+
+      function liveViewState() {
+        const snapshot = liveData || (data ? safeLiveSnapshot(data) : null);
+        if (!snapshot?.session) return null;
+        const latest = snapshot.records?.at(-1) || {};
+        const stats = snapshot.stats || {};
+        const usage = usageView(hasTokenUsage(stats.tokens) ? stats.tokens : {});
+        const cursorState = liveCursorState(latest, stats);
+        return {
+          snapshot,
+          latest,
+          stats,
+          cursor: cursorState.cursor,
+          cursorParts: cursorState,
+          stateLabel: liveStateLabel(),
+          tokenItems: [
+            [labels.totalTokens, usage.total],
+            [labels.uncachedInput, usage.uncached],
+            [labels.cachedInput, usage.cached],
+            [labels.outputTokens, usage.output],
+            [labels.reasoningTokens, usage.reasoning],
+          ],
+        };
+      }
+
+      function dockRecordUsage(record) {
+        if (!hasTokenUsage(record.usage)) {
+          return {
+            tokenValues: "",
+            markup: `<span class="dock-no-usage">${escapeHtml(labels.noRecordTokens)}</span>`,
+          };
+        }
+        const usage = usageView(record.usage);
+        const tokenValues = [usage.total, usage.uncached, usage.cached, usage.output, usage.reasoning]
+          .map(String).join(",");
+        const part = (label, value) => `<span class="dock-usage-part"><span class="dock-usage-part-label">${escapeHtml(label)}</span><strong class="dock-usage-part-value">${escapeHtml(number(value))}</strong></span>`;
+        return {
+          tokenValues,
+          markup: `
+            <div class="dock-usage-row total" data-token-group="total">
+              <span class="dock-usage-name">${escapeHtml(labels.totalTokens)}</span>
+              <strong class="dock-usage-value">${escapeHtml(number(usage.total))}</strong>
+            </div>
+            <div class="dock-usage-row input" data-token-group="input">
+              <span class="dock-usage-name">${escapeHtml(labels.inputTokens)}</span>
+              <strong class="dock-usage-value">${escapeHtml(number(usage.input))}</strong>
+              <span class="dock-usage-parts">${part(labels.uncachedInput, usage.uncached)}${part(labels.cachedInput, usage.cached)}</span>
+            </div>
+            <div class="dock-usage-row output" data-token-group="output">
+              <span class="dock-usage-name">${escapeHtml(labels.outputTokens)}</span>
+              <strong class="dock-usage-value">${escapeHtml(number(usage.output))}</strong>
+              <span class="dock-usage-parts">${part(labels.visibleOutput, usage.visible)}${part(labels.reasoningTokens, usage.reasoning)}</span>
+            </div>`,
+        };
+      }
+
+      function dockRecordMarkup(record, latest) {
+        const safeKinds = new Set(["user", "assistant", "reasoning", "tool", "subagent", "compaction"]);
+        const kind = safeKinds.has(record.kind) ? record.kind : "other";
+        const recordCursor = "T" + number(record.turn) + " / "
+          + (Number.isFinite(record.step) ? "S" + record.step : "S—") + " / "
+          + (Number.isFinite(record.index) ? "#" + record.index : "#—");
+        const state = (record.status || "—") + " · " + duration(record.durationMs);
+        const usage = dockRecordUsage(record);
+        return `<article class="dock-record${latest ? " latest" : ""}" role="listitem"
+          data-index="${escapeHtml(record.index)}" data-kind="${kind}" data-record-tokens="${escapeHtml(usage.tokenValues)}">
+          <div class="dock-record-head"><span class="dock-record-cursor">${escapeHtml(recordCursor)}</span><span class="dock-record-state">${escapeHtml(state)}</span></div>
+          <div class="dock-record-event" title="${escapeHtml(record.event || "—")}">${escapeHtml(record.event || "—")}</div>
+          <div class="dock-record-summary">${escapeHtml(record.summary || labels.noMatch)}</div>
+          <div class="dock-record-usage" aria-label="${escapeHtml(labels.recordTokens)}">${usage.markup}</div>
+        </article>`;
+      }
+
+      function dockRecordRows(records) {
+        return records.map((record, index) => dockRecordMarkup(record, index === records.length - 1)).join("");
+      }
+
+      function setDockText(selector, value) {
+        const element = document.querySelector(selector);
+        if (!element) return;
+        const next = String(value ?? "");
+        if (element.textContent !== next) element.textContent = next;
+      }
+
+      function setDockAttribute(element, name, value) {
+        if (!element) return;
+        const next = String(value ?? "");
+        if (element.getAttribute(name) !== next) element.setAttribute(name, next);
+      }
+
+      function bindDockStream(stream) {
+        if (!stream || stream.dataset.scrollBound === "true") return;
+        stream.dataset.scrollBound = "true";
+        stream.addEventListener("scroll", () => {
+          dockScrollTop = stream.scrollTop;
+          dockFollowLatest = stream.scrollHeight - stream.scrollTop - stream.clientHeight <= 36;
+          stream.dataset.followLatest = String(dockFollowLatest);
+        }, { passive: true });
+      }
+
+      function mountDockedShell(view) {
+        const { snapshot, latest, stats, cursor, cursorParts, stateLabel, tokenItems } = view;
+        const tokenValues = tokenItems.map(item => String(item[1])).join(",");
+        const tokenCards = tokenItems.slice(1).map((item, index) => `
+          <div class="dock-token" data-dock-token="${index + 1}">
+            <div class="dock-token-label">${escapeHtml(item[0])}</div>
+            <div class="dock-token-value">${escapeHtml(number(item[1]))}</div>
+          </div>`).join("");
+        const records = snapshot.records || [];
+        const revision = liveRevision || "";
+        document.body.classList.add("dock-mode");
+        app.innerHTML = `
+          <section class="dock-shell" id="liveDock" role="complementary" aria-label="${escapeHtml(labels.liveTitle)}"
+            data-session-id="${escapeHtml(snapshot.session.id)}"
+            data-presentation="docked" data-detail-level="summary" data-cursor="${escapeHtml(cursor)}"
+            data-tokens="${escapeHtml(tokenValues)}" data-latest="${escapeHtml(latest.summary || "")}" data-record-count="${records.length}">
+            <div class="dock-fixed" id="dockFixedSummary">
+              <header class="dock-head">
+                <div><div class="dock-kicker">${escapeHtml(labels.liveTitle)}</div><div class="dock-title" id="dockSessionTitle" title="${escapeHtml(snapshot.session.title || snapshot.session.id)}">${escapeHtml(snapshot.session.title || snapshot.session.id)}</div></div>
+                <button class="dock-close" id="closeDock" type="button" aria-label="${escapeHtml(labels.returnInline)}" title="${escapeHtml(labels.returnInline)}">×</button>
+              </header>
+              <div class="dock-status">
+                <span class="dock-live-state" aria-live="polite"><span class="dock-live-dot${liveError ? " error" : ""}" id="dockLiveDot"></span><span id="dockLiveState">${escapeHtml(stateLabel)}</span></span>
+                <span class="dock-cursor" id="dockCursor" aria-label="${escapeHtml(cursor)}"><span class="dock-cursor-part" id="dockCursorTurn">${escapeHtml(cursorParts.turn)}</span><span class="dock-cursor-separator">/</span><span class="dock-cursor-part" id="dockCursorStep">${escapeHtml(cursorParts.step)}</span><span class="dock-cursor-separator">/</span><span class="dock-cursor-part" id="dockCursorRecord">${escapeHtml(cursorParts.record)}</span></span>
+                <span class="dock-mode-label">${escapeHtml(labels.dockMode)}</span>
+              </div>
+              <section class="dock-overview" aria-label="${escapeHtml(labels.taskTotal)}">
+                <div class="dock-overview-head"><span class="dock-section-label">${escapeHtml(labels.taskTotal)}</span><span class="dock-overview-meta" id="dockOverviewMeta">${escapeHtml(number(stats.turns) + " " + labels.turns + " · " + number(stats.records) + " " + labels.records)}</span></div>
+                <div class="dock-total"><div><div class="dock-total-label">${escapeHtml(tokenItems[0][0])}</div><div class="dock-total-value" id="dockTotalValue">${escapeHtml(number(tokenItems[0][1]))}</div></div><div class="dock-total-label">${escapeHtml(labels.liveSafe)}</div></div>
+                <div class="dock-token-grid">${tokenCards}</div>
+              </section>
+            </div>
+            <section class="dock-stream" aria-label="${escapeHtml(labels.liveOutput)}">
+              <header class="dock-stream-head"><span class="dock-stream-title">${escapeHtml(labels.liveOutput)}</span><span class="dock-stream-meta" id="dockStreamMeta">${escapeHtml(number(records.length) + " " + labels.recentRecords + " · " + labels.latestBelow)}</span></header>
+              <div class="dock-records" id="liveRecordStream" role="list" data-follow-latest="${String(dockFollowLatest)}" data-revision="${escapeHtml(revision)}">${dockRecordRows(records)}</div>
+            </section>
+            <footer class="dock-foot"><span>${escapeHtml(labels.liveSafe)}</span><span id="dockChecked">${escapeHtml(labels.checked + ": " + (liveCheckedAt ? date(liveCheckedAt) : "—"))}</span></footer>
+          </section>`;
+        document.getElementById("closeDock")?.addEventListener("click", exitPip);
+        const stream = document.getElementById("liveRecordStream");
+        bindDockStream(stream);
+        if (stream && dockFollowLatest) stream.scrollTop = stream.scrollHeight;
+      }
+
+      function patchDockedShell(view) {
+        const { snapshot, latest, stats, cursor, cursorParts, stateLabel, tokenItems } = view;
+        const dock = document.getElementById("liveDock");
+        if (!dock || dock.dataset.sessionId !== String(snapshot.session.id)) {
+          mountDockedShell(view);
+          return;
+        }
+        document.body.classList.add("dock-mode");
+        const records = snapshot.records || [];
+        const tokenValues = tokenItems.map(item => String(item[1])).join(",");
+        setDockAttribute(dock, "data-cursor", cursor);
+        setDockAttribute(dock, "data-tokens", tokenValues);
+        setDockAttribute(dock, "data-latest", latest.summary || "");
+        setDockAttribute(dock, "data-record-count", records.length);
+
+        const title = snapshot.session.title || snapshot.session.id;
+        setDockText("#dockSessionTitle", title);
+        setDockAttribute(document.getElementById("dockSessionTitle"), "title", title);
+        setDockText("#dockLiveState", stateLabel);
+        document.getElementById("dockLiveDot")?.classList.toggle("error", Boolean(liveError));
+        setDockText("#dockCursorTurn", cursorParts.turn);
+        setDockText("#dockCursorStep", cursorParts.step);
+        setDockText("#dockCursorRecord", cursorParts.record);
+        setDockAttribute(document.getElementById("dockCursor"), "aria-label", cursor);
+        setDockText("#dockOverviewMeta", number(stats.turns) + " " + labels.turns + " · " + number(stats.records) + " " + labels.records);
+        setDockText("#dockTotalValue", number(tokenItems[0][1]));
+        tokenItems.slice(1).forEach((item, index) => {
+          setDockText(`[data-dock-token="${index + 1}"] .dock-token-value`, number(item[1]));
+        });
+        setDockText("#dockStreamMeta", number(records.length) + " " + labels.recentRecords + " · " + labels.latestBelow);
+        setDockText("#dockChecked", labels.checked + ": " + (liveCheckedAt ? date(liveCheckedAt) : "—"));
+
+        const stream = document.getElementById("liveRecordStream");
+        if (!stream) return;
+        bindDockStream(stream);
+        const revision = liveRevision || "";
+        if (stream.dataset.revision === revision) return;
+        dockScrollTop = stream.scrollTop;
+        dockFollowLatest = stream.scrollHeight - stream.scrollTop - stream.clientHeight <= 36;
+        stream.innerHTML = dockRecordRows(records);
+        stream.dataset.revision = revision;
+        stream.dataset.followLatest = String(dockFollowLatest);
+        if (dockFollowLatest) stream.scrollTop = stream.scrollHeight;
+        else stream.scrollTop = Math.min(dockScrollTop, Math.max(0, stream.scrollHeight - stream.clientHeight));
+      }
+
+      function drawDockedShell() {
+        const view = liveViewState();
+        if (!view) return;
+        if (document.getElementById("liveDock")) patchDockedShell(view);
+        else mountDockedShell(view);
+      }
+
+      function drawLiveSurface() {
+        if (isDockMode()) drawDockedShell();
+        else drawPipCanvas();
+      }
+
+      function updatePipButton() {
+        const button = document.getElementById("openPip");
+        if (!button) return;
+        const active = isLiveMode();
+        const ready = hostDockSupported() || (nativePipSupported() && pipReady);
+        button.textContent = active ? labels.exitPip : labels.livePip;
+        button.setAttribute("aria-pressed", String(active));
+        button.disabled = presentationBusy || (!active && !ready);
+        button.title = active
+          ? labels.exitPip
+          : hostDockSupported() || pipReady
+            ? labels.livePip
+            : pipPreparationError || (nativePipSupported() ? labels.pipPreparing : labels.pipUnavailable);
+      }
+
+      function prepareNativePipMedia(force = false) {
+        if ((!force && hostDockSupported()) || pipVideo || !nativePipSupported()) {
+          updatePipButton();
+          return pipVideo;
+        }
+        try {
+          const holder = document.createElement("div");
+          holder.id = "nativePipMedia";
+          holder.setAttribute("aria-hidden", "true");
+          const canvas = document.createElement("canvas");
+          canvas.id = "pipCanvas";
+          canvas.width = PIP_CANVAS_WIDTH;
+          canvas.height = PIP_CANVAS_HEIGHT;
+          const video = document.createElement("video");
+          video.id = "pipVideo";
+          video.autoplay = true;
+          video.muted = true;
+          video.playsInline = true;
+          video.disablePictureInPicture = false;
+          holder.append(canvas, video);
+          document.body.append(holder);
+          pipCanvas = canvas;
+          pipVideo = video;
+          drawPipCanvas();
+
+          const markReady = () => {
+            if (!pipVideo || pipVideo.readyState < HTMLMediaElement.HAVE_METADATA) return;
+            pipReady = true;
+            pipPreparationError = null;
+            updatePipButton();
+          };
+          video.addEventListener("loadedmetadata", markReady);
+          video.addEventListener("canplay", markReady);
+          video.addEventListener("enterpictureinpicture", () => activateNativePip());
+          video.addEventListener("leavepictureinpicture", () => finishNativePip(true));
+          pipStream = canvas.captureStream(1);
+          video.srcObject = pipStream;
+          const playback = video.play();
+          if (playback?.catch) playback.catch(error => {
+            pipPreparationError = String(error?.message || error);
+            updatePipButton();
+          });
+          markReady();
+          return video;
+        } catch (error) {
+          pipPreparationError = String(error?.message || error);
+          pipReady = false;
+          updatePipButton();
+          return null;
+        }
+      }
+
+      function stopLiveLoop() {
+        if (liveTimer !== null) window.clearTimeout(liveTimer);
+        liveTimer = null;
+      }
+
+      function activateNativePip() {
+        if (!liveData && data) liveData = safeLiveSnapshot(data);
+        if (!liveSessionId && data) liveSessionId = data.session.id;
+        livePresentation = "native-pip";
+        pipActive = true;
+        document.body.classList.remove("dock-mode");
+        if (pipVideo) pipVideo.dataset.active = "true";
+        drawPipCanvas();
+        updatePipButton();
+        startLiveLoop();
+      }
+
+      function activateDockedWindow() {
+        if (!liveData && data) liveData = safeLiveSnapshot(data);
+        if (!liveSessionId && data) liveSessionId = data.session.id;
+        livePresentation = "docked";
+        dockFollowLatest = true;
+        dockScrollTop = 0;
+        pipActive = false;
+        if (pipVideo) pipVideo.dataset.active = "false";
+        drawDockedShell();
+        startLiveLoop();
+      }
+
+      function finishLiveWindow(reload) {
+        const wasActive = isLiveMode() || liveSessionId !== null;
+        const sessionId = liveSessionId;
+        const detailLevel = restoreDetailLevel;
+        livePresentation = "none";
+        pipActive = false;
+        pipWindow = null;
+        if (pipVideo) pipVideo.dataset.active = "false";
+        stopLiveLoop();
+        liveData = null;
+        liveSessionId = null;
+        liveRevision = null;
+        liveCheckedAt = null;
+        liveError = null;
+        liveFailures = 0;
+        dockFollowLatest = true;
+        dockScrollTop = 0;
+        document.body.classList.remove("dock-mode");
+        drawPipCanvas();
+        if (data) drawShell();
+        if (reload && wasActive && !busy && data?.session?.id === sessionId) {
+          void loadSession(sessionId, detailLevel);
+        }
+      }
+
+      function finishNativePip(reload) {
+        if (isDockMode()) return;
+        finishLiveWindow(reload);
+      }
+
+      async function enterPip() {
+        if (!data || presentationBusy) return;
+        if (isLiveMode()) {
+          await exitPip();
+          return;
+        }
+        restoreDetailLevel = data.detailLevel === "full" ? "full" : "summary";
+        liveData = safeLiveSnapshot(data);
+        liveSessionId = data.session.id;
+        liveRevision = null;
+        liveCheckedAt = null;
+        liveFailures = 0;
+        liveError = null;
+        presentationBusy = true;
+        updatePipButton();
+        let hostError = null;
+        try {
+          if (hostDockSupported()) {
+            try {
+              await requestHostDisplayMode("fullscreen");
+              activateDockedWindow();
+              return;
+            } catch (error) {
+              hostError = error;
+            }
+          }
+          const video = prepareNativePipMedia(true);
+          drawPipCanvas();
+          if (!video || !pipReady) throw new Error(pipPreparationError || labels.pipUnavailable);
+          pipWindow = await withTimeout(video.requestPictureInPicture());
+          activateNativePip();
+          pipWindow?.addEventListener?.("resize", drawPipCanvas);
+        } catch (error) {
+          const reason = hostError
+            ? String(hostError?.message || hostError) + "; " + String(error?.message || error)
+            : String(error?.message || error);
+          finishLiveWindow(false);
+          showLoadError(new Error(labels.pipFailed + ": " + reason));
+        } finally {
+          presentationBusy = false;
+          updatePipButton();
+        }
+      }
+
+      async function exitPip() {
+        if (!isLiveMode() || presentationBusy) return;
+        const presentation = livePresentation;
+        presentationBusy = true;
+        updatePipButton();
+        try {
+          if (presentation === "docked") {
+            await requestHostDisplayMode("inline");
+            if (isDockMode()) finishLiveWindow(true);
+          } else if (
+            typeof document.exitPictureInPicture === "function"
+            && document.pictureInPictureElement
+          ) {
+            await withTimeout(document.exitPictureInPicture());
+          }
+          if (isNativePipMode()) finishNativePip(true);
+        } catch (error) {
+          liveError = String(error?.message || error);
+          drawLiveSurface();
+          updatePipButton();
+        } finally {
+          presentationBusy = false;
+          updatePipButton();
+        }
       }
 
       function computeDomain() {
@@ -460,17 +1310,21 @@
         const previousScrollHeight = previousLedger?.scrollHeight || 0;
         if (resetToLatest) expandedTurns = new Set(Number.isFinite(nextLastTurn) ? [nextLastTurn] : []);
         data = next;
+        if (isLiveMode() && next.session.id === liveSessionId) liveData = safeLiveSnapshot(next);
+        prepareNativePipMedia();
         fullConfirmationOpen = false;
         fullDomain = computeDomain();
         viewport = { ...fullDomain };
         selectedRange = null;
         selectedIndex = !resetToLatest && next.records.some(record => record.index === previousSelectedIndex) ? previousSelectedIndex : next.records.at(-1)?.index || null;
-        drawShell();
+        if (isDockMode()) drawDockedShell(); else drawShell();
+        if (isNativePipMode()) drawPipCanvas();
         const ledgerWrap = document.querySelector(".ledger-wrap");
         if (ledgerWrap) {
           if (options.prepend) ledgerWrap.scrollTop = previousScrollTop + Math.max(0, ledgerWrap.scrollHeight - previousScrollHeight);
           else ledgerWrap.scrollTop = resetToLatest ? ledgerWrap.scrollHeight : previousScrollTop;
         }
+        if (isLiveMode() && !liveBusy && liveTimer === null) startLiveLoop();
       }
 
       function stat(label, value) {
@@ -634,18 +1488,98 @@
         wrap.addEventListener("scroll", hideLedgerTooltip, { passive: true });
       }
 
+      function liveDelay() {
+        if (!liveFailures) return LIVE_INTERVAL_MS;
+        return Math.min(LIVE_MAX_BACKOFF_MS, LIVE_INTERVAL_MS * (2 ** liveFailures));
+      }
+
+      function scheduleLiveRefresh(delay = LIVE_INTERVAL_MS) {
+        stopLiveLoop();
+        if (!isLiveMode() || document.hidden) return;
+        liveTimer = window.setTimeout(() => {
+          liveTimer = null;
+          void refreshLiveTrajectory();
+        }, delay);
+      }
+
+      function startLiveLoop() {
+        if (!isLiveMode() || liveBusy || liveTimer !== null) return;
+        scheduleLiveRefresh(0);
+      }
+
+      async function refreshLiveTrajectory() {
+        if (!isLiveMode() || liveBusy || document.hidden || !liveSessionId) return;
+        liveBusy = true;
+        const sessionId = liveSessionId;
+        try {
+          const liveArgs = { sessionId, includeArchived: true };
+          if (liveRevision) liveArgs.revision = liveRevision;
+          const result = await callTool("get_codex_trajectory_update", liveArgs);
+          if (!isLiveMode() || liveSessionId !== sessionId) return;
+          if (result?.isError) {
+            const message = (result.content || []).map(item => item?.text).filter(Boolean).join(" ");
+            throw new Error(message || labels.loadError);
+          }
+          const update = result?.structuredContent;
+          if (
+            !update
+            || update.schemaVersion !== 1
+            || typeof update.unchanged !== "boolean"
+            || !/^[0-9a-f]{64}$/.test(update.revision || "")
+          ) throw new Error(labels.loadError);
+          if (!update.unchanged) {
+            const trajectory = update.trajectory;
+            if (
+              trajectory?.session?.id !== sessionId
+              || trajectory.detailLevel !== "summary"
+              || !Array.isArray(trajectory.records)
+            ) throw new Error(labels.loadError);
+            liveData = safeLiveSnapshot(trajectory);
+          }
+          liveRevision = update.revision;
+          liveCheckedAt = new Date().toISOString();
+          liveFailures = 0;
+          liveError = null;
+        } catch (error) {
+          if (isLiveMode() && liveSessionId === sessionId) {
+            liveFailures = Math.min(liveFailures + 1, 8);
+            liveError = String(error?.message || error);
+          }
+        } finally {
+          liveBusy = false;
+          if (isLiveMode()) {
+            drawLiveSurface();
+            scheduleLiveRefresh(liveDelay());
+          }
+        }
+      }
+
+
       function drawShell() {
+        document.body.classList.remove("dock-mode");
         const stats = data.stats || {};
         const turns = data.turns || [];
         const pagination = pageState(data);
         const fullDetails = data.detailLevel === "full";
         const totalDuration = turns.reduce((sum, turn) => sum + (Number.isFinite(turn.durationMs) ? turn.durationMs : 0), 0);
         const tokenTotal = hasTokenUsage(stats.tokens) ? usageView(stats.tokens).total : undefined;
+        const pipActiveNow = isLiveMode();
+        const pipReadyNow = hostDockSupported() || (nativePipSupported() && pipReady);
+        const pipButtonTitle = pipActiveNow
+          ? labels.exitPip
+          : pipReadyNow
+            ? labels.livePip
+            : pipPreparationError || (nativePipSupported() ? labels.pipPreparing : labels.pipUnavailable);
+        const pipButton = '<button id="openPip" type="button" aria-pressed="'
+          + String(pipActiveNow) + '" '
+          + (presentationBusy || (!pipActiveNow && !pipReadyNow) ? "disabled " : "")
+          + 'title="' + escapeHtml(pipButtonTitle) + '">'
+          + (pipActiveNow ? labels.exitPip : labels.livePip) + "</button>";
         app.innerHTML = `
           <section class="shell">
             <header class="topbar">
               <div><div class="eyebrow">${labels.eyebrow}</div><h1>${escapeHtml(data.session.title)}</h1><div class="subtitle" title="${escapeHtml(data.session.cwd || "")}">${escapeHtml(data.session.model || "Codex")} · ${escapeHtml(data.session.cwd || data.session.id)}</div></div>
-              <div class="top-actions"><select id="sessionSelect" aria-label="${labels.current}"></select><button id="refresh" type="button">${labels.refresh}</button></div>
+              <div class="top-actions"><select id="sessionSelect" aria-label="${labels.current}"></select>${pipButton}<button id="refresh" type="button">${labels.refresh}</button></div>
             </header>
             <div class="privacy-bar" role="status">
               <div class="privacy-copy"><div><strong>${fullDetails ? labels.fullMode : labels.safeMode}</strong> · ${fullDetails ? labels.fullDescription : labels.safeDescription}</div>${!fullDetails && fullConfirmationOpen ? `<div class="privacy-warning" id="fullDetailsWarning" role="alert">${labels.confirmFull}</div>` : ""}</div>
@@ -691,6 +1625,7 @@
         document.getElementById("search").addEventListener("input", event => { search = event.target.value; drawLedger(); });
         document.getElementById("kindFilter").addEventListener("change", event => { kind = event.target.value; drawLedger(); });
         document.getElementById("refresh").addEventListener("click", () => loadSession(data.session.id, data.detailLevel));
+        document.getElementById("openPip")?.addEventListener("click", enterPip);
         document.getElementById("sessionSelect").addEventListener("change", event => loadSession(event.target.value, "summary"));
         document.getElementById("loadEarlier")?.addEventListener("click", loadEarlierRecords);
         document.querySelector("details.token-turns")?.addEventListener("toggle", event => {
@@ -1036,6 +1971,16 @@
           ${detailSection(labels.input, record.input, true)}${detailSection(labels.output, record.output, true)}${detailSection(labels.usage, usage)}${detailSection(labels.metadata, metadata)}`;
       }
 
+      window.addEventListener("openai:set_globals", event => {
+        const globals = event?.detail?.globals || event?.detail || {};
+        const nextMode = globals.displayMode;
+        if (nextMode !== "inline" && nextMode !== "fullscreen") return;
+        displayMode = nextMode;
+        if (!isDockMode()) return;
+        if (nextMode === "fullscreen") drawDockedShell();
+        else finishLiveWindow(true);
+      });
+
       window.addEventListener("message", event => {
         if (event.source !== window.parent) return;
         const message = event.data;
@@ -1049,6 +1994,13 @@
         }
         if (message.method === "ui/notifications/tool-result" && message.params?.structuredContent) render(message.params.structuredContent);
       }, { passive: true });
+
+      document.addEventListener("visibilitychange", () => {
+        if (!isLiveMode()) return;
+        stopLiveLoop();
+        drawLiveSurface();
+        if (!document.hidden) startLiveLoop();
+      });
 
       const initial = window.openai?.toolOutput;
       if (initial?.session) render(initial);

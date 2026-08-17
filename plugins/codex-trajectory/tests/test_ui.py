@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Iterator
 
 import pytest
-from playwright.sync_api import FrameLocator, Page, sync_playwright
+from playwright.sync_api import FrameLocator, Page, expect, sync_playwright
 from ui_harness import start_server
 
 pytestmark = [
@@ -31,6 +32,59 @@ def page() -> Iterator[Page]:
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
         context = browser.new_context(viewport={"width": 1280, "height": 900})
+        context.add_init_script(
+            """
+            (() => {
+              let activePipElement = null;
+              const define = (target, name, descriptor) => {
+                try { Object.defineProperty(target, name, descriptor); } catch {}
+              };
+              define(Document.prototype, "pictureInPictureEnabled", {
+                configurable: true,
+                get: () => true,
+              });
+              define(Document.prototype, "pictureInPictureElement", {
+                configurable: true,
+                get: () => activePipElement,
+              });
+              define(HTMLMediaElement.prototype, "readyState", {
+                configurable: true,
+                get: () => HTMLMediaElement.HAVE_ENOUGH_DATA,
+              });
+              define(HTMLMediaElement.prototype, "play", {
+                configurable: true,
+                value() {
+                  this.dispatchEvent(new Event("canplay"));
+                  return Promise.resolve();
+                },
+              });
+              define(HTMLVideoElement.prototype, "requestPictureInPicture", {
+                configurable: true,
+                value() {
+                  if (new URLSearchParams(location.search).get("nativePipUnavailable") === "1") {
+                    return Promise.reject(new DOMException(
+                      "Picture-in-Picture is not available.",
+                      "NotSupportedError",
+                    ));
+                  }
+                  activePipElement = this;
+                  this.dataset.requestCount = String(Number(this.dataset.requestCount || 0) + 1);
+                  this.dispatchEvent(new Event("enterpictureinpicture"));
+                  return Promise.resolve({ addEventListener() {} });
+                },
+              });
+              define(Document.prototype, "exitPictureInPicture", {
+                configurable: true,
+                value() {
+                  const previous = activePipElement;
+                  activePipElement = null;
+                  previous?.dispatchEvent(new Event("leavepictureinpicture"));
+                  return Promise.resolve();
+                },
+              });
+            })();
+            """
+        )
         yield context.new_page()
         context.close()
         browser.close()
@@ -225,6 +279,19 @@ def test_full_details_refresh_and_task_switch_safety(page: Page, harness_url: st
     frame.locator('tr[data-id="record-1-3"]').click()
     assert "uv run pytest" in frame.locator("#inspector").inner_text()
 
+    open_pip = frame.get_by_role("button", name="Live window")
+    expect(open_pip).to_be_enabled()
+    open_pip.click()
+    close_pip = frame.get_by_role("button", name="Close live window")
+    expect(close_pip).to_have_attribute("aria-pressed", "true")
+    expect(frame.locator("#pipVideo")).to_have_attribute("data-active", "true")
+    payload = json.loads(frame.locator("#pipCanvas").get_attribute("data-payload") or "{}")
+    assert payload["detailLevel"] == "summary"
+    assert "uv run pytest" not in json.dumps(payload)
+    assert frame.get_by_text("Full details", exact=True).is_visible()
+    close_pip.click()
+    frame.get_by_text("Full details", exact=True).wait_for()
+
     frame.get_by_role("button", name="Refresh").click()
     frame.get_by_text("Full details", exact=True).wait_for()
     assert frame.get_by_text("Full details", exact=True).is_visible()
@@ -235,6 +302,183 @@ def test_full_details_refresh_and_task_switch_safety(page: Page, harness_url: st
     assert frame.locator("tr.record").count() == 3
     assert frame.locator(".turn-toggle").count() == 1
     assert frame.locator(".turn-toggle").get_attribute("aria-expanded") == "true"
+
+
+def test_live_pip_refreshes_index_and_tokens_then_stops(page: Page, harness_url: str) -> None:
+    page.goto(f"{harness_url}/en")
+    frame = viewer(page)
+    frame.get_by_text("Safe summary", exact=True).wait_for()
+
+    open_pip = frame.get_by_role("button", name="Live window")
+    expect(open_pip).to_be_enabled()
+    open_pip.click()
+    close_pip = frame.get_by_role("button", name="Close live window")
+    expect(close_pip).to_have_attribute("aria-pressed", "true")
+    expect(frame.locator("#pipVideo")).to_have_attribute("data-active", "true")
+    assert (
+        frame.locator("html").evaluate("() => typeof window.openai?.requestDisplayMode")
+        == "undefined"
+    )
+    expect(frame.locator("#pipCanvas")).to_have_attribute("data-cursor", "T2 / S4 / #9")
+    expect(frame.locator("#pipCanvas")).to_have_attribute("data-tokens", "640,128,384,128,40")
+    assert frame.get_by_text("Safe summary", exact=True).is_visible()
+    assert frame.locator("#ledger").count() == 1
+    page.wait_for_function("window.__trajectoryToolNames.includes('get_codex_trajectory_update')")
+
+    page.evaluate("window.__advanceTrajectoryLive()")
+    expect(frame.locator("#pipCanvas")).to_have_attribute(
+        "data-latest", "Live update arrived", timeout=6_000
+    )
+    expect(frame.locator("#pipCanvas")).to_have_attribute("data-cursor", "T3 / S1 / #10")
+    expect(frame.locator("#pipCanvas")).to_have_attribute("data-tokens", "704,144,416,144,44")
+    live_calls = page.evaluate(
+        """() => window.__trajectoryCalls.filter(
+          (_, index) => window.__trajectoryToolNames[index] === 'get_codex_trajectory_update'
+        )"""
+    )
+    assert len(live_calls) >= 2
+    assert live_calls[0].get("revision") is None
+    assert live_calls[-1]["revision"] == "1".zfill(64)
+
+    close_pip.click()
+    frame.get_by_role("button", name="Live window").wait_for()
+    expect(frame.locator("#pipVideo")).to_have_attribute("data-active", "false")
+    live_call_count = (
+        "toolName => window.__trajectoryToolNames.filter(name => name === toolName).length"
+    )
+    stopped_at = page.evaluate(live_call_count, "get_codex_trajectory_update")
+    page.wait_for_timeout(2_700)
+    assert page.evaluate(live_call_count, "get_codex_trajectory_update") == stopped_at
+
+
+def test_codex_host_uses_full_height_frozen_totals_and_scrolling_live_output(
+    page: Page, harness_url: str
+) -> None:
+    page.goto(f"{harness_url}/en-dock")
+    frame = viewer(page)
+    frame.get_by_text("Safe summary", exact=True).wait_for()
+
+    frame.get_by_role("button", name="Live window").click()
+    dock = frame.locator("#liveDock")
+    dock.wait_for()
+    expect(dock).to_have_attribute("data-presentation", "docked")
+    expect(dock).to_have_attribute("data-detail-level", "summary")
+    expect(dock).to_have_attribute("data-cursor", "T2 / S4 / #9")
+    expect(dock).to_have_attribute("data-tokens", "640,128,384,128,40")
+    expect(dock).to_have_attribute("data-record-count", "9")
+    assert frame.get_by_text("Codex side panel", exact=True).is_visible()
+    assert frame.get_by_text("Task total", exact=True).is_visible()
+    assert frame.get_by_text("Live output", exact=True).is_visible()
+    assert frame.locator(".dock-total-value").inner_text() == "640"
+    assert frame.locator("#pipVideo").count() == 0
+    assert frame.get_by_role("alert").count() == 0
+    assert frame.locator("body").evaluate("body => body.classList.contains('dock-mode')")
+    assert dock.evaluate(
+        """element => {
+          const rect = element.getBoundingClientRect();
+          return rect.top <= 1 && rect.left <= 1
+            && rect.right >= window.innerWidth - 1
+            && rect.bottom >= window.innerHeight - 1;
+        }"""
+    )
+    fixed_summary = frame.locator("#dockFixedSummary")
+    record_stream = frame.locator("#liveRecordStream")
+    assert fixed_summary.is_visible()
+    assert fixed_summary.evaluate(
+        "element => !document.querySelector('#liveRecordStream').contains(element)"
+    )
+    assert record_stream.evaluate("element => getComputedStyle(element).overflowY") == "auto"
+    assert frame.locator(".dock-record").count() == 9
+    latest_record = frame.locator(".dock-record.latest")
+    expect(latest_record).to_have_attribute("data-index", "9")
+    expect(latest_record).to_have_attribute("data-record-tokens", "248,64,128,56,16")
+    usage_rows = latest_record.locator(".dock-usage-row")
+    assert usage_rows.count() == 3
+    assert usage_rows.locator(".dock-usage-name").all_inner_texts() == [
+        "TOTAL TOKENS",
+        "INPUT",
+        "OUTPUT",
+    ]
+    assert usage_rows.locator(".dock-usage-value").all_inner_texts() == ["248", "192", "56"]
+    input_row = latest_record.locator('[data-token-group="input"]')
+    assert input_row.locator(".dock-usage-part-label").all_inner_texts() == [
+        "Uncached input",
+        "Cache reads",
+    ]
+    assert input_row.locator(".dock-usage-part-value").all_inner_texts() == ["64", "128"]
+    output_row = latest_record.locator('[data-token-group="output"]')
+    assert output_row.locator(".dock-usage-part-label").all_inner_texts() == [
+        "Visible output",
+        "Reasoning output",
+    ]
+    assert output_row.locator(".dock-usage-part-value").all_inner_texts() == ["40", "16"]
+    assert record_stream.evaluate(
+        "element => Math.abs(element.scrollHeight - element.clientHeight - element.scrollTop) <= 2"
+    )
+    page.wait_for_function("window.__trajectoryDisplayModes.length === 1")
+    assert page.evaluate("window.__trajectoryDisplayModes") == ["fullscreen"]
+    page.wait_for_function("window.__trajectoryToolNames.includes('get_codex_trajectory_update')")
+
+    status_before = frame.locator(".dock-status").evaluate(
+        """element => {
+          document.querySelector('#liveDock').dataset.stabilityProbe = 'kept';
+          element.dataset.stabilityProbe = 'kept';
+          const rect = element.getBoundingClientRect();
+          return {top: rect.top, left: rect.left, width: rect.width, height: rect.height};
+        }"""
+    )
+    page.wait_for_timeout(2_200)
+    expect(dock).to_have_attribute("data-stability-probe", "kept")
+    expect(frame.locator(".dock-status")).to_have_attribute("data-stability-probe", "kept")
+    expect(frame.locator("#dockLiveState")).to_have_text("Live refresh")
+    assert (
+        frame.locator(".dock-live-dot").evaluate(
+            "element => getComputedStyle(element).animationName"
+        )
+        == "none"
+    )
+    status_after = frame.locator(".dock-status").evaluate(
+        """element => {
+          const rect = element.getBoundingClientRect();
+          return {top: rect.top, left: rect.left, width: rect.width, height: rect.height};
+        }"""
+    )
+    assert status_after == status_before
+
+    page.evaluate("window.__advanceTrajectoryLive()")
+    expect(dock).to_have_attribute("data-latest", "Live update arrived", timeout=6_000)
+    expect(dock).to_have_attribute("data-cursor", "T3 / S1 / #10")
+    expect(dock).to_have_attribute("data-tokens", "704,144,416,144,44")
+    expect(dock).to_have_attribute("data-record-count", "10")
+    expect(frame.locator(".dock-total-value")).to_have_text("704")
+    latest_record = frame.locator(".dock-record.latest")
+    expect(latest_record).to_have_attribute("data-index", "10")
+    expect(latest_record).to_have_attribute("data-record-tokens", "64,16,32,16,4")
+    assert latest_record.locator(".dock-usage-value").all_inner_texts() == ["64", "48", "16"]
+    assert latest_record.locator(
+        '[data-token-group="output"] .dock-usage-part-value'
+    ).all_inner_texts() == [
+        "12",
+        "4",
+    ]
+    assert "Live update arrived" in latest_record.inner_text()
+    assert record_stream.evaluate(
+        "element => Math.abs(element.scrollHeight - element.clientHeight - element.scrollTop) <= 2"
+    )
+
+    frame.get_by_role("button", name="Return to inline view").click()
+    frame.get_by_role("button", name="Live window").wait_for()
+    page.wait_for_function("window.__trajectoryDisplayModes.length === 2")
+    assert page.evaluate("window.__trajectoryDisplayModes") == ["fullscreen", "inline"]
+    assert frame.locator("#liveDock").count() == 0
+    assert not frame.locator("body").evaluate("body => body.classList.contains('dock-mode')")
+
+    live_call_count = (
+        "toolName => window.__trajectoryToolNames.filter(name => name === toolName).length"
+    )
+    stopped_at = page.evaluate(live_call_count, "get_codex_trajectory_update")
+    page.wait_for_timeout(2_700)
+    assert page.evaluate(live_call_count, "get_codex_trajectory_update") == stopped_at
 
 
 def test_tool_error_is_reported_without_locking_controls(page: Page, harness_url: str) -> None:

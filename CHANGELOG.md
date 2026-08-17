@@ -4,6 +4,15 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## [Unreleased]
 
+### Added
+
+- Add a bilingual adaptive live trajectory window with current turn/step/index, latest event, status, cumulative Token counters, user-controlled entry/exit, visibility-aware serialized refreshes, and retry backoff—using the Codex side panel when the host bridge is available and browser-native canvas-to-video PiP otherwise, without a standalone app.
+- Add an app-only safe-summary update tool that skips projection when an opaque rollout-lineage revision is unchanged and returns a bounded 50-record tail after changes.
+
+### Changed
+
+- Redesign the Codex live presentation as a full-height side panel with frozen whole-task Token totals and a chronological, independently scrolling event stream that follows the newest record at the bottom. Per-record Token deltas now use aligned Total/Input/Output rows with input and output subsets, while the mounted shell updates in place so one-second checks do not shake the status row.
+
 ## [0.2.0] - 2026-08-17
 
 ### Added

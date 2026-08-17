@@ -22,11 +22,15 @@ def test_tool_definitions_are_read_only_and_expose_detail_level() -> None:
         "list_codex_sessions",
         "get_codex_trajectory",
         "show_codex_trajectory",
+        "get_codex_trajectory_update",
     ]
     assert all(tool["annotations"]["readOnlyHint"] for tool in tools)
     assert tools[1]["inputSchema"]["properties"]["detailLevel"]["default"] == "summary"
     assert tools[1]["inputSchema"]["properties"]["beforeRecord"]["minimum"] == 1
     assert tools[2]["_meta"]["ui"]["resourceUri"] == UI_URI
+    assert tools[3]["_meta"]["ui"]["visibility"] == ["app"]
+    assert tools[3]["_meta"]["openai/visibility"] == "private"
+    assert tools[3]["inputSchema"]["properties"]["revision"]["pattern"] == "^[0-9a-f]{64}$"
 
 
 @pytest.mark.parametrize(
@@ -45,6 +49,12 @@ def test_tool_definitions_are_read_only_and_expose_detail_level() -> None:
         ("get_codex_trajectory", {"sessionId": 4}, "string"),
         ("get_codex_trajectory", {"includeArchived": 1}, "boolean"),
         ("get_codex_trajectory", {"detailLevel": "verbose"}, "detailLevel"),
+        ("get_codex_trajectory_update", {"sessionId": 4}, "string"),
+        ("get_codex_trajectory_update", {"revision": 1}, "string"),
+        ("get_codex_trajectory_update", {"revision": "bad"}, "SHA-256"),
+        ("get_codex_trajectory_update", {"revision": "A" * 64}, "SHA-256"),
+        ("get_codex_trajectory_update", {"includeArchived": 1}, "boolean"),
+        ("get_codex_trajectory_update", {"extra": 1}, "Unknown argument"),
         ("unknown", {}, "Unknown tool"),
     ],
 )
@@ -78,7 +88,7 @@ def test_protocol_methods_and_resource(codex_home: Path) -> None:
     negotiated = handle("initialize", {"protocolVersion": "2099-01-01"})
     assert negotiated["protocolVersion"] == "2025-06-18"
     assert handle("ping", {}) == {}
-    assert len(handle("tools/list", {})["tools"]) == 3
+    assert len(handle("tools/list", {})["tools"]) == 4
     assert handle("resources/list", {})["resources"][0]["uri"] == UI_URI
     resource = handle("resources/read", {"uri": UI_URI})["contents"][0]
     assert resource["mimeType"] == "text/html;profile=mcp-app"
@@ -119,6 +129,33 @@ def test_protocol_methods_and_resource(codex_home: Path) -> None:
     assert earlier["structuredContent"]["pagination"]["laterRecords"] == 5
     assert shown["structuredContent"]["detailLevel"] == "full"
     assert shown["_meta"]["ui"]["resourceUri"] == UI_URI
+    live = handle(
+        "tools/call",
+        {
+            "name": "get_codex_trajectory_update",
+            "arguments": {"sessionId": "session-alpha"},
+        },
+    )
+    update = live["structuredContent"]
+    assert update["unchanged"] is False
+    assert len(update["revision"]) == 64
+    assert update["trajectory"]["detailLevel"] == "summary"
+    assert "recentSessions" not in update["trajectory"]
+    unchanged = handle(
+        "tools/call",
+        {
+            "name": "get_codex_trajectory_update",
+            "arguments": {
+                "sessionId": "session-alpha",
+                "revision": update["revision"],
+            },
+        },
+    )["structuredContent"]
+    assert unchanged == {
+        "schemaVersion": 1,
+        "unchanged": True,
+        "revision": update["revision"],
+    }
     with pytest.raises(ValueError, match="Unknown resource"):
         handle("resources/read", {"uri": "ui://unknown"})
     with pytest.raises(ValueError, match="Method not found"):
@@ -134,6 +171,40 @@ def test_protocol_methods_and_resource(codex_home: Path) -> None:
             handle("tools/call", {"name": invalid_name, "arguments": {}})
     with pytest.raises(JsonRpcError, match="Unknown tool"):
         handle("tools/call", {"name": "missing", "arguments": {}})
+
+
+def test_live_update_reprojects_only_after_the_rollout_changes(codex_home: Path) -> None:
+    first = call_tool(
+        "get_codex_trajectory_update",
+        {"sessionId": "session-alpha"},
+    )["structuredContent"]
+    rollout = codex_home / "sessions" / "2026" / "rollout-alpha.jsonl"
+    with rollout.open("a", encoding="utf-8") as handle_stream:
+        handle_stream.write(
+            json.dumps(
+                {
+                    "timestamp": "2026-08-14T00:00:12.000Z",
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "id": "message-live",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": "Live update"}],
+                    },
+                }
+            )
+            + "\n"
+        )
+
+    second = call_tool(
+        "get_codex_trajectory_update",
+        {"sessionId": "session-alpha", "revision": first["revision"]},
+    )["structuredContent"]
+
+    assert second["unchanged"] is False
+    assert second["revision"] != first["revision"]
+    assert second["trajectory"]["stats"]["records"] == 10
+    assert second["trajectory"]["records"][-1]["summary"] == "Live update"
 
 
 def test_stdio_server_handshake_and_unicode(codex_home: Path) -> None:

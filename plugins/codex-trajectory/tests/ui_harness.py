@@ -8,7 +8,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 ASSET = Path(__file__).parents[1] / "assets" / "trajectory.html"
 
@@ -348,11 +348,19 @@ def _trajectory(
     }
 
 
-def wrapper_html(language: str) -> str:
+def wrapper_html(
+    language: str,
+    *,
+    host_display: bool = False,
+    native_pip_unavailable: bool = False,
+) -> str:
     """Create a parent page that emulates the Codex app-resource bridge."""
     payload = json.dumps(demo_trajectories(), ensure_ascii=False).replace("</", "<\\/")
+    requested_language = "zh-CN" if language == "zh" else "en"
     trajectory_path = (
-        "/trajectory.html?lang=zh-CN" if language == "zh" else "/trajectory.html?lang=en"
+        f"/trajectory.html?lang={requested_language}"
+        f"&hostDisplay={int(host_display)}"
+        f"&nativePipUnavailable={int(native_pip_unavailable)}"
     )
     return f"""<!doctype html>
 <html lang="{language}">
@@ -370,6 +378,64 @@ def wrapper_html(language: str) -> str:
 const trajectories = {payload};
 const viewer = document.getElementById("viewer");
 window.__trajectoryCalls = [];
+window.__trajectoryToolNames = [];
+window.__trajectoryDisplayModes = [];
+let liveVersion = 1;
+const currentLiveRevision = () => liveVersion.toString(16).padStart(64, "0");
+window.__advanceTrajectoryLive = () => {{
+  const source = trajectories["session-alpha"];
+  if (!source.records.some(record => record.index === 10)) {{
+    const usage = {{
+      input_tokens: 48,
+      cached_input_tokens: 32,
+      output_tokens: 16,
+      reasoning_output_tokens: 4,
+      total_tokens: 64,
+    }};
+    source.records.push({{
+      ...structuredClone(source.records.at(-1)),
+      index: 10,
+      id: "record-3-10",
+      turn: 3,
+      step: 1,
+      kind: "assistant",
+      event: "Assistant message",
+      summary: "Live update arrived",
+      status: "running",
+      callId: null,
+      usage,
+      input: null,
+      output: null,
+      metadata: {{}},
+    }});
+    source.turns.push({{
+      index: 3,
+      id: "turn-3",
+      startedAt: source.records.at(-1).startedAt,
+      completedAt: null,
+      durationMs: 0,
+      timeToFirstTokenMs: 0,
+      status: "running",
+      error: null,
+      records: 1,
+      steps: 1,
+      model: source.session.model,
+      modelCalls: 1,
+      usage,
+    }});
+    source.stats.turns = 3;
+    source.stats.records = 10;
+    source.stats.visibleRecords = 10;
+    source.stats.tokens = {{
+      input_tokens: 560,
+      cached_input_tokens: 416,
+      output_tokens: 144,
+      reasoning_output_tokens: 44,
+      total_tokens: 704,
+    }};
+  }}
+  liveVersion += 1;
+}};
 function trajectory(
   sessionId = "session-alpha",
   detailLevel = "summary",
@@ -417,22 +483,41 @@ function notify(value) {{
 }}
 viewer.addEventListener("load", () => notify(trajectory()));
 window.addEventListener("message", event => {{
-  if (event.source !== viewer.contentWindow || event.data?.method !== "tools/call") return;
+  if (event.source !== viewer.contentWindow) return;
+  if (event.data?.method === "trajectory/display-mode") {{
+    window.__trajectoryDisplayModes.push(event.data.params?.mode);
+    return;
+  }}
+  if (event.data?.method !== "tools/call") return;
+  const name = event.data.params?.name;
   const args = event.data.params?.arguments || {{}};
+  window.__trajectoryToolNames.push(name);
   window.__trajectoryCalls.push(structuredClone(args));
   if (args.sessionId === "session-missing") {{
     const result = {{isError: true, content: [{{type: "text", text: "Task disappeared"}}]}};
     viewer.contentWindow.postMessage({{jsonrpc:"2.0",id:event.data.id,result}}, "*");
     return;
   }}
-  const result = {{
-    structuredContent: trajectory(
-      args.sessionId,
-      args.detailLevel,
-      args.maxRecords,
-      args.beforeRecord ?? null
-    )
-  }};
+  let result;
+  if (name === "get_codex_trajectory_update") {{
+    const revision = currentLiveRevision();
+    const unchanged = args.revision === revision;
+    const update = {{schemaVersion: 1, unchanged, revision}};
+    if (!unchanged) {{
+      update.trajectory = trajectory(args.sessionId, "summary", 50, null);
+      delete update.trajectory.recentSessions;
+    }}
+    result = {{structuredContent: update}};
+  }} else {{
+    result = {{
+      structuredContent: trajectory(
+        args.sessionId,
+        args.detailLevel,
+        args.maxRecords,
+        args.beforeRecord ?? null
+      )
+    }};
+  }}
   viewer.contentWindow.postMessage({{jsonrpc:"2.0",id:event.data.id,result}}, "*");
 }});
 </script></body></html>"""
@@ -443,15 +528,44 @@ class HarnessHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         """Return one harness resource."""
-        route = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        route = parsed.path
+        query = parse_qs(parsed.query)
         if route in {"/", "/en"}:
             self._send(wrapper_html("en"), "text/html; charset=utf-8")
+            return
+        if route == "/en-dock":
+            self._send(
+                wrapper_html("en", host_display=True, native_pip_unavailable=True),
+                "text/html; charset=utf-8",
+            )
             return
         if route == "/zh":
             self._send(wrapper_html("zh"), "text/html; charset=utf-8")
             return
         if route in {"/trajectory.html", "/trajectory.zh.html"}:
             content = ASSET.read_text(encoding="utf-8")
+            host_display = query.get("hostDisplay") == ["1"]
+            if host_display:
+                mock_openai = """<script>
+window.openai = {
+  displayMode: "inline",
+  requestDisplayMode: async ({ mode }) => {
+    if (mode !== "inline" && mode !== "fullscreen") throw new Error("Unsupported mode");
+    window.openai.displayMode = mode;
+    window.parent.postMessage({method:"trajectory/display-mode",params:{mode}}, "*");
+    window.dispatchEvent(new CustomEvent("openai:set_globals", {
+      detail: { globals: { displayMode: mode } },
+    }));
+    return { mode };
+  },
+};
+</script>"""
+            else:
+                mock_openai = """<script>
+window.openai = {};
+</script>"""
+            content = content.replace("<body>", f"<body>{mock_openai}", 1)
             if route.endswith("zh.html"):
                 content = content.replace('<html lang="en">', '<html lang="zh-CN">', 1)
             self._send(content, "text/html; charset=utf-8")

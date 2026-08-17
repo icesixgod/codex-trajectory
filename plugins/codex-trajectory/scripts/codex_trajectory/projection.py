@@ -39,6 +39,7 @@ SERVER_NAME = "codex-trajectory"
 SERVER_VERSION = __version__
 UI_URI = "ui://codex-trajectory/trajectory-v1.html"
 DEFAULT_MAX_RECORDS = 500
+LIVE_MAX_RECORDS = 50
 MIN_RECORDS = 50
 MAX_RECORDS = 1_000
 MAX_TURNS = 1_000
@@ -1999,6 +2000,51 @@ def trajectory_result(arguments: dict[str, Any], with_ui: bool) -> dict[str, Any
     return result
 
 
+def trajectory_revision(path: Path) -> str:
+    """Return an opaque revision for every file in a rollout lineage."""
+    digest = hashlib.sha256()
+    for item in session_signature(path):
+        for value in item:
+            encoded = str(value).encode("utf-8", errors="replace")
+            digest.update(len(encoded).to_bytes(8, "big"))
+            digest.update(encoded)
+    return digest.hexdigest()
+
+
+def trajectory_update_result(arguments: dict[str, Any]) -> dict[str, Any]:
+    """Return a safe live-view update only when the selected rollout changed."""
+    reject_unknown_arguments(arguments, {"sessionId", "revision", "includeArchived"})
+    include_archived = arguments.get("includeArchived", True)
+    if not isinstance(include_archived, bool):
+        raise ValueError("includeArchived must be a boolean.")
+    session_id = arguments.get("sessionId")
+    if session_id is not None and not isinstance(session_id, str):
+        raise ValueError("sessionId must be a string.")
+    revision = arguments.get("revision")
+    if revision is not None:
+        if not isinstance(revision, str):
+            raise ValueError("revision must be a string.")
+        if len(revision) != 64 or any(
+            character not in "0123456789abcdef" for character in revision
+        ):
+            raise ValueError("revision must be a lowercase SHA-256 digest.")
+
+    path = resolve_session(session_id, include_archived)
+    current_revision = trajectory_revision(path)
+    update: dict[str, Any] = {
+        "schemaVersion": 1,
+        "unchanged": revision == current_revision,
+        "revision": current_revision,
+    }
+    if revision != current_revision:
+        update["trajectory"] = parse_session(path, LIVE_MAX_RECORDS, "summary")
+    state = "unchanged" if update["unchanged"] else "updated"
+    return {
+        "structuredContent": update,
+        "content": [{"type": "text", "text": f"Live trajectory {state}."}],
+    }
+
+
 def tool_definitions() -> list[dict[str, Any]]:
     """Return MCP tool metadata."""
     read_only = {
@@ -2100,6 +2146,31 @@ def tool_definitions() -> list[dict[str, Any]]:
                 "openai/toolInvocation/invoked": "Trajectory ready.",
             },
         },
+        {
+            "name": "get_codex_trajectory_update",
+            "title": "Refresh the live trajectory window",
+            "description": (
+                "Return an app-only safe-summary update when a local Codex task changed."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "sessionId": trajectory_properties["sessionId"],
+                    "revision": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{64}$",
+                        "description": "Opaque revision returned by the previous live update.",
+                    },
+                    "includeArchived": trajectory_properties["includeArchived"],
+                },
+                "additionalProperties": False,
+            },
+            "annotations": read_only,
+            "_meta": {
+                "ui": {"visibility": ["app"]},
+                "openai/visibility": "private",
+            },
+        },
     ]
 
 
@@ -2135,6 +2206,8 @@ def call_tool(name: str, arguments: Any) -> dict[str, Any]:
             return trajectory_result(args, with_ui=False)
         if name == "show_codex_trajectory":
             return trajectory_result(args, with_ui=True)
+        if name == "get_codex_trajectory_update":
+            return trajectory_update_result(args)
         raise ValueError(f"Unknown tool {name!r}.")
     except OSError:
         return {
