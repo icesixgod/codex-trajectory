@@ -5,12 +5,23 @@ from __future__ import annotations
 import argparse
 import json
 import threading
+from base64 import b64encode
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-ASSET = Path(__file__).parents[1] / "assets" / "trajectory.html"
+ASSET_DIRECTORY = Path(__file__).parents[1] / "assets"
+
+
+def app_resource_html() -> str:
+    """Inline the production sprite asset exactly as the MCP resource does."""
+    content = (ASSET_DIRECTORY / "trajectory.html").read_text(encoding="utf-8")
+    sprite = b64encode((ASSET_DIRECTORY / "whale-girl-mining-32f.png").read_bytes()).decode("ascii")
+    return content.replace(
+        "__WHALE_MINING_SPRITE_DATA_URI__",
+        f"data:image/png;base64,{sprite}",
+    )
 
 
 def _record(
@@ -544,7 +555,7 @@ class HarnessHandler(BaseHTTPRequestHandler):
             self._send(wrapper_html("zh"), "text/html; charset=utf-8")
             return
         if route in {"/trajectory.html", "/trajectory.zh.html"}:
-            content = ASSET.read_text(encoding="utf-8")
+            content = app_resource_html()
             host_display = query.get("hostDisplay") == ["1"]
             if host_display:
                 mock_openai = """<script>

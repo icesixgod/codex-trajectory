@@ -392,6 +392,31 @@ def test_codex_host_uses_full_height_frozen_totals_and_scrolling_live_output(
     latest_record = frame.locator(".dock-record.latest")
     expect(latest_record).to_have_attribute("data-index", "9")
     expect(latest_record).to_have_attribute("data-record-tokens", "248,64,128,56,16")
+    whale_miner = latest_record.locator(".dock-whale-miner")
+    expect(whale_miner).to_have_attribute("data-record-id", "record-2-9")
+    expect(whale_miner).to_have_attribute("data-mining", "false")
+    assert whale_miner.evaluate(
+        """element => {
+          const card = element.closest('.dock-record');
+          const sprite = element.getBoundingClientRect();
+          const frame = card.getBoundingClientRect();
+          const epsilon = .5;
+          return sprite.left >= frame.left - epsilon
+            && sprite.top >= frame.top - epsilon
+            && sprite.right <= frame.right + epsilon
+            && sprite.bottom <= frame.bottom + epsilon
+            && sprite.width <= 64 + epsilon
+            && sprite.height <= 64 + epsilon
+            && getComputedStyle(card).overflow === 'hidden';
+        }"""
+    )
+    assert latest_record.locator(".dock-record-event").evaluate(
+        "element => parseFloat(getComputedStyle(element).paddingLeft) >= 68"
+    )
+    assert latest_record.locator(".dock-whale-miner-sheet").evaluate(
+        """element => getComputedStyle(element).backgroundImage
+          .startsWith('url("data:image/png;base64,')"""
+    )
     usage_rows = latest_record.locator(".dock-usage-row")
     assert usage_rows.count() == 3
     assert usage_rows.locator(".dock-usage-name").all_inner_texts() == [
@@ -453,6 +478,21 @@ def test_codex_host_uses_full_height_frozen_totals_and_scrolling_live_output(
     expect(frame.locator(".dock-total-value")).to_have_text("704")
     latest_record = frame.locator(".dock-record.latest")
     expect(latest_record).to_have_attribute("data-index", "10")
+    whale_miner = latest_record.locator(".dock-whale-miner")
+    expect(whale_miner).to_have_attribute("data-record-id", "record-3-10")
+    expect(whale_miner).to_have_attribute("data-mining", "true")
+    assert (
+        whale_miner.locator(".dock-whale-miner-y").evaluate(
+            "element => getComputedStyle(element).animationName"
+        )
+        == "dock-whale-mining-y"
+    )
+    assert (
+        whale_miner.locator(".dock-whale-miner-sheet").evaluate(
+            "element => getComputedStyle(element).animationName"
+        )
+        == "dock-whale-mining-x"
+    )
     expect(latest_record).to_have_attribute("data-record-tokens", "64,16,32,16,4")
     assert latest_record.locator(".dock-usage-value").all_inner_texts() == ["64", "48", "16"]
     assert latest_record.locator(
@@ -465,6 +505,11 @@ def test_codex_host_uses_full_height_frozen_totals_and_scrolling_live_output(
     assert record_stream.evaluate(
         "element => Math.abs(element.scrollHeight - element.clientHeight - element.scrollTop) <= 2"
     )
+    expect(whale_miner).to_have_attribute("data-mining", "false", timeout=2_500)
+    whale_miner.evaluate("element => { element.dataset.stabilityProbe = 'kept'; }")
+    page.wait_for_timeout(1_300)
+    expect(whale_miner).to_have_attribute("data-stability-probe", "kept")
+    expect(whale_miner).to_have_attribute("data-mining", "false")
 
     frame.get_by_role("button", name="Return to inline view").click()
     frame.get_by_role("button", name="Live window").wait_for()

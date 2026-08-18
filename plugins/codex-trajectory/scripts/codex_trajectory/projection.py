@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+from base64 import b64encode
 from collections import OrderedDict, deque
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -2230,5 +2231,10 @@ def reject_unknown_arguments(arguments: dict[str, Any], allowed: set[str]) -> No
 
 def ui_html() -> str:
     """Read the bundled, dependency-free trajectory component."""
-    path = Path(__file__).resolve().parent.parent.parent / "assets" / "trajectory.html"
-    return path.read_text(encoding="utf-8")
+    assets = Path(__file__).resolve().parent.parent.parent / "assets"
+    html = (assets / "trajectory.html").read_text(encoding="utf-8")
+    sprite = b64encode((assets / "whale-girl-mining-32f.png").read_bytes()).decode("ascii")
+    return html.replace(
+        "__WHALE_MINING_SPRITE_DATA_URI__",
+        f"data:image/png;base64,{sprite}",
+    )

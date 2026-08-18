@@ -93,6 +93,8 @@ def test_protocol_methods_and_resource(codex_home: Path) -> None:
     resource = handle("resources/read", {"uri": UI_URI})["contents"][0]
     assert resource["mimeType"] == "text/html;profile=mcp-app"
     assert "Safe summary" in resource["text"]
+    assert "__WHALE_MINING_SPRITE_DATA_URI__" not in resource["text"]
+    assert "data:image/png;base64," in resource["text"]
     assert handle("resources/templates/list", {}) == {"resourceTemplates": []}
     assert handle("prompts/list", {}) == {"prompts": []}
     assert handle("logging/setLevel", {}) == {}

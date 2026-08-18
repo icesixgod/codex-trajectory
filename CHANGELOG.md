@@ -4,10 +4,13 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-18
+
 ### Added
 
 - Add a bilingual adaptive live trajectory window with current turn/step/index, latest event, status, cumulative Token counters, user-controlled entry/exit, visibility-aware serialized refreshes, and retry backoff—using the Codex side panel when the host bridge is available and browser-native canvas-to-video PiP otherwise, without a standalone app.
 - Add an app-only safe-summary update tool that skips projection when an opaque rollout-lineage revision is unchanged and returns a bounded 50-record tail after changes.
+- Add a compact transparent 32-frame whale-girl mining mascot inside the upper-left corner of the newest Codex live-record card. It stays within the card, plays exactly one cycle when a new record appears, remains idle across unchanged polls, and honors reduced-motion preferences.
 
 ### Changed
 
@@ -67,4 +70,5 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 [0.1.0]: https://github.com/icesixgod/codex-trajectory/releases/tag/v0.1.0
 [0.2.0]: https://github.com/icesixgod/codex-trajectory/compare/v0.1.0...v0.2.0
-[Unreleased]: https://github.com/icesixgod/codex-trajectory/compare/v0.2.0...HEAD
+[0.3.0]: https://github.com/icesixgod/codex-trajectory/compare/v0.2.0...v0.3.0
+[Unreleased]: https://github.com/icesixgod/codex-trajectory/compare/v0.3.0...HEAD

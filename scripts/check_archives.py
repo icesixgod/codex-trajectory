@@ -39,6 +39,7 @@ REQUIRED = {
     "plugins/codex-trajectory/assets/screenshots/desktop-en.png",
     "plugins/codex-trajectory/assets/screenshots/mobile-zh.png",
     "plugins/codex-trajectory/assets/trajectory.html",
+    "plugins/codex-trajectory/assets/whale-girl-mining-32f.png",
     "plugins/codex-trajectory/scripts/codex_trajectory/__init__.py",
     "plugins/codex-trajectory/scripts/codex_trajectory/json_support.py",
     "plugins/codex-trajectory/scripts/codex_trajectory/privacy.py",

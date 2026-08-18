@@ -70,6 +70,11 @@ def main() -> None:
                 "tools/call",
                 {"name": "get_codex_trajectory", "arguments": {"detailLevel": "summary"}},
             ),
+            request(
+                6,
+                "tools/call",
+                {"name": "get_codex_trajectory_update", "arguments": {}},
+            ),
         ]
         environment = os.environ.copy()
         environment["CODEX_HOME"] = str(codex_home)
@@ -92,10 +97,22 @@ def main() -> None:
         by_id[1]["result"]["serverInfo"]["version"] == expected_version,
         "MCP server version does not match the manifest.",
     )
+    tools = {tool["name"]: tool for tool in by_id[2]["result"]["tools"]}
     require(
-        {tool["name"] for tool in by_id[2]["result"]["tools"]}
-        == {"list_codex_sessions", "get_codex_trajectory", "show_codex_trajectory"},
+        set(tools)
+        == {
+            "list_codex_sessions",
+            "get_codex_trajectory",
+            "show_codex_trajectory",
+            "get_codex_trajectory_update",
+        },
         "MCP tool discovery is incomplete.",
+    )
+    live_tool = tools["get_codex_trajectory_update"]
+    require(
+        live_tool.get("_meta", {}).get("ui", {}).get("visibility") == ["app"]
+        and live_tool.get("_meta", {}).get("openai/visibility") == "private",
+        "Live update tool is not app-only.",
     )
     require(
         by_id[3]["result"]["resources"][0]["uri"].startswith("ui://"),
@@ -111,6 +128,13 @@ def main() -> None:
     require(
         "Unicode" in json.dumps(structured, ensure_ascii=False),
         "Unicode content did not survive the MCP round trip.",
+    )
+    live_update = by_id[6]["result"]["structuredContent"]
+    require(live_update["schemaVersion"] == 1, "Unexpected live-update schema version.")
+    require(live_update["unchanged"] is False, "Initial live update was not returned.")
+    require(
+        live_update["trajectory"]["detailLevel"] == "summary",
+        "Live update did not use summary mode.",
     )
     print("MCP stdio smoke passed.")
 

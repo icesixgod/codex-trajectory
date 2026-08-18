@@ -332,6 +332,7 @@ def validate_manifest(expected_version: str | None) -> str:
         "./assets/logo-dark.png": (1200, 360),
         "./assets/screenshots/desktop-en.png": (1280, 900),
         "./assets/screenshots/mobile-zh.png": (600, 900),
+        "./assets/whale-girl-mining-32f.png": (768, 384),
     }
     for value, dimensions in expected_sizes.items():
         require(png_dimensions(plugin_path(value)) == dimensions, f"unexpected dimensions: {value}")

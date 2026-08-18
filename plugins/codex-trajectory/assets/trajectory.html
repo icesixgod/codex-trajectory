@@ -367,7 +367,7 @@
     .dock-records { min-height: 0; flex: 1; overflow-x: hidden; overflow-y: auto; padding: 0 11px 12px; scrollbar-gutter: stable; overscroll-behavior: contain; }
     .dock-record { position: relative; margin-top: 7px; padding: 9px 10px 9px 13px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
     .dock-record::before { position: absolute; top: 10px; bottom: 10px; left: 0; width: 3px; border-radius: 0 3px 3px 0; background: var(--compaction); content: ""; }
-    .dock-record.latest { border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); box-shadow: 0 5px 18px color-mix(in srgb, var(--accent) 10%, transparent); }
+    .dock-record.latest { min-height: 82px; overflow: hidden; border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); box-shadow: 0 5px 18px color-mix(in srgb, var(--accent) 10%, transparent); }
     .dock-record.latest::before { background: var(--accent); }
     .dock-record[data-kind="user"]::before { background: var(--user); }
     .dock-record[data-kind="assistant"]::before { background: var(--assistant); }
@@ -379,6 +379,48 @@
     .dock-record-state { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .dock-record-event { margin-top: 4px; overflow: hidden; font-size: 12px; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
     .dock-record-summary { display: -webkit-box; margin-top: 2px; overflow: hidden; color: var(--muted); font-size: 10px; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+    .dock-record.latest > .dock-record-head,
+    .dock-record.latest > .dock-record-event,
+    .dock-record.latest > .dock-record-summary { padding-left: 68px; }
+    .dock-record.latest > .dock-record-summary { min-height: 30px; }
+    .dock-whale-miner {
+      --whale-frame-size: 64px;
+      --whale-sheet-width: 512px;
+      --whale-sheet-height: 256px;
+      position: absolute;
+      z-index: 2;
+      top: 8px;
+      left: 8px;
+      width: var(--whale-frame-size);
+      height: var(--whale-frame-size);
+      filter: drop-shadow(0 3px 5px color-mix(in srgb, var(--text) 16%, transparent));
+      pointer-events: none;
+    }
+    .dock-whale-miner-viewport {
+      position: absolute;
+      inset: 0;
+      display: block;
+      overflow: hidden;
+    }
+    .dock-whale-miner-y,
+    .dock-whale-miner-sheet {
+      display: block;
+      width: var(--whale-sheet-width);
+      height: var(--whale-sheet-height);
+      will-change: transform;
+    }
+    .dock-whale-miner-sheet {
+      background-image: url("__WHALE_MINING_SPRITE_DATA_URI__");
+      background-position: 0 0;
+      background-repeat: no-repeat;
+      background-size: var(--whale-sheet-width) var(--whale-sheet-height);
+    }
+    .dock-whale-miner.mining .dock-whale-miner-y {
+      animation: dock-whale-mining-y 1s steps(4, end) 1;
+    }
+    .dock-whale-miner.mining .dock-whale-miner-sheet {
+      animation: dock-whale-mining-x .25s steps(8, end) 4;
+    }
     .dock-record-usage {
       display: grid;
       margin-top: 8px;
@@ -414,6 +456,12 @@
     .dock-foot { display: flex; flex: none; justify-content: space-between; gap: 8px; padding: 7px 12px max(8px, env(safe-area-inset-bottom)); border-top: 1px solid var(--line); color: var(--muted); background: var(--panel); font-size: 9px; }
     .dock-foot span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes dock-whale-mining-x { to { transform: translateX(calc(-1 * var(--whale-sheet-width))); } }
+    @keyframes dock-whale-mining-y { to { transform: translateY(calc(-1 * var(--whale-sheet-height))); } }
+    @media (prefers-reduced-motion: reduce) {
+      .dock-whale-miner.mining .dock-whale-miner-y,
+      .dock-whale-miner.mining .dock-whale-miner-sheet { animation: none; }
+    }
     @media (max-width: 760px) {
       #app { padding: 0; }
       .shell { border-radius: 0; border-left: 0; border-right: 0; }
@@ -444,6 +492,16 @@
       .dock-cursor { justify-self: end; }
       .dock-usage-row:not(.total) { grid-template-columns: minmax(62px, 1fr) auto; gap: 5px 8px; }
       .dock-usage-parts { grid-column: 1 / -1; justify-content: flex-start; }
+      .dock-record.latest > .dock-record-head,
+      .dock-record.latest > .dock-record-event,
+      .dock-record.latest > .dock-record-summary { padding-left: 60px; }
+      .dock-whale-miner {
+        --whale-frame-size: 56px;
+        --whale-sheet-width: 448px;
+        --whale-sheet-height: 224px;
+        top: 7px;
+        left: 7px;
+      }
     }
   </style>
 </head>
@@ -480,6 +538,7 @@
       let presentationBusy = false;
       let dockFollowLatest = true;
       let dockScrollTop = 0;
+      let liveMiningRecordId = null;
       let pipCanvas = null;
       let pipVideo = null;
       let pipStream = null;
@@ -901,8 +960,15 @@
           + (Number.isFinite(record.index) ? "#" + record.index : "#—");
         const state = (record.status || "—") + " · " + duration(record.durationMs);
         const usage = dockRecordUsage(record);
+        const recordId = String(record.id || record.index || "");
+        const mining = latest && recordId === liveMiningRecordId;
+        const whaleMiner = latest ? `<span class="dock-whale-miner${mining ? " mining" : ""}"
+          data-record-id="${escapeHtml(recordId)}" data-mining="${String(mining)}" aria-hidden="true">
+          <span class="dock-whale-miner-viewport"><span class="dock-whale-miner-y"><span class="dock-whale-miner-sheet"></span></span></span>
+        </span>` : "";
         return `<article class="dock-record${latest ? " latest" : ""}" role="listitem"
           data-index="${escapeHtml(record.index)}" data-kind="${kind}" data-record-tokens="${escapeHtml(usage.tokenValues)}">
+          ${whaleMiner}
           <div class="dock-record-head"><span class="dock-record-cursor">${escapeHtml(recordCursor)}</span><span class="dock-record-state">${escapeHtml(state)}</span></div>
           <div class="dock-record-event" title="${escapeHtml(record.event || "—")}">${escapeHtml(record.event || "—")}</div>
           <div class="dock-record-summary">${escapeHtml(record.summary || labels.noMatch)}</div>
@@ -935,6 +1001,21 @@
           dockFollowLatest = stream.scrollHeight - stream.scrollTop - stream.clientHeight <= 36;
           stream.dataset.followLatest = String(dockFollowLatest);
         }, { passive: true });
+      }
+
+      function bindDockWhaleMiner(stream) {
+        const miner = stream?.querySelector(".dock-whale-miner.mining");
+        if (!miner) return;
+        const finish = () => {
+          if (liveMiningRecordId === miner.dataset.recordId) liveMiningRecordId = null;
+          miner.classList.remove("mining");
+          miner.dataset.mining = "false";
+        };
+        if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+          finish();
+          return;
+        }
+        miner.querySelector(".dock-whale-miner-y")?.addEventListener("animationend", finish, { once: true });
       }
 
       function mountDockedShell(view) {
@@ -978,6 +1059,7 @@
         document.getElementById("closeDock")?.addEventListener("click", exitPip);
         const stream = document.getElementById("liveRecordStream");
         bindDockStream(stream);
+        bindDockWhaleMiner(stream);
         if (stream && dockFollowLatest) stream.scrollTop = stream.scrollHeight;
       }
 
@@ -1023,6 +1105,7 @@
         stream.innerHTML = dockRecordRows(records);
         stream.dataset.revision = revision;
         stream.dataset.followLatest = String(dockFollowLatest);
+        bindDockWhaleMiner(stream);
         if (dockFollowLatest) stream.scrollTop = stream.scrollHeight;
         else stream.scrollTop = Math.min(dockScrollTop, Math.max(0, stream.scrollHeight - stream.clientHeight));
       }
@@ -1150,6 +1233,7 @@
         liveCheckedAt = null;
         liveError = null;
         liveFailures = 0;
+        liveMiningRecordId = null;
         dockFollowLatest = true;
         dockScrollTop = 0;
         document.body.classList.remove("dock-mode");
@@ -1178,6 +1262,7 @@
         liveCheckedAt = null;
         liveFailures = 0;
         liveError = null;
+        liveMiningRecordId = null;
         presentationBusy = true;
         updatePipButton();
         let hostError = null;
@@ -1534,7 +1619,13 @@
               || trajectory.detailLevel !== "summary"
               || !Array.isArray(trajectory.records)
             ) throw new Error(labels.loadError);
-            liveData = safeLiveSnapshot(trajectory);
+            const previousLatestId = String(liveData?.records?.at(-1)?.id || "");
+            const nextLiveData = safeLiveSnapshot(trajectory);
+            const nextLatestId = String(nextLiveData.records?.at(-1)?.id || "");
+            if (isDockMode() && nextLatestId && nextLatestId !== previousLatestId) {
+              liveMiningRecordId = nextLatestId;
+            }
+            liveData = nextLiveData;
           }
           liveRevision = update.revision;
           liveCheckedAt = new Date().toISOString();
