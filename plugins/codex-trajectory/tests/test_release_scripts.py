@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from scripts import validate_release
 from scripts.check_archives import REQUIRED, inspect_tar, inspect_zip, relative_member
 from scripts.validate_release import MAX_JSON_NESTING_DEPTH, MAX_RELEASE_JSON_BYTES, load_json
 
@@ -215,3 +216,27 @@ def test_release_json_parser_rejects_excessive_nesting(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="depth"):
         load_json(path)
+
+
+def test_versioned_release_rejects_nonempty_unreleased_section(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    notes = tmp_path / ".github" / "release-notes" / "v0.3.1.md"
+    notes.parent.mkdir(parents=True)
+    notes.write_text("# Codex Trajectory v0.3.1\n", encoding="utf-8")
+    changelog = tmp_path / "CHANGELOG.md"
+    monkeypatch.setattr(validate_release, "ROOT", tmp_path)
+
+    changelog.write_text(
+        "# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- Future fix.\n\n## [0.3.1] - 2026-08-21\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="still contains Unreleased"):
+        validate_release.validate_release_notes("0.3.1")
+
+    changelog.write_text(
+        "# Changelog\n\n## [Unreleased]\n\n## [0.3.1] - 2026-08-21\n",
+        encoding="utf-8",
+    )
+    validate_release.validate_release_notes("0.3.1")

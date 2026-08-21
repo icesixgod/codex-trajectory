@@ -4,6 +4,43 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-08-21
+
+### Added
+
+- Show the remaining percentage for persisted Codex rate-limit windows in the live view's upper right, with reset times in tooltips and matching native PiP output; hide the quota UI when official limit data is absent.
+- Add a one-click live stop request and an opt-in remaining-quota guard, defaulting to 10%, that sends at most one automatic shutdown request per displayed quota cycle while preserving worktrees and uncommitted changes.
+- Treat a selected task with no running turn as already stopped: disable the manual stop button, keep auto-stop armed for the next running turn, and convert Browser stop races into a retryable idle state instead of an error.
+- Add an off-by-default loopback CDP integration, configurable inside the viewer, that places “View trajectory” after `Full access` and opens the complete trajectory interface in a tokenized Codex in-app Browser page without sending a task message or invoking the model.
+- Match Codex's System, Light, and Dark appearances by synchronizing a fixed allowlist of effective host colors into the live trajectory interface, including already-open Browser tabs.
+
+### Fixed
+
+- Drive Browser Stop/Idle from App Server task state and keep automatic quota stops latched across later turns in the same quota cycle, preventing running tasks from flickering to or remaining at **Idle** without creating a durable Goal continuation loop.
+- Rearm **Requested** stop controls after a turn finishes and for each later running turn, retry transient automatic failures without consuming the latch, and disable stopping after the viewer selects a different task.
+- Let CDP stop evaluation cover the bounded App Server round trip, bind Browser stop messages to the page's original session, and safely replace verified outdated watcher processes after plugin cache-buster upgrades.
+- Return a bounded Browser API error when the CDP-backed stop provider is unavailable instead of dropping the loopback HTTP connection.
+- Restrict the token-bearing CDP injection to Codex-owned `app://` renderer targets, remove stale injection state from other targets, refuse linked watcher lock files, reject non-interoperable local bridge JSON, prevent CDP discovery from following HTTP redirects, and enforce absolute WebSocket command deadlines.
+- Fall back to an in-page live panel when the Codex in-app Browser exposes Chromium's
+  picture-in-picture API but rejects `requestPictureInPicture()` at runtime.
+- Reuse the full MCP Apps trajectory resource in the Codex Browser shortcut instead of showing a reduced live-summary interface.
+- Enable one-click and quota-threshold stop controls in the in-app Browser fallback through a session-matched, fixed-intent CDP/App Server bridge that pauses an active Goal and calls `turn/interrupt` without touching composer drafts or attachments.
+- Recognize the visible `Full access` permission label when Codex exposes a different accessibility
+  label on the same control, and scan only Codex-owned page, iframe, and `webview` targets when
+  maintaining the injected trajectory shortcut.
+- Open the injected trajectory shortcut as a host-managed Codex Browser tab instead of a fixed
+  overlay that obscures the native Environment/Changes side panel.
+- Make Browser auto-stop fire at an exact remaining-quota threshold even when the separate App Server state poll is unavailable, bind state reads directly to the trajectory task, and use `turn/interrupt` so a successful trigger actually stops the active turn.
+- Resolve persistent `client-new-thread:*` sidebar keys to the materialized App Server task UUID before opening or stopping a Browser trajectory, disable the shortcut until that UUID exists, and reconcile an enabled outdated watcher whenever the updated MCP runtime starts.
+- Recheck the bound turn after an interrupt error so completion races become **Idle**, while still-running failures report a specific App Server timeout or interrupt error instead of the misleading generic rejection message.
+- Stop passing very large tasks through full-history `thread/read` calls on every state poll and stop request; carry the bound trajectory turn directly to `turn/interrupt`, use history-free App Server status checks for routine polling and race verification, and perform a full turn bootstrap only when no candidate exists or a rejected stale candidate must be rebound.
+- Prevent a late routine state response from restoring a turn candidate that a concurrent Stop request already rejected as stale.
+- Try every eligible Codex renderer before reporting a task-state or stop bridge failure, so an auxiliary iframe without the App Server bridge cannot mask a healthy page target.
+- Remove the injected Browser entry from the previous CDP endpoint when the configured port changes while the watcher is enabled.
+- Pause an active Goal through the App Server before interrupting its turn, and keep automatic quota stops latched across later turns in the same quota cycle as a compatibility fallback; manual Stop still rearms per turn, while quota recovery, window reset, or guard reconfiguration rearms automation.
+- Reject linked, non-regular, multiply linked, and oversized private CDP settings, heartbeat, and watcher-lock files before decoding them.
+- Show unknown record durations as `—` instead of `0 ms` when the log contains only a point timestamp, while preserving genuinely measured zero-duration intervals.
+
 ## [0.3.0] - 2026-08-18
 
 ### Added
@@ -71,4 +108,5 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 [0.1.0]: https://github.com/icesixgod/codex-trajectory/releases/tag/v0.1.0
 [0.2.0]: https://github.com/icesixgod/codex-trajectory/compare/v0.1.0...v0.2.0
 [0.3.0]: https://github.com/icesixgod/codex-trajectory/compare/v0.2.0...v0.3.0
-[Unreleased]: https://github.com/icesixgod/codex-trajectory/compare/v0.3.0...HEAD
+[0.3.1]: https://github.com/icesixgod/codex-trajectory/compare/v0.3.0...v0.3.1
+[Unreleased]: https://github.com/icesixgod/codex-trajectory/compare/v0.3.1...HEAD

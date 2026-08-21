@@ -1,6 +1,6 @@
 {
   "name": "codex-trajectory",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Inspect local Codex task trajectories as a privacy-aware event ledger and timeline.",
   "author": {
     "name": "icesixgod",
@@ -21,7 +21,7 @@
   "interface": {
     "displayName": "Codex Trajectory",
     "shortDescription": "Inspect turns, tools, tokens, and timing in local Codex tasks.",
-    "longDescription": "A read-only, privacy-aware trajectory viewer for local Codex tasks. It provides safe summaries, opt-in bounded details, an interactive event ledger and timing overview, and an adaptive live window that docks inside Codex or uses native browser PiP without a standalone app.",
+    "longDescription": "A privacy-aware trajectory viewer for local Codex tasks. Its MCP tools provide read-only safe summaries, opt-in bounded details, an interactive event ledger, an adaptive live window with safe stop requests, and an optional loopback CDP shortcut that opens the complete viewer in the Codex in-app Browser.",
     "developerName": "icesixgod",
     "category": "Developer Tools",
     "capabilities": [

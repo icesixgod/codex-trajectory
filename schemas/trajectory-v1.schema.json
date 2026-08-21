@@ -65,6 +65,35 @@
         {"type": "null"}
       ]
     },
+    "rateLimitWindow": {
+      "type": "object",
+      "required": ["usedPercent", "windowMinutes", "resetsAt"],
+      "properties": {
+        "usedPercent": {"type": "number", "minimum": 0, "maximum": 100},
+        "windowMinutes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "resetsAt": {"$ref": "#/$defs/nullableTimestamp"}
+      },
+      "additionalProperties": false
+    },
+    "rateLimits": {
+      "type": "object",
+      "minProperties": 1,
+      "properties": {
+        "primary": {"$ref": "#/$defs/rateLimitWindow"},
+        "secondary": {"$ref": "#/$defs/rateLimitWindow"}
+      },
+      "additionalProperties": false
+    },
+    "nullableRateLimits": {
+      "oneOf": [
+        {"$ref": "#/$defs/rateLimits"},
+        {"type": "null"}
+      ]
+    },
     "git": {
       "type": "object",
       "properties": {
@@ -168,7 +197,8 @@
         "failedTools",
         "compactions",
         "tokens",
-        "contextWindow"
+        "contextWindow",
+        "rateLimits"
       ],
       "properties": {
         "turns": {"type": "integer", "minimum": 0},
@@ -181,6 +211,7 @@
         "failedTools": {"type": "integer", "minimum": 0},
         "compactions": {"type": "integer", "minimum": 0},
         "tokens": {"$ref": "#/$defs/nullableTokenUsage"},
+        "rateLimits": {"$ref": "#/$defs/nullableRateLimits"},
         "contextWindow": {
           "type": ["integer", "null"],
           "minimum": 1,

@@ -111,6 +111,18 @@ def rollout_events(session_id: str = "session-alpha") -> list[dict[str, Any]]:
                     },
                     "model_context_window": 100000,
                 },
+                "rate_limits": {
+                    "primary": {
+                        "used_percent": 31.5,
+                        "window_minutes": 300,
+                        "resets_at": 1786672800,
+                    },
+                    "secondary": {
+                        "used_percent": 56,
+                        "window_minutes": 10080,
+                        "resets_at": 1787270400,
+                    },
+                },
             },
         },
         {

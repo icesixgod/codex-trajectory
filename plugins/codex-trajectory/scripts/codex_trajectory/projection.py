@@ -13,6 +13,17 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
+from .cdp_settings import (
+    DEFAULT_CDP_PORT,
+    MAX_CDP_PORT,
+    MIN_CDP_PORT,
+)
+from .cdp_settings import (
+    configure as configure_cdp_toolbar,
+)
+from .cdp_settings import (
+    public_status as cdp_toolbar_status,
+)
 from .json_support import strict_json_loads
 from .privacy import (
     DetailLevel,
@@ -548,6 +559,35 @@ def numeric_token_usage(value: Any) -> dict[str, int | float]:
     }
 
 
+def safe_rate_limits(value: Any) -> dict[str, dict[str, Any]] | None:
+    """Project the bounded Codex rate-limit windows used by the live viewer."""
+    if not isinstance(value, dict):
+        return None
+    result: dict[str, dict[str, Any]] = {}
+    for name in ("primary", "secondary"):
+        window = value.get(name)
+        if not isinstance(window, dict):
+            continue
+        used_percent = window.get("used_percent")
+        window_minutes = window.get("window_minutes")
+        if (
+            isinstance(used_percent, bool)
+            or not isinstance(used_percent, (int, float))
+            or not _finite_number(used_percent)
+            or not 0 <= used_percent <= 100
+            or isinstance(window_minutes, bool)
+            or not isinstance(window_minutes, int)
+            or not 0 < window_minutes <= MAX_SAFE_INTEGER
+        ):
+            continue
+        result[name] = {
+            "usedPercent": used_percent,
+            "windowMinutes": window_minutes,
+            "resetsAt": iso_timestamp(parse_timestamp(window.get("resets_at"))),
+        }
+    return result or None
+
+
 def _finite_number(value: int | float) -> bool:
     try:
         return math.isfinite(float(value))
@@ -576,6 +616,7 @@ def parse_session(
     paginated = str(metadata.get("history_mode") or "legacy").casefold() == "paginated"
     context: dict[str, Any] = {}
     latest_usage: dict[str, int | float] | None = None
+    latest_rate_limits: dict[str, dict[str, Any]] | None = None
     previous_total_usage: dict[str, int | float] = {}
     context_window: int | None = None
     current_turn = 0
@@ -688,7 +729,10 @@ def parse_session(
             "summary": shorten(summary or event),
             "startedAt": iso_timestamp(timestamp),
             "completedAt": iso_timestamp(timestamp) if status != "running" else None,
-            "durationMs": 0 if timestamp is not None and status != "running" else None,
+            # A single persisted event timestamp places the record on the timeline but
+            # does not establish an elapsed interval. Correlated tool boundaries and
+            # canonical item timing fill this value when the log actually measured it.
+            "durationMs": None,
             "status": status,
             "callId": call_id,
             "input": bounded(input_detail) if include_details and input_detail else None,
@@ -829,8 +873,13 @@ def parse_session(
         nonlocal after_tool_result, last_model_record
         call_id = protocol_identifier(call_id)
         record = tracked_calls.get(call_id) if call_id else None
+        duration_unavailable = record is None and started_at is None and duration_ms is None
         if record is None:
-            record_time = started_at if started_at is not None else timestamp
+            record_time = started_at
+            if record_time is None and timestamp is not None and duration_ms is not None:
+                record_time = max(0, timestamp - duration_ms)
+            if record_time is None:
+                record_time = timestamp
             if current_step == 0:
                 step, _ = model_step(record_time)
             else:
@@ -889,6 +938,10 @@ def parse_session(
             authoritative=True,
             error_message="Tool completion event reported an error.",
         )
+        if duration_unavailable:
+            # A terminal-only tool item has no call boundary from which to infer
+            # elapsed time. Its completion timestamp is still useful for ordering.
+            record["durationMs"] = None
         if last_model_record is None or last_model_record.get("turn") != current_turn:
             last_model_record = record
         after_tool_result = True
@@ -920,9 +973,12 @@ def parse_session(
         completed_at = epoch_milliseconds(payload.get("completed_at_ms"))
         if completed_at is None or completed_at <= 0:
             completed_at = timestamp
-        started_at = epoch_milliseconds(payload.get("started_at_ms"))
-        if started_at is None or started_at <= 0:
-            started_at = completed_at
+        timing_started_at = epoch_milliseconds(payload.get("started_at_ms"))
+        if timing_started_at is not None and timing_started_at <= 0:
+            timing_started_at = None
+        # Keep point-only completed items chronologically placeable without claiming
+        # that their completion timestamp is also a measured start boundary.
+        started_at = timing_started_at if timing_started_at is not None else completed_at
         turn_id = payload.get("turn_id")
         normalized_turn_id = protocol_identifier(turn_id)
         if active_turn and turns:
@@ -978,7 +1034,7 @@ def parse_session(
                     ),
                 },
             )
-            finish_record_timing(record, started_at, completed_at)
+            finish_record_timing(record, timing_started_at, completed_at)
             return
         if completed_type == "hook_prompt":
             record = add_record(
@@ -989,7 +1045,7 @@ def parse_session(
                 record_id=item_id,
                 input_detail=json_text(item.get("fragments")),
             )
-            finish_record_timing(record, started_at, completed_at)
+            finish_record_timing(record, timing_started_at, completed_at)
             return
         if completed_type in {"agent_message", "plan", "reasoning"}:
             if completed_type == "agent_message":
@@ -1019,7 +1075,7 @@ def parse_session(
                 output_detail=text or None,
                 metadata_detail={"phase": phase} if phase else None,
             )
-            finish_record_timing(last_model_record, started_at, completed_at)
+            finish_record_timing(last_model_record, timing_started_at, completed_at)
             return
         if completed_type == "sub_agent_activity":
             activity = safe_text(item.get("kind"), 80) or "activity"
@@ -1037,7 +1093,7 @@ def parse_session(
                     "activity": activity,
                 },
             )
-            finish_record_timing(record, started_at, completed_at)
+            finish_record_timing(record, timing_started_at, completed_at)
             return
         if completed_type == "context_compaction":
             if pending_compaction is None or pending_compaction.get("turn") != current_turn:
@@ -1054,7 +1110,7 @@ def parse_session(
                     item_id, pending_compaction.get("id")
                 )
                 pending_compaction["startedAt"] = iso_timestamp(started_at)
-            finish_record_timing(pending_compaction, started_at, completed_at)
+            finish_record_timing(pending_compaction, timing_started_at, completed_at)
             pending_compaction = None
             return
         if completed_type in {"entered_review_mode", "exited_review_mode"}:
@@ -1078,7 +1134,7 @@ def parse_session(
                     }
                 ),
             )
-            finish_record_timing(record, started_at, completed_at)
+            finish_record_timing(record, timing_started_at, completed_at)
             return
 
         status = safe_text(item.get("status"), 80) or "completed"
@@ -1182,7 +1238,7 @@ def parse_session(
         terminal_tool(
             event=event,
             timestamp=completed_at,
-            started_at=started_at,
+            started_at=timing_started_at,
             record_id=item_id,
             call_id=item_id,
             input_value=input_value,
@@ -1374,6 +1430,9 @@ def parse_session(
             turn["steps"] = max(turn["steps"], current_step)
             continue
         if entry_type == "event_msg" and payload_type == "token_count":
+            rate_limits = safe_rate_limits(payload.get("rate_limits"))
+            if rate_limits:
+                latest_rate_limits = {**(latest_rate_limits or {}), **rate_limits}
             info = payload.get("info")
             if isinstance(info, dict):
                 usage = info.get("total_token_usage")
@@ -1952,6 +2011,7 @@ def parse_session(
             "compactions": compactions,
             "tokens": latest_usage,
             "contextWindow": context_window,
+            "rateLimits": latest_rate_limits,
         },
         "turns": visible_turns,
         "records": visible_records,
@@ -2050,6 +2110,12 @@ def tool_definitions() -> list[dict[str, Any]]:
     """Return MCP tool metadata."""
     read_only = {
         "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    }
+    local_change = {
+        "readOnlyHint": False,
         "destructiveHint": False,
         "idempotentHint": True,
         "openWorldHint": False,
@@ -2172,6 +2238,55 @@ def tool_definitions() -> list[dict[str, Any]]:
                 "openai/visibility": "private",
             },
         },
+        {
+            "name": "get_codex_toolbar_injection_status",
+            "title": "Read the optional Codex toolbar integration status",
+            "description": (
+                "Return app-only status for the loopback CDP toolbar integration without "
+                "exposing local paths."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
+            "annotations": read_only,
+            "_meta": {
+                "ui": {"visibility": ["app"]},
+                "openai/visibility": "private",
+            },
+        },
+        {
+            "name": "set_codex_toolbar_injection",
+            "title": "Configure the optional Codex toolbar integration",
+            "description": (
+                "Enable or disable the local loopback CDP injector and persist its port. "
+                "This changes only plugin-owned settings and the current Codex page DOM."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "enabled": {
+                        "type": "boolean",
+                        "description": "Show or remove the View trajectory toolbar entry.",
+                    },
+                    "port": {
+                        "type": "integer",
+                        "minimum": MIN_CDP_PORT,
+                        "maximum": MAX_CDP_PORT,
+                        "default": DEFAULT_CDP_PORT,
+                        "description": "Loopback Chrome DevTools Protocol port.",
+                    },
+                },
+                "required": ["enabled"],
+                "additionalProperties": False,
+            },
+            "annotations": local_change,
+            "_meta": {
+                "ui": {"visibility": ["app"]},
+                "openai/visibility": "private",
+            },
+        },
     ]
 
 
@@ -2209,6 +2324,43 @@ def call_tool(name: str, arguments: Any) -> dict[str, Any]:
             return trajectory_result(args, with_ui=True)
         if name == "get_codex_trajectory_update":
             return trajectory_update_result(args)
+        if name == "get_codex_toolbar_injection_status":
+            reject_unknown_arguments(args, set())
+            return {
+                "structuredContent": cdp_toolbar_status(),
+                "content": [{"type": "text", "text": "Read local CDP toolbar status."}],
+            }
+        if name == "set_codex_toolbar_injection":
+            reject_unknown_arguments(args, {"enabled", "port"})
+            enabled = args.get("enabled")
+            if not isinstance(enabled, bool):
+                raise ValueError("enabled must be a boolean.")
+            port = args.get("port", DEFAULT_CDP_PORT)
+            if isinstance(port, bool) or not isinstance(port, int):
+                raise ValueError("port must be an integer.")
+            try:
+                status = configure_cdp_toolbar(enabled, port)
+            except OSError:
+                return {
+                    "isError": True,
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Could not update the private CDP toolbar setting.",
+                        }
+                    ],
+                }
+            return {
+                "structuredContent": status,
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Enabled local CDP toolbar integration."
+                        if enabled
+                        else "Disabled local CDP toolbar integration.",
+                    }
+                ],
+            }
         raise ValueError(f"Unknown tool {name!r}.")
     except OSError:
         return {

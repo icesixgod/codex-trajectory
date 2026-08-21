@@ -105,6 +105,8 @@ def main() -> None:
             "get_codex_trajectory",
             "show_codex_trajectory",
             "get_codex_trajectory_update",
+            "get_codex_toolbar_injection_status",
+            "set_codex_toolbar_injection",
         },
         "MCP tool discovery is incomplete.",
     )
@@ -113,6 +115,14 @@ def main() -> None:
         live_tool.get("_meta", {}).get("ui", {}).get("visibility") == ["app"]
         and live_tool.get("_meta", {}).get("openai/visibility") == "private",
         "Live update tool is not app-only.",
+    )
+    toolbar_status_tool = tools["get_codex_toolbar_injection_status"]
+    toolbar_setting_tool = tools["set_codex_toolbar_injection"]
+    require(
+        toolbar_status_tool.get("_meta", {}).get("ui", {}).get("visibility") == ["app"]
+        and toolbar_setting_tool.get("_meta", {}).get("openai/visibility") == "private"
+        and toolbar_setting_tool.get("annotations", {}).get("readOnlyHint") is False,
+        "CDP toolbar tools are not scoped to the app resource.",
     )
     require(
         by_id[3]["result"]["resources"][0]["uri"].startswith("ui://"),

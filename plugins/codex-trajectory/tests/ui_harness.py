@@ -31,7 +31,7 @@ def _record(
     event: str,
     summary: str,
     offset_ms: int,
-    duration_ms: int = 0,
+    duration_ms: int | None = 0,
     *,
     status: str = "complete",
     call_id: str | None = None,
@@ -62,7 +62,9 @@ def _record(
         "status": status,
         "callId": call_id,
         "startedAt": _iso(started_ms),
-        "completedAt": _iso(started_ms + duration_ms),
+        "completedAt": _iso(started_ms + duration_ms)
+        if duration_ms is not None
+        else _iso(started_ms),
         "durationMs": duration_ms,
         "input": input_detail,
         "output": output_detail,
@@ -149,7 +151,15 @@ def demo_trajectories() -> dict[str, dict[str, Any]]:
             4_900,
             300,
         ),
-        _record(8, 2, "compaction", "Context compacted", "Conversation context compacted", 5_400),
+        _record(
+            8,
+            2,
+            "compaction",
+            "Context compacted",
+            "Conversation context compacted",
+            5_400,
+            None,
+        ),
         _record(
             9,
             2,
@@ -355,6 +365,18 @@ def _trajectory(
             "compactions": sum(record["kind"] == "compaction" for record in records),
             "tokens": _aggregate_usage(usage_items),
             "contextWindow": 200_000,
+            "rateLimits": {
+                "primary": {
+                    "usedPercent": 31.5,
+                    "windowMinutes": 300,
+                    "resetsAt": "2026-08-14T02:00:00Z",
+                },
+                "secondary": {
+                    "usedPercent": 56,
+                    "windowMinutes": 10080,
+                    "resetsAt": "2026-08-21T00:00:00Z",
+                },
+            },
         },
     }
 
@@ -391,8 +413,40 @@ const viewer = document.getElementById("viewer");
 window.__trajectoryCalls = [];
 window.__trajectoryToolNames = [];
 window.__trajectoryDisplayModes = [];
+window.__trajectoryFollowUps = [];
+window.__trajectoryFollowUpFailures = 0;
+window.__trajectoryWidgetStates = [];
+window.__trajectoryCdpToolbar = {{
+  schemaVersion: 1,
+  enabled: false,
+  port: 9222,
+  cdpAvailable: true,
+  daemonRunning: false,
+  connected: false,
+  injected: false,
+  viewerServing: false,
+  lastError: null,
+}};
 let liveVersion = 1;
 const currentLiveRevision = () => liveVersion.toString(16).padStart(64, "0");
+window.__setTrajectoryRemaining = remaining => {{
+  const value = Number(remaining);
+  if (!Number.isFinite(value)) throw new Error("remaining must be finite");
+  trajectories["session-alpha"].stats.rateLimits.primary.usedPercent = 100 - value;
+  liveVersion += 1;
+}};
+window.__setTrajectoryResetAt = resetsAt => {{
+  if (typeof resetsAt !== "string" || !resetsAt) throw new Error("resetsAt must be a string");
+  trajectories["session-alpha"].stats.rateLimits.primary.resetsAt = resetsAt;
+  liveVersion += 1;
+}};
+window.__setTrajectoryRunning = running => {{
+  const source = trajectories["session-alpha"];
+  const latest = source.turns.at(-1);
+  latest.status = running ? "running" : "complete";
+  latest.completedAt = running ? null : (source.records.at(-1)?.completedAt || null);
+  liveVersion += 1;
+}};
 window.__advanceTrajectoryLive = () => {{
   const source = trajectories["session-alpha"];
   if (!source.records.some(record => record.index === 10)) {{
@@ -444,6 +498,7 @@ window.__advanceTrajectoryLive = () => {{
       reasoning_output_tokens: 44,
       total_tokens: 704,
     }};
+    source.stats.rateLimits.primary.usedPercent = 32;
   }}
   liveVersion += 1;
 }};
@@ -495,6 +550,14 @@ function notify(value) {{
 viewer.addEventListener("load", () => notify(trajectory()));
 window.addEventListener("message", event => {{
   if (event.source !== viewer.contentWindow) return;
+  if (event.data?.method === "trajectory/follow-up") {{
+    window.__trajectoryFollowUps.push(structuredClone(event.data.params));
+    return;
+  }}
+  if (event.data?.method === "trajectory/widget-state") {{
+    window.__trajectoryWidgetStates.push(structuredClone(event.data.params));
+    return;
+  }}
   if (event.data?.method === "trajectory/display-mode") {{
     window.__trajectoryDisplayModes.push(event.data.params?.mode);
     return;
@@ -510,7 +573,21 @@ window.addEventListener("message", event => {{
     return;
   }}
   let result;
-  if (name === "get_codex_trajectory_update") {{
+  if (name === "get_codex_toolbar_injection_status") {{
+    result = {{structuredContent: structuredClone(window.__trajectoryCdpToolbar)}};
+  }} else if (name === "set_codex_toolbar_injection") {{
+    window.__trajectoryCdpToolbar = {{
+      ...window.__trajectoryCdpToolbar,
+      enabled: args.enabled === true,
+      port: Number.isInteger(args.port) ? args.port : 9222,
+      daemonRunning: args.enabled === true,
+      connected: args.enabled === true,
+      injected: args.enabled === true,
+      viewerServing: args.enabled === true,
+      lastError: null,
+    }};
+    result = {{structuredContent: structuredClone(window.__trajectoryCdpToolbar)}};
+  }} else if (name === "get_codex_trajectory_update") {{
     const revision = currentLiveRevision();
     const unchanged = args.revision === revision;
     const update = {{schemaVersion: 1, unchanged, revision}};
@@ -551,8 +628,28 @@ class HarnessHandler(BaseHTTPRequestHandler):
                 "text/html; charset=utf-8",
             )
             return
+        if route == "/en-pip-unavailable":
+            self._send(
+                wrapper_html("en", native_pip_unavailable=True),
+                "text/html; charset=utf-8",
+            )
+            return
         if route == "/zh":
             self._send(wrapper_html("zh"), "text/html; charset=utf-8")
+            return
+        if route == "/toolbar-fixture":
+            self._send(
+                """<!doctype html><html><head><meta charset="utf-8"></head><body>
+                <div data-app-action-sidebar-thread-active="true"
+                  data-app-action-sidebar-thread-id="local:session-alpha"></div>
+                <form id="composer"><button id="access" type="button">Full access</button>
+                <textarea role="textbox"></textarea>
+                <button id="send" type="submit" aria-label="Send message">Send</button></form>
+                <script>window.__submitted=[];document.querySelector('form').addEventListener(
+                'submit',event=>{event.preventDefault();window.__submitted.push(
+                document.querySelector('textarea').value);});</script></body></html>""",
+                "text/html; charset=utf-8",
+            )
             return
         if route in {"/trajectory.html", "/trajectory.zh.html"}:
             content = app_resource_html()
@@ -561,6 +658,20 @@ class HarnessHandler(BaseHTTPRequestHandler):
                 mock_openai = """<script>
 window.openai = {
   displayMode: "inline",
+  theme: "dark",
+  widgetState: null,
+  setWidgetState: state => {
+    window.openai.widgetState = structuredClone(state);
+    window.parent.postMessage({method:"trajectory/widget-state",params:state}, "*");
+  },
+  sendFollowUpMessage: async value => {
+    if (window.__trajectoryFollowUpFailures > 0) {
+      window.__trajectoryFollowUpFailures -= 1;
+      throw new Error("Temporary follow-up failure");
+    }
+    window.parent.postMessage({method:"trajectory/follow-up",params:value}, "*");
+    return {};
+  },
   requestDisplayMode: async ({ mode }) => {
     if (mode !== "inline" && mode !== "fullscreen") throw new Error("Unsupported mode");
     window.openai.displayMode = mode;
@@ -570,6 +681,13 @@ window.openai = {
     }));
     return { mode };
   },
+};
+window.__trajectoryFollowUpFailures = 0;
+window.__setOpenAITheme = theme => {
+  window.openai.theme = theme;
+  window.dispatchEvent(new CustomEvent("openai:set_globals", {
+    detail: { globals: { theme } },
+  }));
 };
 </script>"""
             else:

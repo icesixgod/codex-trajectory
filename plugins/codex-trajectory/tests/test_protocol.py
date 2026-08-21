@@ -16,21 +16,32 @@ from codex_trajectory.projection import UI_URI, call_tool, tool_definitions
 from codex_trajectory.protocol import JsonRpcError, handle
 
 
-def test_tool_definitions_are_read_only_and_expose_detail_level() -> None:
+def test_tool_definitions_scope_reads_and_private_cdp_setting() -> None:
     tools = tool_definitions()
     assert [tool["name"] for tool in tools] == [
         "list_codex_sessions",
         "get_codex_trajectory",
         "show_codex_trajectory",
         "get_codex_trajectory_update",
+        "get_codex_toolbar_injection_status",
+        "set_codex_toolbar_injection",
     ]
-    assert all(tool["annotations"]["readOnlyHint"] for tool in tools)
+    assert all(tool["annotations"]["readOnlyHint"] for tool in tools[:5])
+    assert tools[5]["annotations"] == {
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    }
     assert tools[1]["inputSchema"]["properties"]["detailLevel"]["default"] == "summary"
     assert tools[1]["inputSchema"]["properties"]["beforeRecord"]["minimum"] == 1
     assert tools[2]["_meta"]["ui"]["resourceUri"] == UI_URI
     assert tools[3]["_meta"]["ui"]["visibility"] == ["app"]
     assert tools[3]["_meta"]["openai/visibility"] == "private"
     assert tools[3]["inputSchema"]["properties"]["revision"]["pattern"] == "^[0-9a-f]{64}$"
+    assert tools[4]["_meta"]["ui"]["visibility"] == ["app"]
+    assert tools[5]["_meta"]["openai/visibility"] == "private"
+    assert tools[5]["inputSchema"]["required"] == ["enabled"]
 
 
 @pytest.mark.parametrize(
@@ -55,6 +66,12 @@ def test_tool_definitions_are_read_only_and_expose_detail_level() -> None:
         ("get_codex_trajectory_update", {"revision": "A" * 64}, "SHA-256"),
         ("get_codex_trajectory_update", {"includeArchived": 1}, "boolean"),
         ("get_codex_trajectory_update", {"extra": 1}, "Unknown argument"),
+        ("get_codex_toolbar_injection_status", {"extra": 1}, "Unknown argument"),
+        ("set_codex_toolbar_injection", {}, "enabled"),
+        ("set_codex_toolbar_injection", {"enabled": 1}, "boolean"),
+        ("set_codex_toolbar_injection", {"enabled": True, "port": True}, "integer"),
+        ("set_codex_toolbar_injection", {"enabled": True, "port": 1023}, "between"),
+        ("set_codex_toolbar_injection", {"enabled": False, "extra": 1}, "Unknown argument"),
         ("unknown", {}, "Unknown tool"),
     ],
 )
@@ -88,7 +105,7 @@ def test_protocol_methods_and_resource(codex_home: Path) -> None:
     negotiated = handle("initialize", {"protocolVersion": "2099-01-01"})
     assert negotiated["protocolVersion"] == "2025-06-18"
     assert handle("ping", {}) == {}
-    assert len(handle("tools/list", {})["tools"]) == 4
+    assert len(handle("tools/list", {})["tools"]) == 6
     assert handle("resources/list", {})["resources"][0]["uri"] == UI_URI
     resource = handle("resources/read", {"uri": UI_URI})["contents"][0]
     assert resource["mimeType"] == "text/html;profile=mcp-app"
@@ -173,6 +190,49 @@ def test_protocol_methods_and_resource(codex_home: Path) -> None:
             handle("tools/call", {"name": invalid_name, "arguments": {}})
     with pytest.raises(JsonRpcError, match="Unknown tool"):
         handle("tools/call", {"name": "missing", "arguments": {}})
+
+
+def test_private_cdp_toolbar_tools_report_and_update_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current = {
+        "schemaVersion": 1,
+        "enabled": False,
+        "port": 9222,
+        "cdpAvailable": False,
+        "daemonRunning": False,
+        "connected": False,
+        "injected": False,
+        "viewerServing": False,
+        "lastError": None,
+    }
+    monkeypatch.setattr(projection, "cdp_toolbar_status", lambda: current)
+    configured: list[tuple[bool, int]] = []
+
+    def configure(enabled: bool, port: int) -> dict[str, object]:
+        configured.append((enabled, port))
+        return {**current, "enabled": enabled, "port": port}
+
+    monkeypatch.setattr(projection, "configure_cdp_toolbar", configure)
+    status = call_tool("get_codex_toolbar_injection_status", {})
+    assert status["structuredContent"] == current
+
+    changed = call_tool(
+        "set_codex_toolbar_injection",
+        {"enabled": True, "port": 9333},
+    )
+    assert configured == [(True, 9333)]
+    assert changed["structuredContent"]["enabled"] is True
+    assert changed["structuredContent"]["port"] == 9333
+    assert changed["content"][0]["text"].startswith("Enabled")
+
+    def fail(_enabled: bool, _port: int) -> dict[str, object]:
+        raise OSError("private path")
+
+    monkeypatch.setattr(projection, "configure_cdp_toolbar", fail)
+    failed = call_tool("set_codex_toolbar_injection", {"enabled": False})
+    assert failed["isError"] is True
+    assert "private path" not in failed["content"][0]["text"]
 
 
 def test_live_update_reprojects_only_after_the_rollout_changes(codex_home: Path) -> None:

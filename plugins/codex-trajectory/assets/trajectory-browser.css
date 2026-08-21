@@ -1,0 +1,13 @@
+:root {
+  color-scheme: light dark;
+  --browser-bg: #f7f7f7;
+  background: var(--browser-bg);
+}
+* { box-sizing: border-box; }
+html, body, #viewer { width: 100%; height: 100%; margin: 0; border: 0; }
+body { overflow: hidden; }
+#viewer { display: block; background: var(--browser-bg); }
+
+@media (prefers-color-scheme: dark) {
+  :root { --browser-bg: #141414; }
+}

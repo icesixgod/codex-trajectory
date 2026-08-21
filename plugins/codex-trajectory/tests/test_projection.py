@@ -59,6 +59,18 @@ def test_summary_projects_turns_tools_usage_and_privacy(tmp_path: Path) -> None:
         "compactions": 1,
         "tokens": {"input_tokens": 100, "output_tokens": 10, "total_tokens": 110},
         "contextWindow": 100000,
+        "rateLimits": {
+            "primary": {
+                "usedPercent": 31.5,
+                "windowMinutes": 300,
+                "resetsAt": "2026-08-14T02:00:00Z",
+            },
+            "secondary": {
+                "usedPercent": 56,
+                "windowMinutes": 10080,
+                "resetsAt": "2026-08-21T00:00:00Z",
+            },
+        },
     }
     assert result["turns"][0]["steps"] == 2
     assert result["turns"][0]["model"] == "gpt-test"
@@ -76,6 +88,11 @@ def test_summary_projects_turns_tools_usage_and_privacy(tmp_path: Path) -> None:
     assert result["turns"][1]["usage"] is None
     assistant = next(record for record in result["records"] if record["id"] == "message-1")
     assert assistant["usage"] == result["turns"][0]["usage"]
+    reasoning = next(record for record in result["records"] if record["id"] == "reason-1")
+    tool = next(record for record in result["records"] if record["callId"] == "call-1")
+    assert reasoning["durationMs"] is None
+    assert assistant["durationMs"] is None
+    assert tool["durationMs"] == 1250
     assert result["session"]["cwd"].startswith("~")
     assert result["session"]["git"] == {"branch": "main", "commit_hash": "abc123"}
     assert all(record["input"] is None for record in result["records"])
@@ -250,6 +267,67 @@ def test_token_usage_without_cumulative_snapshot_keeps_legacy_behavior(tmp_path:
 
     assert result["turns"][0]["modelCalls"] == 1
     assert result["turns"][0]["usage"] == {"input_tokens": 7, "output_tokens": 2}
+
+
+def test_rate_limits_merge_valid_windows_and_ignore_malformed_updates(tmp_path: Path) -> None:
+    events: list[dict[str, object]] = [
+        {
+            "timestamp": "2026-08-14T00:00:00Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "token_count",
+                "rate_limits": {
+                    "primary": {
+                        "used_percent": 12.25,
+                        "window_minutes": 300,
+                        "resets_at": 1786672800,
+                    },
+                    "secondary": {
+                        "used_percent": 40,
+                        "window_minutes": 10080,
+                        "resets_at": "2026-08-21T00:00:00Z",
+                    },
+                    "private": {"plan": "never expose"},
+                },
+            },
+        },
+        {
+            "timestamp": "2026-08-14T00:01:00Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "token_count",
+                "rate_limits": {
+                    "primary": {
+                        "used_percent": 18,
+                        "window_minutes": 300,
+                        "resets_at": 1786676400,
+                        "account": "private",
+                    },
+                    "secondary": {
+                        "used_percent": "invalid",
+                        "window_minutes": 10080,
+                    },
+                },
+            },
+        },
+    ]
+
+    result = parse_session(write_rollout(tmp_path / "rate-limits.jsonl", events))
+
+    assert result["stats"]["rateLimits"] == {
+        "primary": {
+            "usedPercent": 18,
+            "windowMinutes": 300,
+            "resetsAt": "2026-08-14T03:00:00Z",
+        },
+        "secondary": {
+            "usedPercent": 40,
+            "windowMinutes": 10080,
+            "resetsAt": "2026-08-21T00:00:00Z",
+        },
+    }
+    assert "private" not in json.dumps(result)
+    TRAJECTORY_VALIDATOR.validate(result)
 
 
 def test_full_details_are_bounded_but_never_include_private_reasoning(tmp_path: Path) -> None:
@@ -1189,6 +1267,115 @@ def test_paginated_turn_item_protocol_matrix_has_no_raw_response_duplicates(tmp_
     assert assistant["event"] == "Assistant · commentary"
     assert assistant["metadata"] == {"phase": "commentary"}
     assert "Reviewing local changes" in review["output"]
+
+
+def test_paginated_point_timestamps_do_not_claim_zero_duration(tmp_path: Path) -> None:
+    thread_id = "45454545-4545-4454-8454-454545454545"
+    completed_at = 1_786_665_602_000
+    events: list[dict[str, object]] = [
+        {
+            "timestamp": "2026-08-14T00:00:00Z",
+            "ordinal": 0,
+            "type": "session_meta",
+            "payload": {"id": thread_id, "history_mode": "paginated"},
+        },
+        {
+            "timestamp": "2026-08-14T00:00:01Z",
+            "ordinal": 1,
+            "type": "event_msg",
+            "payload": {"type": "turn_started", "turn_id": "timing-turn"},
+        },
+        {
+            "timestamp": "2026-08-14T00:00:02Z",
+            "ordinal": 2,
+            "type": "event_msg",
+            "payload": {
+                "type": "item_completed",
+                "turn_id": "timing-turn",
+                "completed_at_ms": completed_at,
+                "item": {
+                    "type": "Reasoning",
+                    "id": "point-reasoning",
+                    "summary_text": ["No start boundary"],
+                },
+            },
+        },
+        {
+            "timestamp": "2026-08-14T00:00:03Z",
+            "ordinal": 3,
+            "type": "event_msg",
+            "payload": {
+                "type": "item_completed",
+                "turn_id": "timing-turn",
+                "started_at_ms": completed_at + 1_000,
+                "completed_at_ms": completed_at + 1_000,
+                "item": {
+                    "type": "AgentMessage",
+                    "id": "measured-zero",
+                    "content": [{"type": "Text", "text": "Measured boundary"}],
+                },
+            },
+        },
+        {
+            "timestamp": "2026-08-14T00:00:04Z",
+            "ordinal": 4,
+            "type": "event_msg",
+            "payload": {
+                "type": "item_completed",
+                "turn_id": "timing-turn",
+                "completed_at_ms": completed_at + 2_000,
+                "item": {
+                    "type": "DynamicToolCall",
+                    "id": "point-tool",
+                    "namespace": "demo",
+                    "tool": "instant",
+                    "status": "completed",
+                    "success": True,
+                },
+            },
+        },
+        {
+            "timestamp": "2026-08-14T00:00:05Z",
+            "ordinal": 5,
+            "type": "event_msg",
+            "payload": {
+                "type": "item_completed",
+                "turn_id": "timing-turn",
+                "completed_at_ms": completed_at + 3_000,
+                "item": {
+                    "type": "CommandExecution",
+                    "id": "duration-tool",
+                    "command": ["true"],
+                    "status": "completed",
+                    "duration": {"secs": 0, "nanos": 250_000_000},
+                },
+            },
+        },
+        {
+            "timestamp": "2026-08-14T00:00:06Z",
+            "ordinal": 6,
+            "type": "event_msg",
+            "payload": {"type": "turn_complete", "turn_id": "timing-turn"},
+        },
+    ]
+    path = write_rollout(
+        tmp_path / f"rollout-2026-08-14T00-00-00-{thread_id}.jsonl",
+        events,
+    )
+
+    result = parse_session(path)
+    records = {record["id"]: record for record in result["records"]}
+
+    assert records["point-reasoning"]["startedAt"] == records["point-reasoning"]["completedAt"]
+    assert records["point-reasoning"]["durationMs"] is None
+    assert records["measured-zero"]["durationMs"] == 0
+    assert records["point-tool"]["durationMs"] is None
+    assert records["duration-tool"]["durationMs"] == 250
+    duration_start = parse_timestamp(records["duration-tool"]["startedAt"])
+    duration_end = parse_timestamp(records["duration-tool"]["completedAt"])
+    assert duration_start is not None and duration_end is not None
+    assert duration_end - duration_start == 250
+    TRAJECTORY_VALIDATOR.validate(result)
 
 
 def test_legacy_review_mode_events_are_projected_without_summary_leaks(tmp_path: Path) -> None:

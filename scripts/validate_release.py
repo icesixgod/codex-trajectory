@@ -544,9 +544,22 @@ def validate_release_notes(expected_version: str | None) -> None:
         f"invalid expected version: {expected_version}",
     )
     changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    unreleased_marker = "## [Unreleased]"
+    release_marker = f"## [{expected_version}]"
     require(
-        f"## [{expected_version}]" in changelog,
+        release_marker in changelog,
         f"CHANGELOG.md has no {expected_version} release section",
+    )
+    require(unreleased_marker in changelog, "CHANGELOG.md has no Unreleased section")
+    unreleased_start = changelog.index(unreleased_marker) + len(unreleased_marker)
+    release_start = changelog.index(release_marker)
+    require(
+        unreleased_start < release_start,
+        f"CHANGELOG.md places {expected_version} before Unreleased",
+    )
+    require(
+        not changelog[unreleased_start:release_start].strip(),
+        f"CHANGELOG.md still contains Unreleased changes in the {expected_version} build",
     )
     notes = ROOT / ".github" / "release-notes" / f"v{expected_version}.md"
     require(notes.is_file(), f"release notes are missing: {notes.relative_to(ROOT)}")

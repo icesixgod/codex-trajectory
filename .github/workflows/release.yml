@@ -37,7 +37,7 @@ jobs:
           uv run ruff check .
           uv run mypy
           uv run pytest --cov --cov-report=term-missing
-          RUN_UI_TESTS=1 uv run pytest plugins/codex-trajectory/tests/test_ui.py -q
+          RUN_UI_TESTS=1 uv run pytest plugins/codex-trajectory/tests/test_ui.py plugins/codex-trajectory/tests/test_cdp_transport.py -q
           uv run python scripts/smoke_mcp.py
           mkdir -p dist
           git archive --format=zip --prefix="codex-trajectory-$version/" --output="dist/codex-trajectory-v$version.zip" HEAD

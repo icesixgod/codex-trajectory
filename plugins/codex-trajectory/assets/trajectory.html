@@ -7,43 +7,79 @@
   <title>Codex Trajectory</title>
   <style>
     :root {
-      color-scheme: light dark;
-      --bg: #f7f8fc;
+      color-scheme: light;
+      --bg: #f7f7f7;
       --panel: #ffffff;
-      --panel-2: #f0f2f8;
-      --line: #dfe3ee;
-      --line-strong: #aeb6cc;
-      --text: #1b2030;
-      --muted: #667085;
-      --accent: #5b6cff;
-      --accent-soft: #e8ebff;
-      --danger: #d43f55;
-      --success: #26845b;
-      --user: #4299e1;
-      --assistant: #7c68ee;
-      --reasoning: #a968cf;
-      --tool: #e49a37;
-      --subagent: #2da6a0;
-      --compaction: #7c879c;
-      --token-new: #5b6cff;
-      --token-cached: #2da6a0;
-      --token-visible: #7c68ee;
-      --token-reasoning: #a968cf;
-      --shadow: 0 8px 28px rgba(29, 39, 68, .08);
+      --panel-2: rgb(242, 242, 242);
+      --line: rgba(0, 0, 0, .084);
+      --line-strong: rgba(0, 0, 0, .156);
+      --text: #202020;
+      --muted: rgba(0, 0, 0, .55);
+      --accent: rgb(0, 102, 204);
+      --accent-soft: #e6f2ff;
+      --danger: #d93025;
+      --success: #16833b;
+      --user: #006acc;
+      --assistant: #7847c7;
+      --reasoning: #7847c7;
+      --tool: #b65d00;
+      --subagent: #16833b;
+      --compaction: rgba(0, 0, 0, .55);
+      --token-new: #006acc;
+      --token-cached: #16833b;
+      --token-visible: #7847c7;
+      --token-reasoning: #7847c7;
+      --shadow: 0 8px 28px rgba(0, 0, 0, .07);
+    }
+    :root[data-codex-theme="dark"] {
+      color-scheme: dark;
+      --bg: #141414;
+      --panel: #181818;
+      --panel-2: rgb(40, 40, 40);
+      --line: rgba(255, 255, 255, .084);
+      --line-strong: rgba(255, 255, 255, .156);
+      --text: #dfdfdf;
+      --muted: rgba(255, 255, 255, .498);
+      --accent: rgb(131, 195, 255);
+      --accent-soft: #0d273f;
+      --danger: #ff6764;
+      --success: #40c977;
+      --user: #339cff;
+      --assistant: #ad7bf9;
+      --reasoning: #ad7bf9;
+      --tool: #ff8549;
+      --subagent: #40c977;
+      --compaction: rgba(255, 255, 255, .498);
+      --token-new: #339cff;
+      --token-cached: #40c977;
+      --token-visible: #ad7bf9;
+      --token-reasoning: #ad7bf9;
+      --shadow: 0 10px 30px rgba(0, 0, 0, .24);
     }
     @media (prefers-color-scheme: dark) {
-      :root {
-        --bg: #12141a;
-        --panel: #191c24;
-        --panel-2: #222631;
-        --line: #303644;
-        --line-strong: #596174;
-        --text: #edf0f7;
-        --muted: #a1a9ba;
-        --accent: #8d99ff;
-        --accent-soft: #292e50;
-        --danger: #ff7285;
-        --success: #5ed39e;
+      :root:not([data-codex-theme]) {
+        color-scheme: dark;
+        --bg: #141414;
+        --panel: #181818;
+        --panel-2: rgb(40, 40, 40);
+        --line: rgba(255, 255, 255, .084);
+        --line-strong: rgba(255, 255, 255, .156);
+        --text: #dfdfdf;
+        --muted: rgba(255, 255, 255, .498);
+        --accent: rgb(131, 195, 255);
+        --accent-soft: #0d273f;
+        --danger: #ff6764;
+        --success: #40c977;
+        --user: #339cff;
+        --assistant: #ad7bf9;
+        --reasoning: #ad7bf9;
+        --tool: #ff8549;
+        --subagent: #40c977;
+        --compaction: rgba(255, 255, 255, .498);
+        --token-new: #339cff;
+        --token-cached: #40c977;
+        --token-visible: #ad7bf9;
+        --token-reasoning: #ad7bf9;
         --shadow: 0 10px 30px rgba(0, 0, 0, .24);
       }
     }
@@ -103,6 +139,20 @@
     .privacy-action { white-space: nowrap; }
     .privacy-confirm { color: #fff; border-color: var(--accent); background: var(--accent); }
     .privacy-confirm:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 88%, #000); }
+    .integration-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 18px; border-bottom: 1px solid var(--line); background: var(--panel); }
+    .integration-copy { min-width: 0; }
+    .integration-title { display: flex; align-items: center; gap: 7px; font-size: 11px; font-weight: 750; }
+    .integration-experimental { padding: 2px 5px; border-radius: 999px; color: var(--accent); background: var(--accent-soft); font-size: 9px; font-weight: 750; text-transform: uppercase; }
+    .integration-status { display: block; margin-top: 2px; overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+    .integration-status.error { color: var(--danger); }
+    .integration-status.active { color: var(--success); }
+    .integration-controls { display: flex; flex: none; align-items: center; gap: 9px; }
+    .integration-switch { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; font-weight: 700; white-space: nowrap; }
+    .integration-switch input { width: 15px; height: 15px; margin: 0; accent-color: var(--accent); }
+    .integration-port { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 10px; white-space: nowrap; }
+    .integration-port input { width: 74px; padding: 4px 6px; font-variant-numeric: tabular-nums; }
+    .integration-help { margin-top: 4px; color: var(--muted); font-size: 9px; }
+    .integration-help code { user-select: all; color: var(--text); font: 9px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
     .stat { min-width: 0; padding: 7px 9px; border-radius: 9px; background: color-mix(in srgb, var(--panel) 82%, transparent); }
     .stat-label { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
     .stat-value { margin-top: 2px; font-size: 15px; font-weight: 700; white-space: nowrap; }
@@ -314,9 +364,65 @@
       gap: 12px;
       padding: 13px 14px 10px;
     }
+    .dock-head-copy { min-width: 0; flex: 1; }
     .dock-kicker { color: var(--accent); font-size: 10px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
-    .dock-title { max-width: calc(100vw - 72px); margin-top: 3px; overflow: hidden; font-size: 15px; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
+    .dock-title { max-width: 100%; margin-top: 3px; overflow: hidden; font-size: 15px; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
+    .dock-head-actions { display: flex; flex: none; align-items: flex-start; gap: 8px; }
+    .dock-quota {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 6px;
+      border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
+      border-radius: 9px;
+      background: color-mix(in srgb, var(--accent-soft) 52%, var(--panel));
+    }
+    .dock-quota[hidden] { display: none; }
+    .dock-quota-label { color: var(--muted); font-size: 8px; font-weight: 700; letter-spacing: .035em; text-transform: uppercase; white-space: nowrap; }
+    .dock-quota-values { display: inline-flex; align-items: stretch; gap: 4px; }
+    .dock-quota-window { display: grid; min-width: 40px; justify-items: end; padding-left: 5px; border-left: 1px solid var(--line); }
+    .dock-quota-window span { color: var(--muted); font-size: 7px; line-height: 1.1; white-space: nowrap; }
+    .dock-quota-window strong { color: var(--accent); font: 800 11px/1.15 ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .dock-stop-button {
+      height: 30px;
+      flex: none;
+      padding: 0 9px;
+      border-color: var(--danger);
+      color: #fff;
+      background: var(--danger);
+      font-size: 10px;
+      font-weight: 750;
+      white-space: nowrap;
+    }
+    .dock-stop-button:hover { border-color: var(--danger); background: color-mix(in srgb, var(--danger) 86%, #000); }
+    .dock-stop-button.sent { border-color: var(--success); background: var(--success); }
+    .dock-stop-button:disabled { cursor: default; }
     .dock-close { width: 30px; height: 30px; flex: none; padding: 0; border-radius: 999px; font-size: 18px; line-height: 1; }
+    .dock-stopbar {
+      display: flex;
+      min-width: 0;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+      background: color-mix(in srgb, var(--danger) 5%, var(--panel));
+    }
+    .dock-stop-config { display: inline-flex; flex: none; align-items: center; gap: 6px; }
+    .dock-stop-toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 9px; font-weight: 700; white-space: nowrap; }
+    .dock-stop-toggle input { width: 14px; height: 14px; margin: 0; accent-color: var(--danger); }
+    .dock-stop-threshold-wrap { display: inline-flex; align-items: center; gap: 2px; color: var(--muted); font-size: 9px; white-space: nowrap; }
+    .dock-stop-threshold {
+      width: 44px;
+      height: 25px;
+      padding: 2px 4px;
+      text-align: right;
+      font: 700 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-variant-numeric: tabular-nums;
+    }
+    .dock-stop-status { min-width: 0; flex: 1; overflow: hidden; color: var(--muted); font-size: 9px; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
+    .dock-stop-status.error { color: var(--danger); }
+    .dock-stop-status.sent { color: var(--success); }
     .dock-status {
       display: grid;
       grid-template-columns: auto minmax(0, 1fr) auto;
@@ -478,15 +584,26 @@
       .ledger-wrap { max-height: 470px; }
       .toolbar { flex-wrap: wrap; }
       .privacy-bar { align-items: flex-start; flex-direction: column; }
+      .integration-bar { align-items: flex-start; flex-direction: column; }
+      .integration-controls { width: 100%; justify-content: space-between; }
       .pagination-bar { align-items: flex-start; flex-direction: column; }
     }
     @media (max-height: 620px) {
       .dock-head { padding-block: 9px 7px; }
+      .dock-stopbar { padding-block: 4px; }
       .dock-status { padding-block: 5px 7px; }
       .dock-overview { margin-bottom: 8px; padding: 8px; }
       .dock-token { padding-block: 5px; }
     }
     @media (max-width: 380px) {
+      .dock-head { gap: 7px; }
+      .dock-head-actions { gap: 5px; }
+      .dock-quota { gap: 3px; padding-inline: 4px; }
+      .dock-quota-label { display: none; }
+      .dock-quota-window { min-width: 35px; padding-left: 3px; }
+      .dock-stop-button { padding-inline: 6px; }
+      .dock-stopbar { flex-wrap: wrap; gap: 4px 7px; }
+      .dock-stop-status { flex-basis: 100%; text-align: left; }
       .dock-status { grid-template-columns: auto minmax(0, 1fr); }
       .dock-mode-label { display: none; }
       .dock-cursor { justify-self: end; }
@@ -510,6 +627,17 @@
   <script>
     (() => {
       const app = document.getElementById("app");
+      const browserStopBridge = new URLSearchParams(location.search).get("stopBridge") === "1";
+      const themeCssProperties = Object.freeze({
+        bg: "--bg", panel: "--panel", panel2: "--panel-2",
+        line: "--line", lineStrong: "--line-strong", text: "--text",
+        muted: "--muted", accent: "--accent", accentSoft: "--accent-soft",
+        danger: "--danger", success: "--success", user: "--user",
+        assistant: "--assistant", reasoning: "--reasoning", tool: "--tool",
+        subagent: "--subagent", compaction: "--compaction",
+        tokenNew: "--token-new", tokenCached: "--token-cached",
+        tokenVisible: "--token-visible", tokenReasoning: "--token-reasoning",
+      });
       const pending = new Map();
       let nextRequestId = 1;
       let data = null;
@@ -546,6 +674,54 @@
       let pipReady = false;
       let pipActive = false;
       let pipPreparationError = null;
+      const DEFAULT_STOP_THRESHOLD = 10;
+      const MIN_STOP_THRESHOLD = 1;
+      const MAX_STOP_THRESHOLD = 100;
+      const STOP_RETRY_BASE_MS = 2_000;
+      const STOP_RETRY_MAX_MS = 30_000;
+      const BROWSER_TASK_STATE_MAX_AGE_MS = 10_000;
+      const initialWidgetState = isPlainObject(window.openai?.widgetState) ? window.openai.widgetState : {};
+      const initialStopGuard = isPlainObject(initialWidgetState.codexTrajectoryStopGuard)
+        ? initialWidgetState.codexTrajectoryStopGuard
+        : {};
+      let widgetStateShadow = { ...initialWidgetState };
+      let stopGuardEnabled = initialStopGuard.enabled === true;
+      let stopGuardThreshold = normalizeStopThreshold(initialStopGuard.threshold);
+      let stopGuardFiredKey = typeof initialStopGuard.firedKey === "string" ? initialStopGuard.firedKey : null;
+      let stopRequestStatus = "idle";
+      let stopRequestError = null;
+      let stopRequestTurnKey = null;
+      let stopTargetSessionId = null;
+      let stopFailureCount = 0;
+      let stopRetryAt = 0;
+      let browserTaskState = null;
+      let cdpToolbarStatus = {
+        enabled: false,
+        port: 9222,
+        cdpAvailable: false,
+        daemonRunning: false,
+        connected: false,
+        injected: false,
+        viewerServing: false,
+        lastError: null,
+      };
+      let cdpToolbarLoaded = false;
+      let cdpToolbarBusy = false;
+      let cdpToolbarTimer = null;
+
+      function applyCodexTheme(theme) {
+        if (!isPlainObject(theme) || (theme.scheme !== "light" && theme.scheme !== "dark")) return;
+        const root = document.documentElement;
+        root.dataset.codexTheme = theme.scheme;
+        root.style.colorScheme = theme.scheme;
+        if (isPlainObject(theme.colors)) {
+          for (const [key, property] of Object.entries(themeCssProperties)) {
+            const value = theme.colors[key];
+            if (typeof value === "string" && value.length <= 96) root.style.setProperty(property, value);
+          }
+        }
+        if (data && isLiveMode()) drawLiveSurface();
+      }
 
       const REFRESH_MAX_RECORDS = 500;
       const REQUEST_TIMEOUT_MS = 60_000;
@@ -558,6 +734,7 @@
       const language = requestedLanguage || navigator.language || document.documentElement.lang || "en";
       const zh = language.toLowerCase().startsWith("zh");
       document.documentElement.lang = zh ? "zh-CN" : "en";
+      applyCodexTheme({ scheme: window.openai?.theme });
       const labels = zh ? {
         eyebrow: "本地任务轨迹", overview: "时间概览", hint: "拖选区间 · 滚轮缩放 · 右键清除",
         turns: "轮次", records: "记录", tools: "工具", failures: "失败", tokens: "Token", duration: "总时长",
@@ -573,8 +750,15 @@
         cacheHit: "缓存命中", modelRequests: "模型请求", contextWindow: "上下文窗口", inputBreakdown: "输入构成", outputBreakdown: "输出构成",
         byTurn: "按轮次", calls: "请求数", noTokenData: "此任务没有记录 Token 用量。", expandTurn: "展开轮次", collapseTurn: "折叠轮次", modelLabel: "模型",
         livePip: "实时小窗", liveTitle: "实时轨迹", exitPip: "关闭实时小窗", live: "实时刷新", syncing: "正在同步", paused: "已暂停", retrying: "重试中", latestEvent: "最新事件", checked: "最近检查", liveSafe: "安全摘要",
-        pipPreparing: "正在准备实时小窗…", pipUnavailable: "当前宿主不支持实时小窗。", pipFailed: "无法打开实时小窗", dockMode: "Codex 右侧栏", returnInline: "返回内联视图",
+        pipPreparing: "正在准备实时小窗…", pipUnavailable: "当前宿主不支持实时小窗。", pipFailed: "无法打开实时小窗", dockMode: "Codex 右侧栏", inlineLiveMode: "页面内实时视图", returnInline: "返回内联视图",
         taskTotal: "任务总计", liveOutput: "实时输出", latestBelow: "最新在下方", recentRecords: "最近记录", recordTokens: "本条 Token", noRecordTokens: "本条无 Token 增量",
+        codexQuota: "Codex 额度", quotaRemaining: "剩余", quotaResets: "重置", primaryLimit: "主要", secondaryLimit: "次要", fiveHourLimit: "5 小时", weeklyLimit: "每周",
+        stopCurrent: "停止", stopCurrentAria: "请求停止当前任务", stopCurrentTitle: "请求当前任务停止全部相关 subagent，并保留 worktree 和未提交修改",
+        stopSending: "正在发送停止请求…", stopSendingShort: "发送中…", stopRequested: "已发送停止请求", stopRequestedShort: "已请求", stopFailed: "停止请求失败", stopUnsupported: "当前 Codex 宿主不支持发送停止请求", stopDifferentTask: "停止功能仅适用于打开轨迹时的 Codex 任务", stopAlreadyIdle: "当前任务已停止", stopIdleShort: "已停止",
+        autoStop: "自动停止", autoStopThreshold: "剩余额度阈值", autoStopArmed: "已启用", autoStopLatched: "本额度周期已触发", autoStopWaiting: "已启用 · 等待任务运行", autoStopOff: "未启用", autoStopHint: "任一额度窗口的剩余比例不高于阈值时，在额度恢复或周期重置前仅发送一次停止请求",
+        cdpToolbar: "内置浏览器快捷入口", cdpExperimental: "实验性 CDP", cdpEnable: "显示“查看轨迹”", cdpPort: "端口", cdpOff: "未启用，不会连接调试端口",
+        cdpInjected: "已就绪；点击后在 Codex 内置浏览器打开", cdpConnecting: "CDP 已连接，正在定位 Codex 输入区", cdpWaiting: "等待本机 CDP 端口", cdpFailed: "CDP 注入失败", cdpSaving: "正在保存设置…",
+        cdpHelp: "需先完全退出应用，再用本机调试端口启动：", cdpPrivacy: "调试端口可控制 Codex 页面；仅绑定 127.0.0.1，默认关闭。快捷入口不调用模型、不发送任务消息。",
       } : {
         eyebrow: "Local task trajectory", overview: "Timing overview", hint: "Drag to select · wheel to zoom · right-click to clear",
         turns: "Turns", records: "Records", tools: "Tools", failures: "Failures", tokens: "Tokens", duration: "Duration",
@@ -590,8 +774,15 @@
         cacheHit: "Cache hit", modelRequests: "Model requests", contextWindow: "Context window", inputBreakdown: "Input breakdown", outputBreakdown: "Output breakdown",
         byTurn: "By turn", calls: "Requests", noTokenData: "No token usage was recorded for this task.", expandTurn: "Expand turn", collapseTurn: "Collapse turn", modelLabel: "Model",
         livePip: "Live window", liveTitle: "Live trajectory", exitPip: "Close live window", live: "Live refresh", syncing: "Syncing", paused: "Paused", retrying: "Retrying", latestEvent: "Latest event", checked: "Last checked", liveSafe: "Safe summary",
-        pipPreparing: "Preparing the live window…", pipUnavailable: "This host cannot open a live window.", pipFailed: "Could not open live window", dockMode: "Codex side panel", returnInline: "Return to inline view",
+        pipPreparing: "Preparing the live window…", pipUnavailable: "This host cannot open a live window.", pipFailed: "Could not open live window", dockMode: "Codex side panel", inlineLiveMode: "In-page live view", returnInline: "Return to inline view",
         taskTotal: "Task total", liveOutput: "Live output", latestBelow: "Newest below", recentRecords: "recent records", recordTokens: "Record tokens", noRecordTokens: "No token delta for this record",
+        codexQuota: "Codex quota", quotaRemaining: "remaining", quotaResets: "Resets", primaryLimit: "Primary", secondaryLimit: "Secondary", fiveHourLimit: "5h", weeklyLimit: "Weekly",
+        stopCurrent: "Stop", stopCurrentAria: "Request current task stop", stopCurrentTitle: "Ask the current task to stop all related subagents while preserving worktrees and uncommitted changes",
+        stopSending: "Sending stop request…", stopSendingShort: "Sending…", stopRequested: "Stop requested", stopRequestedShort: "Requested", stopFailed: "Stop request failed", stopUnsupported: "This Codex host cannot send a stop request", stopDifferentTask: "Stop controls apply only to the Codex task that opened this trajectory", stopAlreadyIdle: "The current task is already stopped", stopIdleShort: "Idle",
+        autoStop: "Auto stop", autoStopThreshold: "Remaining quota threshold", autoStopArmed: "Armed", autoStopLatched: "Triggered for this quota cycle", autoStopWaiting: "Armed · waiting for the task to run", autoStopOff: "Off", autoStopHint: "Send one stop request when any quota window reaches the threshold, then wait for quota recovery or a window reset before rearming",
+        cdpToolbar: "In-app Browser shortcut", cdpExperimental: "Experimental CDP", cdpEnable: "Show “View trajectory”", cdpPort: "Port", cdpOff: "Off; no debugging-port connection", cdpInjected: "Ready; opens in the Codex in-app Browser without a message",
+        cdpConnecting: "CDP connected; locating the Codex composer", cdpWaiting: "Waiting for the local CDP port", cdpFailed: "CDP injection failed", cdpSaving: "Saving setting…",
+        cdpHelp: "Quit the app completely, then relaunch it with the loopback debugging port:", cdpPrivacy: "The debugging port can control the Codex page; it is loopback-only and off by default. The shortcut does not call the model or post a task message.",
       };
 
       const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, char => ({
@@ -647,6 +838,508 @@
         return request("tools/call", { name, arguments: args });
       }
 
+      function normalizeCdpToolbarStatus(value) {
+        const next = isPlainObject(value) ? value : {};
+        const port = Number(next.port);
+        return {
+          enabled: next.enabled === true,
+          port: Number.isInteger(port) && port >= 1024 && port <= 65535 ? port : 9222,
+          cdpAvailable: next.cdpAvailable === true,
+          daemonRunning: next.daemonRunning === true,
+          connected: next.connected === true,
+          injected: next.injected === true,
+          viewerServing: next.viewerServing === true,
+          lastError: typeof next.lastError === "string" && next.lastError ? next.lastError : null,
+        };
+      }
+
+      function cdpToolbarStatusText() {
+        if (cdpToolbarBusy) return labels.cdpSaving;
+        if (!cdpToolbarStatus.enabled) return labels.cdpOff;
+        if (cdpToolbarStatus.viewerServing && cdpToolbarStatus.injected) return labels.cdpInjected;
+        if (cdpToolbarStatus.injected) return labels.cdpInjected;
+        if (cdpToolbarStatus.connected || cdpToolbarStatus.cdpAvailable) return labels.cdpConnecting;
+        if (cdpToolbarStatus.lastError) return `${labels.cdpFailed}: ${cdpToolbarStatus.lastError}`;
+        return `${labels.cdpWaiting} ${cdpToolbarStatus.port}`;
+      }
+
+      function updateCdpToolbarControls() {
+        const enabled = document.getElementById("cdpToolbarEnabled");
+        const port = document.getElementById("cdpToolbarPort");
+        const status = document.getElementById("cdpToolbarStatus");
+        const help = document.getElementById("cdpToolbarHelp");
+        if (enabled) {
+          enabled.checked = cdpToolbarStatus.enabled;
+          enabled.disabled = cdpToolbarBusy;
+        }
+        if (port) {
+          if (document.activeElement !== port) port.value = String(cdpToolbarStatus.port);
+          port.disabled = cdpToolbarBusy;
+        }
+        if (status) {
+          status.textContent = cdpToolbarStatusText();
+          status.title = status.textContent;
+          status.classList.toggle("active", cdpToolbarStatus.enabled && cdpToolbarStatus.injected);
+          status.classList.toggle("error", cdpToolbarStatus.enabled && Boolean(cdpToolbarStatus.lastError) && !cdpToolbarStatus.cdpAvailable);
+        }
+        if (help) help.hidden = !cdpToolbarStatus.enabled || cdpToolbarStatus.cdpAvailable;
+      }
+
+      function scheduleCdpToolbarRefresh() {
+        window.clearTimeout(cdpToolbarTimer);
+        cdpToolbarTimer = null;
+        if (!cdpToolbarStatus.enabled) return;
+        cdpToolbarTimer = window.setTimeout(() => refreshCdpToolbarStatus(true), cdpToolbarStatus.injected ? 5000 : 1500);
+      }
+
+      async function refreshCdpToolbarStatus(background = false) {
+        if (cdpToolbarBusy) return;
+        if (!background) cdpToolbarBusy = true;
+        updateCdpToolbarControls();
+        try {
+          const result = await callTool("get_codex_toolbar_injection_status", {});
+          if (result?.isError || !result?.structuredContent) {
+            const message = (result?.content || []).map(item => item?.text).filter(Boolean).join(" ");
+            throw new Error(message || labels.cdpFailed);
+          }
+          cdpToolbarStatus = normalizeCdpToolbarStatus(result.structuredContent);
+          cdpToolbarLoaded = true;
+        } catch (error) {
+          cdpToolbarStatus = { ...cdpToolbarStatus, lastError: String(error?.message || error) };
+        } finally {
+          if (!background) cdpToolbarBusy = false;
+          updateCdpToolbarControls();
+          scheduleCdpToolbarRefresh();
+        }
+      }
+
+      async function setCdpToolbarSetting(enabled, port) {
+        if (cdpToolbarBusy) return;
+        const previous = cdpToolbarStatus;
+        cdpToolbarBusy = true;
+        cdpToolbarStatus = { ...cdpToolbarStatus, enabled, port, lastError: null };
+        updateCdpToolbarControls();
+        try {
+          const result = await callTool("set_codex_toolbar_injection", { enabled, port });
+          if (result?.isError || !result?.structuredContent) {
+            const message = (result?.content || []).map(item => item?.text).filter(Boolean).join(" ");
+            throw new Error(message || labels.cdpFailed);
+          }
+          cdpToolbarStatus = normalizeCdpToolbarStatus(result.structuredContent);
+        } catch (error) {
+          cdpToolbarStatus = { ...previous, lastError: String(error?.message || error) };
+        } finally {
+          cdpToolbarBusy = false;
+          updateCdpToolbarControls();
+          scheduleCdpToolbarRefresh();
+        }
+      }
+
+      function cdpToolbarIntegration() {
+        const launchCommand = `open -a ChatGPT --args --remote-debugging-address=127.0.0.1 --remote-debugging-port=${cdpToolbarStatus.port}`;
+        return `<div class="integration-bar">
+          <div class="integration-copy">
+            <div class="integration-title"><span>${labels.cdpToolbar}</span><span class="integration-experimental">${labels.cdpExperimental}</span></div>
+            <span class="integration-status" id="cdpToolbarStatus" role="status">${escapeHtml(cdpToolbarStatusText())}</span>
+            <div class="integration-help" id="cdpToolbarHelp"${!cdpToolbarStatus.enabled || cdpToolbarStatus.cdpAvailable ? " hidden" : ""}>${labels.cdpHelp} <code>${escapeHtml(launchCommand)}</code><br>${labels.cdpPrivacy}</div>
+          </div>
+          <div class="integration-controls">
+            <label class="integration-switch"><input id="cdpToolbarEnabled" type="checkbox"${cdpToolbarStatus.enabled ? " checked" : ""}${cdpToolbarBusy ? " disabled" : ""}><span>${labels.cdpEnable}</span></label>
+            <label class="integration-port"><span>${labels.cdpPort}</span><input id="cdpToolbarPort" type="number" min="1024" max="65535" step="1" value="${cdpToolbarStatus.port}"${cdpToolbarBusy ? " disabled" : ""}></label>
+          </div>
+        </div>`;
+      }
+
+      function isPlainObject(value) {
+        return value !== null && typeof value === "object" && !Array.isArray(value);
+      }
+
+      function normalizeStopThreshold(value) {
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric)) return DEFAULT_STOP_THRESHOLD;
+        return Math.min(MAX_STOP_THRESHOLD, Math.max(MIN_STOP_THRESHOLD, Math.round(numeric)));
+      }
+
+      function stopBridgeAvailable() {
+        return typeof window.openai?.sendFollowUpMessage === "function" || browserStopBridge;
+      }
+
+      function displayedSessionId(snapshot = liveData || data) {
+        return typeof snapshot?.session?.id === "string" ? snapshot.session.id : null;
+      }
+
+      function stopTargetsDisplayedTask(snapshot = liveData || data) {
+        const sessionId = displayedSessionId(snapshot);
+        return stopTargetSessionId === null || sessionId === stopTargetSessionId;
+      }
+
+      function stopUnavailableText(snapshot = liveData || data) {
+        if (!stopBridgeAvailable()) return labels.stopUnsupported;
+        if (!stopTargetsDisplayedTask(snapshot)) return labels.stopDifferentTask;
+        return null;
+      }
+
+      function stopRequestSupported(snapshot = liveData || data) {
+        return stopUnavailableText(snapshot) === null;
+      }
+
+      function projectedRunningTurnKey(snapshot = liveData || data) {
+        const latestTurn = snapshot?.turns?.at(-1);
+        const running = latestTurn?.status === "running" || latestTurn?.status === "inProgress";
+        if (latestTurn && !running) return null;
+        const sessionId = displayedSessionId(snapshot) || "unknown";
+        if (running) {
+          const identity = Number.isFinite(latestTurn.index)
+            ? latestTurn.index
+            : latestTurn.id || snapshot?.records?.at(-1)?.turn;
+          return identity === undefined || identity === null ? null : `${sessionId}:${identity}`;
+        }
+        const latestRecord = snapshot?.records?.at(-1);
+        if (latestRecord?.status !== "running" && latestRecord?.status !== "inProgress") return null;
+        return Number.isFinite(latestRecord.turn) ? `${sessionId}:${latestRecord.turn}` : null;
+      }
+
+      function appServerRunningTurnKey(snapshot = liveData || data) {
+        if (!browserStopBridge || !browserTaskState) return undefined;
+        if (Date.now() - browserTaskState.observedAt > BROWSER_TASK_STATE_MAX_AGE_MS) {
+          return undefined;
+        }
+        const sessionId = displayedSessionId(snapshot);
+        if (!sessionId || browserTaskState.sessionId !== sessionId) return undefined;
+        return browserTaskState.running
+          ? `${sessionId}:app:${browserTaskState.turnId}`
+          : null;
+      }
+
+      function runningTurnKey(snapshot = liveData || data) {
+        const appServerTurnKey = appServerRunningTurnKey(snapshot);
+        return appServerTurnKey !== undefined
+          ? appServerTurnKey
+          : projectedRunningTurnKey(snapshot);
+      }
+
+      function runningTurnId(snapshot = liveData || data) {
+        const appServerTurnKey = appServerRunningTurnKey(snapshot);
+        if (appServerTurnKey !== undefined) {
+          return appServerTurnKey === null ? null : browserTaskState?.turnId || null;
+        }
+        const latestTurn = snapshot?.turns?.at(-1);
+        const running = latestTurn?.status === "running" || latestTurn?.status === "inProgress";
+        return running && typeof latestTurn.id === "string" ? latestTurn.id : null;
+      }
+
+      function applyBrowserTaskState(value) {
+        if (
+          !browserStopBridge
+          || !isPlainObject(value)
+          || typeof value.sessionId !== "string"
+          || typeof value.running !== "boolean"
+          || (value.running && typeof value.turnId !== "string")
+          || (!value.running && value.turnId !== null)
+        ) return;
+        const expectedSessionId = stopTargetSessionId || displayedSessionId();
+        if (expectedSessionId && value.sessionId !== expectedSessionId) return;
+        browserTaskState = {
+          sessionId: value.sessionId,
+          running: value.running,
+          turnId: value.turnId,
+          observedAt: Date.now(),
+        };
+        if (!isLiveMode()) return;
+        updateStopControls();
+        if (stopGuardEnabled) maybeRequestAutomaticStop(liveData);
+      }
+
+      function resetStopRetry() {
+        stopFailureCount = 0;
+        stopRetryAt = 0;
+      }
+
+      function reconcileStopRequestState(snapshot = liveData || data) {
+        const turnKey = runningTurnKey(snapshot);
+        const changedTurn = Boolean(turnKey && stopRequestTurnKey && turnKey !== stopRequestTurnKey);
+        if (changedTurn || (turnKey && stopRequestStatus === "task-idle")) {
+          stopRequestStatus = "idle";
+          stopRequestError = null;
+          stopRequestTurnKey = null;
+          resetStopRetry();
+        } else if (!turnKey && (stopRequestStatus === "sent" || stopRequestStatus === "error")) {
+          stopRequestStatus = "task-idle";
+          stopRequestError = null;
+          resetStopRetry();
+        }
+        return turnKey;
+      }
+
+      function taskIsRunning(snapshot = liveData || data) {
+        return runningTurnKey(snapshot) !== null;
+      }
+
+      function persistStopGuard() {
+        const guard = {
+          enabled: stopGuardEnabled,
+          threshold: stopGuardThreshold,
+          firedKey: stopGuardFiredKey,
+        };
+        widgetStateShadow = { ...widgetStateShadow, codexTrajectoryStopGuard: guard };
+        try {
+          window.openai?.setWidgetState?.(widgetStateShadow);
+        } catch {
+          // The live guard still works for this mounted component when persistence is unavailable.
+        }
+      }
+
+      function stopGuardStatusText() {
+        const unavailable = stopUnavailableText();
+        if (unavailable) return unavailable;
+        if (stopRequestStatus === "sending") return labels.stopSending;
+        if (stopRequestStatus === "sent") return labels.stopRequested;
+        if (stopRequestStatus === "error") return `${labels.stopFailed}: ${stopRequestError || labels.loadError}`;
+        if (stopGuardEnabled && autoStopIsLatched()) {
+          return `${labels.autoStopLatched} · ≤ ${stopGuardThreshold}%`;
+        }
+        if (!taskIsRunning()) return stopGuardEnabled ? labels.autoStopWaiting : labels.stopAlreadyIdle;
+        if (stopGuardEnabled) return `${labels.autoStopArmed} · ≤ ${stopGuardThreshold}%`;
+        return labels.autoStopOff;
+      }
+
+      function updateStopControls() {
+        reconcileStopRequestState();
+        const supported = stopRequestSupported();
+        const running = taskIsRunning();
+        const unavailable = stopUnavailableText();
+        const dock = document.getElementById("liveDock");
+        const button = document.getElementById("requestStop");
+        const toggle = document.getElementById("autoStopEnabled");
+        const threshold = document.getElementById("autoStopThreshold");
+        const status = document.getElementById("stopRequestStatus");
+        if (dock) {
+          dock.dataset.stopStatus = supported
+            ? (running ? stopRequestStatus : "task-idle")
+            : "unsupported";
+          dock.dataset.taskRunning = String(running);
+          dock.dataset.projectedTaskRunning = String(projectedRunningTurnKey() !== null);
+          dock.dataset.taskStateSource = appServerRunningTurnKey() !== undefined
+            ? "app-server"
+            : "trajectory";
+          dock.dataset.autoStop = String(stopGuardEnabled);
+          dock.dataset.autoStopThreshold = String(stopGuardThreshold);
+          dock.dataset.autoStopLatched = String(stopGuardEnabled && autoStopIsLatched());
+        }
+        if (button) {
+          button.textContent = stopRequestStatus === "sending"
+            ? labels.stopSendingShort
+            : stopRequestStatus === "sent"
+              ? labels.stopRequestedShort
+              : running
+                ? labels.stopCurrent
+                : labels.stopIdleShort;
+          button.disabled = !supported
+            || !running
+            || stopRequestStatus === "sending"
+            || stopRequestStatus === "sent";
+          button.classList.toggle("sent", stopRequestStatus === "sent");
+          button.setAttribute(
+            "aria-label",
+            !running
+              ? labels.stopAlreadyIdle
+              : stopRequestStatus === "sent"
+                ? labels.stopRequested
+                : labels.stopCurrentAria,
+          );
+          button.title = !supported
+            ? unavailable || labels.stopUnsupported
+            : !running
+              ? labels.stopAlreadyIdle
+              : stopRequestStatus === "error"
+                ? `${labels.stopFailed}: ${stopRequestError || labels.loadError}`
+                : labels.stopCurrentTitle;
+        }
+        if (toggle) {
+          toggle.checked = stopGuardEnabled;
+          toggle.disabled = !supported;
+        }
+        if (threshold) {
+          if (document.activeElement !== threshold) threshold.value = String(stopGuardThreshold);
+          threshold.disabled = !supported;
+        }
+        if (status) {
+          status.textContent = stopGuardStatusText();
+          status.title = status.textContent;
+          status.classList.toggle("error", !supported || stopRequestStatus === "error");
+          status.classList.toggle("sent", stopRequestStatus === "sent");
+        }
+      }
+
+      function stopRequestPrompt(source, triggeredItems) {
+        const quotaSummary = triggeredItems
+          .map(item => `${item.label} ${item.remainingText}`)
+          .join(zh ? "、" : ", ");
+        if (zh) {
+          const reason = source === "auto"
+            ? `触发原因：检测到 ${quotaSummary || "Codex 额度"}，已达到剩余额度 ≤ ${stopGuardThreshold}% 的自动停止阈值。`
+            : "触发原因：用户点击了 Codex Trajectory 的一键停止按钮。";
+          return `【Codex Trajectory 停止请求】请立即停止当前任务。如果此任务有活跃的 /goal，先使用可用的 Goal 控制能力将它暂停，防止结束当前回合后自动续跑。然后使用可用的代理控制能力，递归中断所有仍在运行的相关 subagent/子任务，并停止它们正在进行的工作；不要启动新的代理、工具或命令。保留所有 worktree、工作目录和未提交修改，不要删除、清理、重置或回滚任何文件。完成安全收尾后，尽快结束当前任务，不再继续原工作。${reason}`;
+        }
+        const reason = source === "auto"
+          ? `Trigger: ${quotaSummary || "Codex quota"} reached the automatic stop threshold of ≤ ${stopGuardThreshold}% remaining.`
+          : "Trigger: the user clicked the Codex Trajectory one-click stop control.";
+        return `[Codex Trajectory stop request] Stop the current task now. If this task has an active /goal, first use any available Goal control to pause it so it cannot automatically continue after the current turn ends. Then use any available agent controls to recursively interrupt every active related subagent or child task and stop their in-progress work; do not start new agents, tools, or commands. Preserve every worktree, working directory, and uncommitted change. Do not delete, clean, reset, or roll back files. After safe shutdown bookkeeping, end the current task promptly and do not continue the original work. ${reason}`;
+      }
+
+      async function requestCurrentTaskStop(source, triggeredItems = [], cycleKey = null) {
+        if (stopRequestStatus === "sending" || stopRequestStatus === "sent") return;
+        const snapshot = liveData || data;
+        if (!stopRequestSupported(snapshot)) {
+          stopRequestStatus = "error";
+          stopRequestError = stopUnavailableText(snapshot) || labels.stopUnsupported;
+          updateStopControls();
+          return;
+        }
+        const turnKey = reconcileStopRequestState(snapshot);
+        if (!turnKey) {
+          if (source === "manual") stopRequestStatus = "task-idle";
+          stopRequestError = null;
+          updateStopControls();
+          return;
+        }
+        const effectiveCycleKey = typeof cycleKey === "string"
+          ? cycleKey
+          : (stopGuardEnabled ? activeAutoStopCycle(snapshot)?.key || null : null);
+        stopRequestTurnKey = turnKey;
+        stopRequestStatus = "sending";
+        stopRequestError = null;
+        updateStopControls();
+        try {
+          if (typeof window.openai?.sendFollowUpMessage === "function") {
+            await withTimeout(window.openai.sendFollowUpMessage({
+              prompt: stopRequestPrompt(source, triggeredItems),
+              scrollToBottom: false,
+            }));
+          } else {
+            const result = await request("trajectory/request-stop", {
+              sessionId: displayedSessionId(snapshot),
+              turnId: runningTurnId(snapshot),
+              source,
+              threshold: stopGuardThreshold,
+            });
+            if (result?.idle === true) {
+              stopRequestStatus = "task-idle";
+              if (typeof effectiveCycleKey === "string") {
+                stopGuardFiredKey = effectiveCycleKey;
+                persistStopGuard();
+              }
+              resetStopRetry();
+              updateStopControls();
+              return;
+            }
+            if (result?.sent !== true) throw new Error(result?.error || labels.stopFailed);
+          }
+          stopRequestStatus = "sent";
+          resetStopRetry();
+          if (typeof effectiveCycleKey === "string") {
+            stopGuardFiredKey = effectiveCycleKey;
+            persistStopGuard();
+          }
+        } catch (error) {
+          stopRequestStatus = "error";
+          stopRequestError = String(error?.message || error);
+          if (source === "auto") {
+            stopGuardFiredKey = null;
+            stopFailureCount = Math.min(stopFailureCount + 1, 8);
+            stopRetryAt = Date.now() + Math.min(
+              STOP_RETRY_MAX_MS,
+              STOP_RETRY_BASE_MS * (2 ** Math.max(0, stopFailureCount - 1)),
+            );
+            persistStopGuard();
+          }
+        }
+        updateStopControls();
+      }
+
+      function autoStopCycleKey(snapshot, quota) {
+        const windows = quota.items
+          .map(item => `${item.key}:${item.windowMinutes}:${item.resetsAt || "unknown"}`)
+          .join("|");
+        return `v3:${displayedSessionId(snapshot) || "unknown"}:${stopGuardThreshold}:${windows}`;
+      }
+
+      function activeAutoStopCycle(snapshot = liveData || data) {
+        if (!snapshot?.stats) return null;
+        const quota = rateLimitView(snapshot.stats.rateLimits);
+        const triggeredItems = quota.items.filter(item => item.remaining <= stopGuardThreshold);
+        if (!triggeredItems.length) return null;
+        return {
+          key: autoStopCycleKey(snapshot, quota),
+          quota,
+          triggeredItems,
+        };
+      }
+
+      function autoStopIsLatched(snapshot = liveData || data) {
+        const cycle = activeAutoStopCycle(snapshot);
+        return Boolean(cycle && stopGuardFiredKey === cycle.key);
+      }
+
+      function maybeRequestAutomaticStop(snapshot) {
+        if (
+          !stopGuardEnabled
+          || !stopRequestSupported()
+          || stopRequestStatus === "sending"
+          || stopRequestStatus === "sent"
+          || Date.now() < stopRetryAt
+          || !snapshot?.stats
+        ) return;
+        const cycle = activeAutoStopCycle(snapshot);
+        if (!cycle) {
+          if (stopGuardFiredKey !== null) {
+            stopGuardFiredKey = null;
+            persistStopGuard();
+          }
+          resetStopRetry();
+          return;
+        }
+        if (stopGuardFiredKey === cycle.key) return;
+        if (typeof stopGuardFiredKey === "string" && stopGuardFiredKey.startsWith("v2:")) {
+          stopGuardFiredKey = cycle.key;
+          persistStopGuard();
+          updateStopControls();
+          return;
+        }
+        if (!taskIsRunning(snapshot)) {
+          updateStopControls();
+          return;
+        }
+        updateStopControls();
+        void requestCurrentTaskStop("auto", cycle.triggeredItems, cycle.key);
+      }
+
+      function bindStopControls() {
+        document.getElementById("requestStop")?.addEventListener("click", () => {
+          void requestCurrentTaskStop("manual");
+        });
+        document.getElementById("autoStopEnabled")?.addEventListener("change", event => {
+          stopGuardEnabled = event.target.checked;
+          stopGuardFiredKey = null;
+          resetStopRetry();
+          persistStopGuard();
+          updateStopControls();
+          if (stopGuardEnabled) maybeRequestAutomaticStop(liveData);
+        });
+        document.getElementById("autoStopThreshold")?.addEventListener("change", event => {
+          const next = normalizeStopThreshold(event.target.value);
+          event.target.value = String(next);
+          if (next !== stopGuardThreshold) {
+            stopGuardThreshold = next;
+            stopGuardFiredKey = null;
+            resetStopRetry();
+            persistStopGuard();
+          }
+          updateStopControls();
+          if (stopGuardEnabled) maybeRequestAutomaticStop(liveData);
+        });
+      }
+
       function safeLiveSnapshot(snapshot) {
         const records = (snapshot?.records || []).slice(-50).map(record => ({
           ...record,
@@ -693,7 +1386,7 @@
         }
       }
 
-      const isDockMode = () => livePresentation === "docked";
+      const isDockMode = () => livePresentation === "docked" || livePresentation === "inline-live";
       const isLiveMode = () => isDockMode() || isNativePipMode();
 
       async function requestHostDisplayMode(mode) {
@@ -807,6 +1500,7 @@
         const latest = snapshot.records?.at(-1) || {};
         const stats = snapshot.stats || {};
         const usage = usageView(hasTokenUsage(stats.tokens) ? stats.tokens : {});
+        const quota = rateLimitView(stats.rateLimits);
         const status = latest.status || "—";
         const { cursor } = liveCursorState(latest, stats);
         const stateLabel = liveStateLabel();
@@ -822,6 +1516,13 @@
         context.fillStyle = accent;
         context.font = "750 19px -apple-system, BlinkMacSystemFont, sans-serif";
         context.fillText(labels.liveTitle.toUpperCase(), 40, 55);
+        if (quota.items.length) {
+          context.fillStyle = accent;
+          context.font = "750 16px -apple-system, BlinkMacSystemFont, sans-serif";
+          context.textAlign = "right";
+          context.fillText(fitCanvasText(context, quota.compact, 330), 600, 55);
+          context.textAlign = "left";
+        }
         context.fillStyle = text;
         context.font = "750 34px -apple-system, BlinkMacSystemFont, sans-serif";
         context.fillText(fitCanvasText(context, snapshot.session.title || snapshot.session.id, 560), 40, 105);
@@ -884,6 +1585,7 @@
         pipCanvas.dataset.latest = latest.summary || "";
         pipCanvas.dataset.detailLevel = "summary";
         pipCanvas.dataset.liveState = stateLabel;
+        pipCanvas.dataset.quota = quota.signature;
         pipCanvas.dataset.payload = JSON.stringify({
           detailLevel: "summary",
           sessionId: snapshot.session.id,
@@ -894,6 +1596,12 @@
             status,
           },
           tokens: tokenItems.map(item => item[1]),
+          rateLimits: quota.items.map(item => ({
+            window: item.key,
+            remainingPercent: item.remaining,
+            windowLabel: item.label,
+            resetsAt: item.resetsAt,
+          })),
         });
       }
 
@@ -904,6 +1612,7 @@
         const stats = snapshot.stats || {};
         const usage = usageView(hasTokenUsage(stats.tokens) ? stats.tokens : {});
         const cursorState = liveCursorState(latest, stats);
+        const quota = rateLimitView(stats.rateLimits);
         return {
           snapshot,
           latest,
@@ -911,6 +1620,7 @@
           cursor: cursorState.cursor,
           cursorParts: cursorState,
           stateLabel: liveStateLabel(),
+          quota,
           tokenItems: [
             [labels.totalTokens, usage.total],
             [labels.uncachedInput, usage.uncached],
@@ -1019,7 +1729,7 @@
       }
 
       function mountDockedShell(view) {
-        const { snapshot, latest, stats, cursor, cursorParts, stateLabel, tokenItems } = view;
+        const { snapshot, latest, stats, cursor, cursorParts, stateLabel, quota, tokenItems } = view;
         const tokenValues = tokenItems.map(item => String(item[1])).join(",");
         const tokenCards = tokenItems.slice(1).map((item, index) => `
           <div class="dock-token" data-dock-token="${index + 1}">
@@ -1032,17 +1742,29 @@
         app.innerHTML = `
           <section class="dock-shell" id="liveDock" role="complementary" aria-label="${escapeHtml(labels.liveTitle)}"
             data-session-id="${escapeHtml(snapshot.session.id)}"
-            data-presentation="docked" data-detail-level="summary" data-cursor="${escapeHtml(cursor)}"
-            data-tokens="${escapeHtml(tokenValues)}" data-latest="${escapeHtml(latest.summary || "")}" data-record-count="${records.length}">
+            data-presentation="${escapeHtml(livePresentation)}" data-detail-level="summary" data-cursor="${escapeHtml(cursor)}"
+            data-tokens="${escapeHtml(tokenValues)}" data-quota="${escapeHtml(quota.signature)}" data-latest="${escapeHtml(latest.summary || "")}" data-record-count="${records.length}"
+            data-stop-status="${escapeHtml(stopRequestSupported() ? stopRequestStatus : "unsupported")}" data-auto-stop="${String(stopGuardEnabled)}" data-auto-stop-threshold="${stopGuardThreshold}">
             <div class="dock-fixed" id="dockFixedSummary">
               <header class="dock-head">
-                <div><div class="dock-kicker">${escapeHtml(labels.liveTitle)}</div><div class="dock-title" id="dockSessionTitle" title="${escapeHtml(snapshot.session.title || snapshot.session.id)}">${escapeHtml(snapshot.session.title || snapshot.session.id)}</div></div>
-                <button class="dock-close" id="closeDock" type="button" aria-label="${escapeHtml(labels.returnInline)}" title="${escapeHtml(labels.returnInline)}">×</button>
+                <div class="dock-head-copy"><div class="dock-kicker">${escapeHtml(labels.liveTitle)}</div><div class="dock-title" id="dockSessionTitle" title="${escapeHtml(snapshot.session.title || snapshot.session.id)}">${escapeHtml(snapshot.session.title || snapshot.session.id)}</div></div>
+                <div class="dock-head-actions">
+                  <div class="dock-quota" id="dockQuota" aria-label="${escapeHtml(quota.aria)}" title="${escapeHtml(quota.aria)}" data-quota="${escapeHtml(quota.signature)}"${quota.items.length ? "" : " hidden"}>${dockQuotaMarkup(quota)}</div>
+                  <button class="dock-stop-button" id="requestStop" type="button" aria-label="${escapeHtml(labels.stopCurrentAria)}" title="${escapeHtml(labels.stopCurrentTitle)}">${escapeHtml(labels.stopCurrent)}</button>
+                  <button class="dock-close" id="closeDock" type="button" aria-label="${escapeHtml(labels.returnInline)}" title="${escapeHtml(labels.returnInline)}">×</button>
+                </div>
               </header>
+              <div class="dock-stopbar" title="${escapeHtml(labels.autoStopHint)}">
+                <div class="dock-stop-config">
+                  <label class="dock-stop-toggle"><input id="autoStopEnabled" type="checkbox"${stopGuardEnabled ? " checked" : ""}><span>${escapeHtml(labels.autoStop)}</span></label>
+                  <label class="dock-stop-threshold-wrap"><input class="dock-stop-threshold" id="autoStopThreshold" type="number" min="${MIN_STOP_THRESHOLD}" max="${MAX_STOP_THRESHOLD}" step="1" value="${stopGuardThreshold}" aria-label="${escapeHtml(labels.autoStopThreshold)}"><span>%</span></label>
+                </div>
+                <span class="dock-stop-status" id="stopRequestStatus" role="status" aria-live="polite"></span>
+              </div>
               <div class="dock-status">
                 <span class="dock-live-state" aria-live="polite"><span class="dock-live-dot${liveError ? " error" : ""}" id="dockLiveDot"></span><span id="dockLiveState">${escapeHtml(stateLabel)}</span></span>
                 <span class="dock-cursor" id="dockCursor" aria-label="${escapeHtml(cursor)}"><span class="dock-cursor-part" id="dockCursorTurn">${escapeHtml(cursorParts.turn)}</span><span class="dock-cursor-separator">/</span><span class="dock-cursor-part" id="dockCursorStep">${escapeHtml(cursorParts.step)}</span><span class="dock-cursor-separator">/</span><span class="dock-cursor-part" id="dockCursorRecord">${escapeHtml(cursorParts.record)}</span></span>
-                <span class="dock-mode-label">${escapeHtml(labels.dockMode)}</span>
+                <span class="dock-mode-label" id="dockModeLabel">${escapeHtml(livePresentation === "inline-live" ? labels.inlineLiveMode : labels.dockMode)}</span>
               </div>
               <section class="dock-overview" aria-label="${escapeHtml(labels.taskTotal)}">
                 <div class="dock-overview-head"><span class="dock-section-label">${escapeHtml(labels.taskTotal)}</span><span class="dock-overview-meta" id="dockOverviewMeta">${escapeHtml(number(stats.turns) + " " + labels.turns + " · " + number(stats.records) + " " + labels.records)}</span></div>
@@ -1057,6 +1779,8 @@
             <footer class="dock-foot"><span>${escapeHtml(labels.liveSafe)}</span><span id="dockChecked">${escapeHtml(labels.checked + ": " + (liveCheckedAt ? date(liveCheckedAt) : "—"))}</span></footer>
           </section>`;
         document.getElementById("closeDock")?.addEventListener("click", exitPip);
+        bindStopControls();
+        updateStopControls();
         const stream = document.getElementById("liveRecordStream");
         bindDockStream(stream);
         bindDockWhaleMiner(stream);
@@ -1064,7 +1788,7 @@
       }
 
       function patchDockedShell(view) {
-        const { snapshot, latest, stats, cursor, cursorParts, stateLabel, tokenItems } = view;
+        const { snapshot, latest, stats, cursor, cursorParts, stateLabel, quota, tokenItems } = view;
         const dock = document.getElementById("liveDock");
         if (!dock || dock.dataset.sessionId !== String(snapshot.session.id)) {
           mountDockedShell(view);
@@ -1073,8 +1797,10 @@
         document.body.classList.add("dock-mode");
         const records = snapshot.records || [];
         const tokenValues = tokenItems.map(item => String(item[1])).join(",");
+        setDockAttribute(dock, "data-presentation", livePresentation);
         setDockAttribute(dock, "data-cursor", cursor);
         setDockAttribute(dock, "data-tokens", tokenValues);
+        setDockAttribute(dock, "data-quota", quota.signature);
         setDockAttribute(dock, "data-latest", latest.summary || "");
         setDockAttribute(dock, "data-record-count", records.length);
 
@@ -1087,6 +1813,17 @@
         setDockText("#dockCursorStep", cursorParts.step);
         setDockText("#dockCursorRecord", cursorParts.record);
         setDockAttribute(document.getElementById("dockCursor"), "aria-label", cursor);
+        setDockText("#dockModeLabel", livePresentation === "inline-live" ? labels.inlineLiveMode : labels.dockMode);
+        const quotaElement = document.getElementById("dockQuota");
+        if (quotaElement) {
+          if (quotaElement.dataset.quota !== quota.signature) {
+            quotaElement.innerHTML = dockQuotaMarkup(quota);
+            quotaElement.dataset.quota = quota.signature;
+          }
+          quotaElement.hidden = quota.items.length === 0;
+          setDockAttribute(quotaElement, "aria-label", quota.aria);
+          setDockAttribute(quotaElement, "title", quota.aria);
+        }
         setDockText("#dockOverviewMeta", number(stats.turns) + " " + labels.turns + " · " + number(stats.records) + " " + labels.records);
         setDockText("#dockTotalValue", number(tokenItems[0][1]));
         tokenItems.slice(1).forEach((item, index) => {
@@ -1094,6 +1831,8 @@
         });
         setDockText("#dockStreamMeta", number(records.length) + " " + labels.recentRecords + " · " + labels.latestBelow);
         setDockText("#dockChecked", labels.checked + ": " + (liveCheckedAt ? date(liveCheckedAt) : "—"));
+        updateStopControls();
+        if (liveRevision) maybeRequestAutomaticStop(snapshot);
 
         const stream = document.getElementById("liveRecordStream");
         if (!stream) return;
@@ -1126,7 +1865,7 @@
         const button = document.getElementById("openPip");
         if (!button) return;
         const active = isLiveMode();
-        const ready = hostDockSupported() || (nativePipSupported() && pipReady);
+        const ready = true;
         button.textContent = active ? labels.exitPip : labels.livePip;
         button.setAttribute("aria-pressed", String(active));
         button.disabled = presentationBusy || (!active && !ready);
@@ -1206,10 +1945,10 @@
         startLiveLoop();
       }
 
-      function activateDockedWindow() {
+      function activateDockedWindow(presentation = "docked") {
         if (!liveData && data) liveData = safeLiveSnapshot(data);
         if (!liveSessionId && data) liveSessionId = data.session.id;
-        livePresentation = "docked";
+        livePresentation = presentation;
         dockFollowLatest = true;
         dockScrollTop = 0;
         pipActive = false;
@@ -1276,18 +2015,22 @@
               hostError = error;
             }
           }
-          const video = prepareNativePipMedia(true);
-          drawPipCanvas();
-          if (!video || !pipReady) throw new Error(pipPreparationError || labels.pipUnavailable);
-          pipWindow = await withTimeout(video.requestPictureInPicture());
-          activateNativePip();
-          pipWindow?.addEventListener?.("resize", drawPipCanvas);
+          if (nativePipSupported()) {
+            const video = prepareNativePipMedia(true);
+            drawPipCanvas();
+            if (!video || !pipReady) throw new Error(pipPreparationError || labels.pipUnavailable);
+            pipWindow = await withTimeout(video.requestPictureInPicture());
+            activateNativePip();
+            pipWindow?.addEventListener?.("resize", drawPipCanvas);
+            return;
+          }
+          throw new Error(labels.pipUnavailable);
         } catch (error) {
           const reason = hostError
             ? String(hostError?.message || hostError) + "; " + String(error?.message || error)
             : String(error?.message || error);
-          finishLiveWindow(false);
-          showLoadError(new Error(labels.pipFailed + ": " + reason));
+          pipPreparationError = reason;
+          activateDockedWindow("inline-live");
         } finally {
           presentationBusy = false;
           updatePipButton();
@@ -1303,6 +2046,8 @@
           if (presentation === "docked") {
             await requestHostDisplayMode("inline");
             if (isDockMode()) finishLiveWindow(true);
+          } else if (presentation === "inline-live") {
+            finishLiveWindow(true);
           } else if (
             typeof document.exitPictureInPicture === "function"
             && document.pictureInPictureElement
@@ -1385,6 +2130,7 @@
 
       function render(next, options = {}) {
         if (!next?.session || !Array.isArray(next.records)) return;
+        if (stopTargetSessionId === null) stopTargetSessionId = next.session.id;
         const previousSessionId = data?.session?.id;
         const previousLastTurn = data?.records?.at(-1)?.turn;
         const nextLastTurn = next.records.at(-1)?.turn;
@@ -1404,6 +2150,7 @@
         selectedIndex = !resetToLatest && next.records.some(record => record.index === previousSelectedIndex) ? previousSelectedIndex : next.records.at(-1)?.index || null;
         if (isDockMode()) drawDockedShell(); else drawShell();
         if (isNativePipMode()) drawPipCanvas();
+        if (!cdpToolbarLoaded && !isDockMode()) refreshCdpToolbarStatus();
         const ledgerWrap = document.querySelector(".ledger-wrap");
         if (ledgerWrap) {
           if (options.prepend) ledgerWrap.scrollTop = previousScrollTop + Math.max(0, ledgerWrap.scrollHeight - previousScrollHeight);
@@ -1459,6 +2206,59 @@
       function percentage(value, total) {
         if (!Number.isFinite(value) || !Number.isFinite(total) || total <= 0) return "—";
         return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(value / total * 100)}%`;
+      }
+
+      function rateLimitWindowLabel(window, key) {
+        const minutes = window.windowMinutes;
+        if (minutes === 300) return labels.fiveHourLimit;
+        if (minutes === 10_080) return labels.weeklyLimit;
+        if (minutes % 1_440 === 0) return `${number(minutes / 1_440)}${zh ? "天" : "d"}`;
+        if (minutes % 60 === 0) return `${number(minutes / 60)}${zh ? "小时" : "h"}`;
+        if (Number.isFinite(minutes)) return `${number(minutes)}${zh ? "分钟" : "m"}`;
+        return key === "primary" ? labels.primaryLimit : labels.secondaryLimit;
+      }
+
+      function rateLimitView(raw) {
+        const items = [];
+        for (const key of ["primary", "secondary"]) {
+          const window = raw?.[key];
+          if (
+            !window
+            || !Number.isFinite(window.usedPercent)
+            || window.usedPercent < 0
+            || window.usedPercent > 100
+            || !Number.isInteger(window.windowMinutes)
+            || window.windowMinutes <= 0
+          ) continue;
+          const remaining = Math.max(0, 100 - window.usedPercent);
+          const remainingText = `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(remaining)}%`;
+          const label = rateLimitWindowLabel(window, key);
+          const resetText = window.resetsAt ? date(window.resetsAt) : "—";
+          items.push({
+            key,
+            label,
+            remaining,
+            remainingText,
+            windowMinutes: window.windowMinutes,
+            resetsAt: window.resetsAt || null,
+            resetText,
+          });
+        }
+        return {
+          items,
+          signature: items.map(item => `${item.key}:${item.remaining}:${item.resetsAt || ""}`).join("|"),
+          aria: items.length
+            ? `${labels.codexQuota}: ${items.map(item => `${item.label} ${item.remainingText} ${labels.quotaRemaining}`).join(", ")}`
+            : labels.codexQuota,
+          compact: items.map(item => `${item.label} ${item.remainingText}`).join(" · "),
+        };
+      }
+
+      function dockQuotaMarkup(quota) {
+        return `<span class="dock-quota-label">${escapeHtml(labels.codexQuota)}</span><span class="dock-quota-values">${quota.items.map(item => `
+          <span class="dock-quota-window" data-quota-window="${escapeHtml(item.key)}" title="${escapeHtml(item.label + " · " + item.remainingText + " " + labels.quotaRemaining + " · " + labels.quotaResets + " " + item.resetText)}">
+            <span>${escapeHtml(item.label)}</span><strong>${escapeHtml(item.remainingText)}</strong>
+          </span>`).join("")}</span>`;
       }
 
       function tokenMetric(key, label, value) {
@@ -1655,7 +2455,7 @@
         const totalDuration = turns.reduce((sum, turn) => sum + (Number.isFinite(turn.durationMs) ? turn.durationMs : 0), 0);
         const tokenTotal = hasTokenUsage(stats.tokens) ? usageView(stats.tokens).total : undefined;
         const pipActiveNow = isLiveMode();
-        const pipReadyNow = hostDockSupported() || (nativePipSupported() && pipReady);
+        const pipReadyNow = true;
         const pipButtonTitle = pipActiveNow
           ? labels.exitPip
           : pipReadyNow
@@ -1676,6 +2476,7 @@
               <div class="privacy-copy"><div><strong>${fullDetails ? labels.fullMode : labels.safeMode}</strong> · ${fullDetails ? labels.fullDescription : labels.safeDescription}</div>${!fullDetails && fullConfirmationOpen ? `<div class="privacy-warning" id="fullDetailsWarning" role="alert">${labels.confirmFull}</div>` : ""}</div>
               ${fullDetails ? "" : fullConfirmationOpen ? `<div class="privacy-actions"><button type="button" id="cancelFull">${labels.cancel}</button><button type="button" class="privacy-action privacy-confirm" id="confirmFull" aria-describedby="fullDetailsWarning">${labels.confirmLoadFull}</button></div>` : `<button type="button" class="privacy-action" id="loadFull">${labels.loadFull}</button>`}
             </div>
+            ${cdpToolbarIntegration()}
             <div class="stats">
               ${stat(labels.turns, number(stats.turns))}${stat(labels.records, number(stats.records))}${stat(labels.tools, number(stats.toolCalls))}
               ${stat(labels.failures, number(stats.failedTools))}${stat(labels.tokens, number(tokenTotal))}${stat(labels.duration, duration(totalDuration))}
@@ -1717,6 +2518,15 @@
         document.getElementById("kindFilter").addEventListener("change", event => { kind = event.target.value; drawLedger(); });
         document.getElementById("refresh").addEventListener("click", () => loadSession(data.session.id, data.detailLevel));
         document.getElementById("openPip")?.addEventListener("click", enterPip);
+        document.getElementById("cdpToolbarEnabled")?.addEventListener("change", event => {
+          const port = normalizeCdpToolbarStatus({ port: Number(document.getElementById("cdpToolbarPort")?.value) }).port;
+          setCdpToolbarSetting(event.target.checked, port);
+        });
+        document.getElementById("cdpToolbarPort")?.addEventListener("change", event => {
+          const port = normalizeCdpToolbarStatus({ port: Number(event.target.value) }).port;
+          event.target.value = String(port);
+          setCdpToolbarSetting(cdpToolbarStatus.enabled, port);
+        });
         document.getElementById("sessionSelect").addEventListener("change", event => loadSession(event.target.value, "summary"));
         document.getElementById("loadEarlier")?.addEventListener("click", loadEarlierRecords);
         document.querySelector("details.token-turns")?.addEventListener("toggle", event => {
@@ -2064,6 +2874,7 @@
 
       window.addEventListener("openai:set_globals", event => {
         const globals = event?.detail?.globals || event?.detail || {};
+        applyCodexTheme({ scheme: globals.theme });
         const nextMode = globals.displayMode;
         if (nextMode !== "inline" && nextMode !== "fullscreen") return;
         displayMode = nextMode;
@@ -2081,6 +2892,14 @@
           pending.delete(message.id);
           window.clearTimeout(handler.timeout);
           if (message.error) handler.reject(message.error); else handler.resolve(message.result);
+          return;
+        }
+        if (message.method === "trajectory/theme") {
+          applyCodexTheme(message.params);
+          return;
+        }
+        if (message.method === "trajectory/task-state") {
+          applyBrowserTaskState(message.params);
           return;
         }
         if (message.method === "ui/notifications/tool-result" && message.params?.structuredContent) render(message.params.structuredContent);
