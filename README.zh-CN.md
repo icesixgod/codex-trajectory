@@ -62,8 +62,9 @@ open -a ChatGPT --args --remote-debugging-address=127.0.0.1 --remote-debugging-p
 Windows 的 Microsoft Store 版本可在 PowerShell 中运行（未来版本的包名或可执行文件子路径可能变化）：
 
 ```powershell
-$codex = Get-AppxPackage OpenAI.Codex
-Start-Process "$($codex.InstallLocation)\app\Codex.exe" -ArgumentList '--remote-debugging-address=127.0.0.1','--remote-debugging-port=9222'
+$codex = Get-AppxPackage -Name OpenAI.Codex
+$exe = Join-Path $codex.InstallLocation 'app\ChatGPT.exe'
+Start-Process -FilePath $exe -ArgumentList '--remote-debugging-address=127.0.0.1','--remote-debugging-port=9222'
 ```
 
 所选端口不可用时，轨迹页面也会显示这条命令。调试端口可以控制应用页面，因此必须只绑定回环地址，不要通过隧道或非本机地址暴露，不使用时应关闭页面中的开关。这是适配当前 Codex DOM 的实验性方案，并非官方插件工具栏接口。

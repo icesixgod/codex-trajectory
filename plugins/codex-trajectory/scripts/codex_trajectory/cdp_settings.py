@@ -300,6 +300,41 @@ def _stop_outdated_daemon(runtime: dict[str, Any]) -> None:
             write_settings(True, port)
 
 
+def _start_watcher_process(command: list[str], script: Path) -> None:
+    """Launch the watcher outside the Codex host's console and process group."""
+    options: dict[str, Any] = {
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+        "close_fds": True,
+        "cwd": str(script.parent.parent),
+    }
+    if os.name != "nt":
+        options["start_new_session"] = True
+        subprocess.Popen(command, **options)
+        return
+
+    detached_flags = (
+        getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        | getattr(subprocess, "DETACHED_PROCESS", 0)
+        | getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    )
+    breakaway_flag = getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0)
+    try:
+        subprocess.Popen(
+            command,
+            creationflags=detached_flags | breakaway_flag,
+            **options,
+        )
+    except OSError:
+        # Some Windows hosts do not allow a child to break away from their Job
+        # Object. The detached process-group fallback still prevents console
+        # coupling, while the next MCP runtime can reconcile a missing watcher.
+        if not breakaway_flag:
+            raise
+        subprocess.Popen(command, creationflags=detached_flags, **options)
+
+
 def start_daemon() -> None:
     """Start the detached watcher; its cross-process lock removes duplicate instances."""
     runtime = _daemon_status()
@@ -310,15 +345,7 @@ def start_daemon() -> None:
     script = _daemon_script()
     if not script.is_file():
         raise OSError("CDP injector script is unavailable.")
-    subprocess.Popen(
-        [sys.executable, str(script), "--watch"],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        close_fds=True,
-        start_new_session=os.name != "nt",
-        cwd=str(script.parent.parent),
-    )
+    _start_watcher_process([sys.executable, str(script), "--watch"], script)
 
 
 def reconcile_daemon() -> None:

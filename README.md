@@ -62,8 +62,9 @@ open -a ChatGPT --args --remote-debugging-address=127.0.0.1 --remote-debugging-p
 For the Microsoft Store build on Windows, use PowerShell (the installed package name or executable subpath may differ in future builds):
 
 ```powershell
-$codex = Get-AppxPackage OpenAI.Codex
-Start-Process "$($codex.InstallLocation)\app\Codex.exe" -ArgumentList '--remote-debugging-address=127.0.0.1','--remote-debugging-port=9222'
+$codex = Get-AppxPackage -Name OpenAI.Codex
+$exe = Join-Path $codex.InstallLocation 'app\ChatGPT.exe'
+Start-Process -FilePath $exe -ArgumentList '--remote-debugging-address=127.0.0.1','--remote-debugging-port=9222'
 ```
 
 The viewer shows this command when the selected port is unavailable. A debugging port can control the application page, so keep it bound to loopback, do not expose it through a tunnel or non-loopback address, and turn the setting off when it is not needed. This is an experimental integration against the current Codex DOM, not a documented plugin toolbar API.

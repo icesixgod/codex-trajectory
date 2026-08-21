@@ -947,7 +947,7 @@
         const debuggingArgs = `--remote-debugging-address=127.0.0.1 --remote-debugging-port=${cdpToolbarStatus.port}`;
         const platform = `${navigator.userAgent || ""} ${navigator.platform || ""}`;
         const launchCommand = /Windows/i.test(platform)
-          ? `$codex = Get-AppxPackage OpenAI.Codex; Start-Process "$($codex.InstallLocation)\\app\\Codex.exe" -ArgumentList '${debuggingArgs.replace(" ", "','")}'`
+          ? `$codex = Get-AppxPackage -Name OpenAI.Codex; $exe = Join-Path $codex.InstallLocation 'app\\ChatGPT.exe'; Start-Process -FilePath $exe -ArgumentList '${debuggingArgs.replace(" ", "','")}'`
           : /Mac/i.test(platform)
             ? `open -a ChatGPT --args ${debuggingArgs}`
             : `codex ${debuggingArgs}`;
