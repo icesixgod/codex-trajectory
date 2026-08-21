@@ -16,6 +16,7 @@ from codex_trajectory_cdp import (
     _read_codex_theme,
     _request_active_task_stop,
     _targets,
+    request_task_stop,
 )
 from playwright.sync_api import sync_playwright
 
@@ -130,6 +131,72 @@ def test_state_and_stop_continue_past_an_unusable_codex_renderer(
             "language": "en",
         },
     ) == {"sent": True}
+
+
+def test_app_private_stop_requires_opt_in_and_rebinds_one_stale_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = {
+        "sessionId": "session-alpha",
+        "turnId": "turn-old",
+        "source": "auto",
+        "threshold": 10,
+        "language": "en",
+    }
+    monkeypatch.setattr(
+        codex_trajectory_cdp,
+        "read_settings",
+        lambda: {"enabled": False, "port": 9222},
+    )
+    assert request_task_stop(request) == {
+        "sent": False,
+        "error": "Direct stop requires the experimental loopback CDP integration.",
+    }
+
+    monkeypatch.setattr(
+        codex_trajectory_cdp,
+        "read_settings",
+        lambda: {"enabled": True, "port": 9333},
+    )
+    stops: list[tuple[int, str]] = []
+
+    def stop(port: int, value: dict[str, object]) -> dict[str, object]:
+        stops.append((port, str(value["turnId"])))
+        if value["turnId"] == "turn-old":
+            return {"sent": False, "stale": True, "error": "stale"}
+        return {"sent": True}
+
+    monkeypatch.setattr(codex_trajectory_cdp, "_request_active_task_stop", stop)
+    monkeypatch.setattr(
+        codex_trajectory_cdp,
+        "_read_active_task_state",
+        lambda _port, _session: {"running": True, "turnId": "turn-new"},
+    )
+    assert request_task_stop(request) == {"sent": True}
+    assert stops == [(9333, "turn-old"), (9333, "turn-new")]
+
+
+def test_app_private_stop_bootstraps_a_missing_turn_and_reports_idle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        codex_trajectory_cdp,
+        "read_settings",
+        lambda: {"enabled": True, "port": 9222},
+    )
+    monkeypatch.setattr(
+        codex_trajectory_cdp,
+        "_read_active_task_state",
+        lambda _port, _session: {"running": False, "turnId": None},
+    )
+    assert request_task_stop(
+        {
+            "sessionId": "session-alpha",
+            "source": "manual",
+            "threshold": 10,
+            "language": "en",
+        }
+    ) == {"sent": False, "idle": True}
 
 
 def test_process_lock_rejects_links_without_modifying_targets(tmp_path: Path) -> None:

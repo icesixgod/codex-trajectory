@@ -735,6 +735,49 @@ def _browser_stop(request: dict[str, Any]) -> dict[str, Any]:
     return _request_active_task_stop(int(settings["port"]), request)
 
 
+def request_task_stop(request: dict[str, Any]) -> dict[str, Any]:
+    """Stop one bound task for the app-only MCP bridge, rebinding one stale turn."""
+    settings = read_settings()
+    if settings["enabled"] is not True:
+        return {
+            "sent": False,
+            "error": "Direct stop requires the experimental loopback CDP integration.",
+        }
+    port = int(settings["port"])
+    candidate = request.get("turnId")
+    if not isinstance(candidate, str):
+        try:
+            state = _read_active_task_state(port, request["sessionId"])
+        except (CdpError, OSError):
+            return {"sent": False, "error": "Could not reach the bound Codex task."}
+        if state.get("running") is not True:
+            return {"sent": False, "idle": True}
+        candidate = state.get("turnId")
+        if not isinstance(candidate, str):
+            return {"sent": False, "error": "Could not identify the active Codex turn."}
+        request = {**request, "turnId": candidate}
+    try:
+        result = _request_active_task_stop(port, request)
+    except (CdpError, OSError):
+        return {"sent": False, "error": "Could not reach the bound Codex task."}
+    if result.get("stale") is not True:
+        return result
+    try:
+        state = _read_active_task_state(port, request["sessionId"])
+    except (CdpError, OSError):
+        return result
+    if state.get("running") is not True:
+        return {"sent": False, "idle": True}
+    turn_id = state.get("turnId")
+    if not isinstance(turn_id, str) or turn_id == request["turnId"]:
+        return result
+    rebound = {**request, "turnId": turn_id}
+    try:
+        return _request_active_task_stop(port, rebound)
+    except (CdpError, OSError):
+        return {"sent": False, "error": "Could not reach the bound Codex task."}
+
+
 def _inject_cycle(
     port: int,
     enabled: bool,

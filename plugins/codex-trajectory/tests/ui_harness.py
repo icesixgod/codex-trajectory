@@ -415,16 +415,18 @@ window.__trajectoryToolNames = [];
 window.__trajectoryDisplayModes = [];
 window.__trajectoryFollowUps = [];
 window.__trajectoryFollowUpFailures = 0;
+window.__trajectoryDirectStops = [];
+window.__trajectoryDirectStopFailures = 0;
 window.__trajectoryWidgetStates = [];
 window.__trajectoryCdpToolbar = {{
   schemaVersion: 1,
-  enabled: false,
+  enabled: {str(host_display).lower()},
   port: 9222,
   cdpAvailable: true,
-  daemonRunning: false,
-  connected: false,
-  injected: false,
-  viewerServing: false,
+  daemonRunning: {str(host_display).lower()},
+  connected: {str(host_display).lower()},
+  injected: {str(host_display).lower()},
+  viewerServing: {str(host_display).lower()},
   lastError: null,
 }};
 let liveVersion = 1;
@@ -587,6 +589,14 @@ window.addEventListener("message", event => {{
       lastError: null,
     }};
     result = {{structuredContent: structuredClone(window.__trajectoryCdpToolbar)}};
+  }} else if (name === "request_codex_task_stop") {{
+    window.__trajectoryDirectStops.push(structuredClone(args));
+    if (window.__trajectoryDirectStopFailures > 0) {{
+      window.__trajectoryDirectStopFailures -= 1;
+      result = {{structuredContent: {{sent: false, error: "Temporary direct stop failure"}}}};
+    }} else {{
+      result = {{structuredContent: {{sent: true}}}};
+    }}
   }} else if (name === "get_codex_trajectory_update") {{
     const revision = currentLiveRevision();
     const unchanged = args.revision === revision;
@@ -660,6 +670,27 @@ window.openai = {
   displayMode: "inline",
   theme: "dark",
   widgetState: null,
+  callTool: (name, args) => new Promise((resolve, reject) => {
+    const id = 1_000_000_000 + Math.floor(Math.random() * 100_000_000);
+    const timeout = setTimeout(() => {
+      window.removeEventListener("message", onMessage);
+      reject(new Error("Mock host tool timeout"));
+    }, 5000);
+    const onMessage = event => {
+      if (event.source !== window.parent || event.data?.id !== id) return;
+      clearTimeout(timeout);
+      window.removeEventListener("message", onMessage);
+      if (event.data.error) reject(event.data.error);
+      else resolve(event.data.result);
+    };
+    window.addEventListener("message", onMessage);
+    window.parent.postMessage({
+      jsonrpc: "2.0",
+      id,
+      method: "tools/call",
+      params: { name, arguments: args },
+    }, "*");
+  }),
   setWidgetState: state => {
     window.openai.widgetState = structuredClone(state);
     window.parent.postMessage({method:"trajectory/widget-state",params:state}, "*");

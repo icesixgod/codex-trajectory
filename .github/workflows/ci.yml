@@ -29,7 +29,7 @@ jobs:
       - run: uv run ruff check .
       - run: uv run mypy
       - run: uv run pytest --cov --cov-report=term-missing
-      - run: uv run python scripts/validate_release.py --version 0.3.1
+      - run: uv run python scripts/validate_release.py --version 0.3.2
       - run: uv run python scripts/smoke_mcp.py
 
   runtime:
@@ -88,6 +88,6 @@ jobs:
         shell: bash
         run: |
           mkdir -p /tmp/codex-trajectory-dist
-          git archive --format=zip --prefix="codex-trajectory-0.3.1/" --output="/tmp/codex-trajectory-dist/codex-trajectory-v0.3.1.zip" HEAD
-          git archive --format=tar --prefix="codex-trajectory-0.3.1/" HEAD | gzip -n > "/tmp/codex-trajectory-dist/codex-trajectory-v0.3.1.tar.gz"
-          uv run --no-project python scripts/check_archives.py /tmp/codex-trajectory-dist/codex-trajectory-v0.3.1.zip /tmp/codex-trajectory-dist/codex-trajectory-v0.3.1.tar.gz
+          git archive --format=zip --prefix="codex-trajectory-0.3.2/" --output="/tmp/codex-trajectory-dist/codex-trajectory-v0.3.2.zip" HEAD
+          git archive --format=tar --prefix="codex-trajectory-0.3.2/" HEAD | gzip -n > "/tmp/codex-trajectory-dist/codex-trajectory-v0.3.2.tar.gz"
+          uv run --no-project python scripts/check_archives.py /tmp/codex-trajectory-dist/codex-trajectory-v0.3.2.zip /tmp/codex-trajectory-dist/codex-trajectory-v0.3.2.tar.gz

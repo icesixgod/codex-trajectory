@@ -25,14 +25,19 @@ def test_tool_definitions_scope_reads_and_private_cdp_setting() -> None:
         "get_codex_trajectory_update",
         "get_codex_toolbar_injection_status",
         "set_codex_toolbar_injection",
+        "request_codex_task_stop",
     ]
     assert all(tool["annotations"]["readOnlyHint"] for tool in tools[:5])
-    assert tools[5]["annotations"] == {
-        "readOnlyHint": False,
-        "destructiveHint": False,
-        "idempotentHint": True,
-        "openWorldHint": False,
-    }
+    assert all(
+        tool["annotations"]
+        == {
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        }
+        for tool in tools[5:]
+    )
     assert tools[1]["inputSchema"]["properties"]["detailLevel"]["default"] == "summary"
     assert tools[1]["inputSchema"]["properties"]["beforeRecord"]["minimum"] == 1
     assert tools[2]["_meta"]["ui"]["resourceUri"] == UI_URI
@@ -42,6 +47,14 @@ def test_tool_definitions_scope_reads_and_private_cdp_setting() -> None:
     assert tools[4]["_meta"]["ui"]["visibility"] == ["app"]
     assert tools[5]["_meta"]["openai/visibility"] == "private"
     assert tools[5]["inputSchema"]["required"] == ["enabled"]
+    assert tools[6]["_meta"]["ui"]["visibility"] == ["app"]
+    assert tools[6]["_meta"]["openai/visibility"] == "private"
+    assert tools[6]["inputSchema"]["required"] == [
+        "sessionId",
+        "source",
+        "threshold",
+        "language",
+    ]
 
 
 @pytest.mark.parametrize(
@@ -72,6 +85,58 @@ def test_tool_definitions_scope_reads_and_private_cdp_setting() -> None:
         ("set_codex_toolbar_injection", {"enabled": True, "port": True}, "integer"),
         ("set_codex_toolbar_injection", {"enabled": True, "port": 1023}, "between"),
         ("set_codex_toolbar_injection", {"enabled": False, "extra": 1}, "Unknown argument"),
+        (
+            "request_codex_task_stop",
+            {"source": "manual", "threshold": 10, "language": "en"},
+            "sessionId",
+        ),
+        (
+            "request_codex_task_stop",
+            {"sessionId": "../task", "source": "manual", "threshold": 10, "language": "en"},
+            "sessionId",
+        ),
+        (
+            "request_codex_task_stop",
+            {
+                "sessionId": "session-alpha",
+                "turnId": "bad/turn",
+                "source": "manual",
+                "threshold": 10,
+                "language": "en",
+            },
+            "turnId",
+        ),
+        (
+            "request_codex_task_stop",
+            {"sessionId": "session-alpha", "source": "later", "threshold": 10, "language": "en"},
+            "source",
+        ),
+        (
+            "request_codex_task_stop",
+            {"sessionId": "session-alpha", "source": "auto", "threshold": True, "language": "en"},
+            "integer",
+        ),
+        (
+            "request_codex_task_stop",
+            {"sessionId": "session-alpha", "source": "auto", "threshold": 101, "language": "en"},
+            "between",
+        ),
+        (
+            "request_codex_task_stop",
+            {"sessionId": "session-alpha", "source": "auto", "threshold": 10, "language": "fr"},
+            "language",
+        ),
+        (
+            "request_codex_task_stop",
+            {
+                "sessionId": "session-alpha",
+                "source": "auto",
+                "threshold": 10,
+                "language": "en",
+                "prompt": "stop",
+            },
+            "Unknown argument",
+        ),
         ("unknown", {}, "Unknown tool"),
     ],
 )
@@ -105,7 +170,7 @@ def test_protocol_methods_and_resource(codex_home: Path) -> None:
     negotiated = handle("initialize", {"protocolVersion": "2099-01-01"})
     assert negotiated["protocolVersion"] == "2025-06-18"
     assert handle("ping", {}) == {}
-    assert len(handle("tools/list", {})["tools"]) == 6
+    assert len(handle("tools/list", {})["tools"]) == 7
     assert handle("resources/list", {})["resources"][0]["uri"] == UI_URI
     resource = handle("resources/read", {"uri": UI_URI})["contents"][0]
     assert resource["mimeType"] == "text/html;profile=mcp-app"
@@ -233,6 +298,50 @@ def test_private_cdp_toolbar_tools_report_and_update_status(
     failed = call_tool("set_codex_toolbar_injection", {"enabled": False})
     assert failed["isError"] is True
     assert "private path" not in failed["content"][0]["text"]
+
+
+def test_private_direct_stop_tool_returns_only_bounded_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests: list[dict[str, object]] = []
+
+    def stop(arguments: dict[str, object]) -> dict[str, object]:
+        requests.append(arguments)
+        return {"sent": True}
+
+    monkeypatch.setattr(projection, "request_direct_task_stop", stop)
+    result = call_tool(
+        "request_codex_task_stop",
+        {
+            "sessionId": "session-alpha",
+            "turnId": "turn-2",
+            "source": "auto",
+            "threshold": 9,
+            "language": "zh",
+        },
+    )
+    assert result["structuredContent"] == {"sent": True}
+    assert requests == [
+        {
+            "sessionId": "session-alpha",
+            "turnId": "turn-2",
+            "source": "auto",
+            "threshold": 9,
+            "language": "zh",
+        }
+    ]
+
+    monkeypatch.setattr(projection, "request_direct_task_stop", lambda _args: {"sent": False})
+    failed = call_tool(
+        "request_codex_task_stop",
+        {
+            "sessionId": "session-alpha",
+            "source": "manual",
+            "threshold": 10,
+            "language": "en",
+        },
+    )
+    assert failed["isError"] is True
 
 
 def test_live_update_reprojects_only_after_the_rollout_changes(codex_home: Path) -> None:

@@ -301,7 +301,7 @@ def test_loopback_browser_view_renders_the_full_trajectory_ui(page: Page) -> Non
         expect(stop_button).to_have_text("Stop")
         expect(stop_button).to_be_enabled()
         stop_button.click()
-        expect(stop_button).to_have_text("Requested")
+        expect(stop_button).to_have_text("Stopped")
         assert stop_requests == [
             {
                 "sessionId": "session-alpha",
@@ -390,8 +390,8 @@ def test_loopback_auto_stop_interrupts_at_exact_limit_without_task_state_poll(
         threshold.press("Tab")
         frame.locator("#autoStopEnabled").check()
 
-        expect(frame.locator("#requestStop")).to_have_text("Requested")
-        expect(frame.locator("#stopRequestStatus")).to_have_text("Stop requested")
+        expect(frame.locator("#requestStop")).to_have_text("Stopped")
+        expect(frame.locator("#stopRequestStatus")).to_have_text("Task stopped directly")
         assert stop_requests == [
             {
                 "sessionId": "session-alpha",
@@ -488,7 +488,7 @@ def test_loopback_stale_turn_is_rebound_before_stop_retry(page: Page) -> None:
         assert [request["turnId"] for request in stop_requests] == ["turn-old"]
 
         stop_button.click()
-        expect(stop_button).to_have_text("Requested")
+        expect(stop_button).to_have_text("Stopped")
         assert [request["turnId"] for request in stop_requests] == ["turn-old", "turn-next"]
     finally:
         release_candidate.set()
@@ -542,7 +542,7 @@ def test_loopback_auto_stop_does_not_repeat_for_goal_continuation(page: Page) ->
         )
         frame.get_by_role("button", name="Live window").click()
         frame.locator("#autoStopEnabled").check()
-        expect(frame.locator("#requestStop")).to_have_text("Requested")
+        expect(frame.locator("#requestStop")).to_have_text("Stopped")
         assert [request["turnId"] for request in stop_requests] == ["goal-turn-1"]
 
         task_state.update({"running": False, "turnId": None})
@@ -1123,18 +1123,22 @@ def test_codex_dock_sends_one_click_stop_request(page: Page, harness_url: str) -
     )
 
     stop_button.click()
-    page.wait_for_function("window.__trajectoryFollowUps.length === 1")
-    request = page.evaluate("window.__trajectoryFollowUps[0]")
-    assert request["scrollToBottom"] is False
-    assert "recursively interrupt every active related subagent" in request["prompt"]
-    assert "Preserve every worktree" in request["prompt"]
-    assert "Do not delete, clean, reset, or roll back files" in request["prompt"]
-    expect(stop_button).to_have_text("Requested")
+    page.wait_for_function("window.__trajectoryDirectStops.length === 1")
+    request = page.evaluate("window.__trajectoryDirectStops[0]")
+    assert request == {
+        "sessionId": "session-alpha",
+        "turnId": "turn-2",
+        "source": "manual",
+        "threshold": 10,
+        "language": "en",
+    }
+    assert page.evaluate("window.__trajectoryFollowUps.length") == 0
+    expect(stop_button).to_have_text("Stopped")
     expect(stop_button).to_be_disabled()
     expect(dock).to_have_attribute("data-stop-status", "sent")
-    expect(frame.locator("#stopRequestStatus")).to_have_text("Stop requested")
+    expect(frame.locator("#stopRequestStatus")).to_have_text("Task stopped directly")
     page.wait_for_timeout(1_200)
-    assert page.evaluate("window.__trajectoryFollowUps.length") == 1
+    assert page.evaluate("window.__trajectoryDirectStops.length") == 1
 
     page.evaluate("window.__setTrajectoryRunning(false)")
     expect(stop_button).to_have_text("Idle")
@@ -1143,7 +1147,27 @@ def test_codex_dock_sends_one_click_stop_request(page: Page, harness_url: str) -
     expect(stop_button).to_have_text("Stop")
     expect(frame.locator("#stopRequestStatus")).to_have_text("Off")
     stop_button.click()
-    page.wait_for_function("window.__trajectoryFollowUps.length === 2")
+    page.wait_for_function("window.__trajectoryDirectStops.length === 2")
+
+
+def test_codex_dock_never_uses_follow_up_when_direct_stop_is_unavailable(
+    page: Page, harness_url: str
+) -> None:
+    page.goto(f"{harness_url}/en-dock")
+    frame = viewer(page)
+    frame.get_by_text("Safe summary", exact=True).wait_for()
+    frame.locator("#cdpToolbarEnabled").uncheck()
+    page.wait_for_function("window.__trajectoryCdpToolbar.enabled === false")
+    page.evaluate("window.__setTrajectoryRunning(true)")
+    frame.get_by_role("button", name="Live window").click()
+
+    expect(frame.locator("#requestStop")).to_be_disabled()
+    expect(frame.locator("#autoStopEnabled")).to_be_disabled()
+    expect(frame.locator("#stopRequestStatus")).to_have_text(
+        "Unattended stop requires experimental CDP and a connected local debugging port"
+    )
+    assert page.evaluate("window.__trajectoryFollowUps.length") == 0
+    assert page.evaluate("window.__trajectoryDirectStops.length") == 0
 
 
 def test_codex_dock_auto_stops_once_when_remaining_quota_crosses_threshold(
@@ -1169,12 +1193,18 @@ def test_codex_dock_auto_stops_once_when_remaining_quota_crosses_threshold(
     }
 
     page.evaluate("window.__setTrajectoryRemaining(9)")
-    page.wait_for_function("window.__trajectoryFollowUps.length === 1")
-    request = page.evaluate("window.__trajectoryFollowUps[0]")
-    assert "5h 9%" in request["prompt"]
-    assert "automatic stop threshold of ≤ 10% remaining" in request["prompt"]
+    page.wait_for_function("window.__trajectoryDirectStops.length === 1")
+    request = page.evaluate("window.__trajectoryDirectStops[0]")
+    assert request == {
+        "sessionId": "session-alpha",
+        "turnId": "turn-2",
+        "source": "auto",
+        "threshold": 10,
+        "language": "en",
+    }
+    assert page.evaluate("window.__trajectoryFollowUps.length") == 0
     expect(dock).to_have_attribute("data-stop-status", "sent")
-    expect(frame.locator("#requestStop")).to_have_text("Requested")
+    expect(frame.locator("#requestStop")).to_have_text("Stopped")
     page.wait_for_function(
         "window.__trajectoryWidgetStates.at(-1)?.codexTrajectoryStopGuard?.firedKey"
     )
@@ -1185,7 +1215,7 @@ def test_codex_dock_auto_stops_once_when_remaining_quota_crosses_threshold(
     assert guard["firedKey"].startswith("v3:session-alpha:10:primary:300:")
 
     page.wait_for_timeout(2_500)
-    assert page.evaluate("window.__trajectoryFollowUps.length") == 1
+    assert page.evaluate("window.__trajectoryDirectStops.length") == 1
 
 
 def test_codex_dock_auto_stop_retries_after_a_transient_failure(
@@ -1195,18 +1225,18 @@ def test_codex_dock_auto_stop_retries_after_a_transient_failure(
     frame = viewer(page)
     frame.get_by_text("Safe summary", exact=True).wait_for()
     page.evaluate("window.__setTrajectoryRunning(true)")
-    page.frames[1].evaluate("window.__trajectoryFollowUpFailures = 1")
+    page.evaluate("window.__trajectoryDirectStopFailures = 1")
     frame.get_by_role("button", name="Live window").click()
     frame.locator("#autoStopEnabled").check()
 
     page.evaluate("window.__setTrajectoryRemaining(9)")
-    expect(frame.locator("#stopRequestStatus")).to_contain_text("Temporary follow-up failure")
-    assert page.evaluate("window.__trajectoryFollowUps.length") == 0
+    expect(frame.locator("#stopRequestStatus")).to_contain_text("Temporary direct stop failure")
+    assert page.evaluate("window.__trajectoryDirectStops.length") == 1
     failed_state = page.evaluate("window.__trajectoryWidgetStates.at(-1)")
     assert failed_state["codexTrajectoryStopGuard"]["firedKey"] is None
 
-    page.wait_for_function("window.__trajectoryFollowUps.length === 1", timeout=6_000)
-    expect(frame.locator("#stopRequestStatus")).to_have_text("Stop requested")
+    page.wait_for_function("window.__trajectoryDirectStops.length === 2", timeout=6_000)
+    expect(frame.locator("#stopRequestStatus")).to_have_text("Task stopped directly")
     retry_state = page.evaluate("window.__trajectoryWidgetStates.at(-1)")
     assert retry_state["codexTrajectoryStopGuard"]["firedKey"].startswith("v3:session-alpha:10:")
 
@@ -1222,7 +1252,7 @@ def test_codex_dock_goal_continuation_does_not_retrigger_in_same_quota_cycle(
     frame.locator("#autoStopEnabled").check()
 
     page.evaluate("window.__setTrajectoryRemaining(9)")
-    page.wait_for_function("window.__trajectoryFollowUps.length === 1")
+    page.wait_for_function("window.__trajectoryDirectStops.length === 1")
     first_state = page.evaluate("window.__trajectoryWidgetStates.at(-1)")
     assert first_state["codexTrajectoryStopGuard"]["firedKey"].startswith("v3:session-alpha:10:")
 
@@ -1239,7 +1269,7 @@ def test_codex_dock_goal_continuation_does_not_retrigger_in_same_quota_cycle(
     )
     expect(frame.locator("#liveDock")).to_have_attribute("data-auto-stop-latched", "true")
     page.wait_for_timeout(2_500)
-    assert page.evaluate("window.__trajectoryFollowUps.length") == 1
+    assert page.evaluate("window.__trajectoryDirectStops.length") == 1
 
 
 def test_codex_dock_auto_stop_rearms_after_observed_quota_recovery(
@@ -1253,7 +1283,7 @@ def test_codex_dock_auto_stop_rearms_after_observed_quota_recovery(
     frame.locator("#autoStopEnabled").check()
 
     page.evaluate("window.__setTrajectoryRemaining(9)")
-    page.wait_for_function("window.__trajectoryFollowUps.length === 1")
+    page.wait_for_function("window.__trajectoryDirectStops.length === 1")
     page.evaluate(
         """() => {
           window.__setTrajectoryRunning(false);
@@ -1266,7 +1296,7 @@ def test_codex_dock_auto_stop_rearms_after_observed_quota_recovery(
     )
 
     page.evaluate("window.__setTrajectoryRemaining(9)")
-    page.wait_for_function("window.__trajectoryFollowUps.length === 2", timeout=6_000)
+    page.wait_for_function("window.__trajectoryDirectStops.length === 2", timeout=6_000)
     second_state = page.evaluate("window.__trajectoryWidgetStates.at(-1)")
     assert second_state["codexTrajectoryStopGuard"]["firedKey"].startswith("v3:session-alpha:10:")
 
@@ -1280,7 +1310,7 @@ def test_codex_dock_auto_stop_rearms_after_quota_window_reset(page: Page, harnes
     frame.locator("#autoStopEnabled").check()
 
     page.evaluate("window.__setTrajectoryRemaining(9)")
-    page.wait_for_function("window.__trajectoryFollowUps.length === 1")
+    page.wait_for_function("window.__trajectoryDirectStops.length === 1")
     page.evaluate(
         """() => {
           window.__setTrajectoryRunning(false);
@@ -1293,7 +1323,7 @@ def test_codex_dock_auto_stop_rearms_after_quota_window_reset(page: Page, harnes
     )
 
     page.evaluate("window.__setTrajectoryResetAt('2026-08-14T07:00:00Z')")
-    page.wait_for_function("window.__trajectoryFollowUps.length === 2", timeout=6_000)
+    page.wait_for_function("window.__trajectoryDirectStops.length === 2", timeout=6_000)
     reset_state = page.evaluate("window.__trajectoryWidgetStates.at(-1)")
     assert reset_state["codexTrajectoryStopGuard"]["firedKey"].endswith(
         "primary:300:2026-08-14T07:00:00Z|secondary:10080:2026-08-21T00:00:00Z"
@@ -1314,7 +1344,7 @@ def test_stop_controls_are_disabled_after_selecting_a_different_task(
     expect(frame.locator("#stopRequestStatus")).to_have_text(
         "Stop controls apply only to the Codex task that opened this trajectory"
     )
-    assert page.evaluate("window.__trajectoryFollowUps.length") == 0
+    assert page.evaluate("window.__trajectoryDirectStops.length") == 0
 
 
 def test_codex_dock_waits_for_a_running_task_before_auto_stop(page: Page, harness_url: str) -> None:
@@ -1334,15 +1364,15 @@ def test_codex_dock_waits_for_a_running_task_before_auto_stop(page: Page, harnes
     expect(frame.locator("#stopRequestStatus")).to_have_text("Armed · waiting for the task to run")
     page.evaluate("window.__setTrajectoryRemaining(9)")
     page.wait_for_timeout(1_300)
-    assert page.evaluate("window.__trajectoryFollowUps.length") == 0
+    assert page.evaluate("window.__trajectoryDirectStops.length") == 0
     waiting_state = page.evaluate("window.__trajectoryWidgetStates.at(-1)")
     assert waiting_state["codexTrajectoryStopGuard"]["firedKey"] is None
 
     page.evaluate("window.__setTrajectoryRunning(true)")
-    page.wait_for_function("window.__trajectoryFollowUps.length === 1")
+    page.wait_for_function("window.__trajectoryDirectStops.length === 1")
     expect(dock).to_have_attribute("data-task-running", "true")
     expect(dock).to_have_attribute("data-stop-status", "sent")
-    expect(stop_button).to_have_text("Requested")
+    expect(stop_button).to_have_text("Stopped")
 
 
 def test_tool_error_is_reported_without_locking_controls(page: Page, harness_url: str) -> None:

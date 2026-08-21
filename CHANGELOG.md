@@ -4,6 +4,13 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-08-21
+
+### Fixed
+
+- Replace the standard Apps stop follow-up with an app-private CDP/App Server action that pauses an active Goal and interrupts the bound turn directly, including one missing/stale-turn rebind; automatic stop now fails closed when direct CDP is unavailable instead of opening a confirmation dialog or entering the steering queue.
+- Show platform-specific loopback CDP relaunch guidance in the viewer and document the Microsoft Store PowerShell launch path for Windows.
+
 ## [0.3.1] - 2026-08-21
 
 ### Added
@@ -109,4 +116,5 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 [0.2.0]: https://github.com/icesixgod/codex-trajectory/compare/v0.1.0...v0.2.0
 [0.3.0]: https://github.com/icesixgod/codex-trajectory/compare/v0.2.0...v0.3.0
 [0.3.1]: https://github.com/icesixgod/codex-trajectory/compare/v0.3.0...v0.3.1
-[Unreleased]: https://github.com/icesixgod/codex-trajectory/compare/v0.3.1...HEAD
+[0.3.2]: https://github.com/icesixgod/codex-trajectory/compare/v0.3.1...v0.3.2
+[Unreleased]: https://github.com/icesixgod/codex-trajectory/compare/v0.3.2...HEAD

@@ -2106,6 +2106,25 @@ def trajectory_update_result(arguments: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def request_direct_task_stop(arguments: dict[str, Any]) -> dict[str, Any]:
+    """Invoke the loopback-only App Server stop bridge without exposing it to the model."""
+    from codex_trajectory_cdp import request_task_stop
+
+    return request_task_stop(arguments)
+
+
+def valid_cdp_identifier(value: Any) -> bool:
+    """Return whether a value is one bounded App Server identifier."""
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+    allowed = f"{alphabet}._:-"
+    return (
+        isinstance(value, str)
+        and 1 <= len(value) <= 128
+        and value[0] in alphabet
+        and all(character in allowed for character in value)
+    )
+
+
 def tool_definitions() -> list[dict[str, Any]]:
     """Return MCP tool metadata."""
     read_only = {
@@ -2287,6 +2306,37 @@ def tool_definitions() -> list[dict[str, Any]]:
                 "openai/visibility": "private",
             },
         },
+        {
+            "name": "request_codex_task_stop",
+            "title": "Stop the bound Codex task",
+            "description": (
+                "Use the explicitly enabled loopback CDP integration to pause an active Goal "
+                "and interrupt one exact local Codex task turn."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "sessionId": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                    },
+                    "turnId": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                    },
+                    "source": {"type": "string", "enum": ["manual", "auto"]},
+                    "threshold": {"type": "integer", "minimum": 1, "maximum": 100},
+                    "language": {"type": "string", "enum": ["en", "zh"]},
+                },
+                "required": ["sessionId", "source", "threshold", "language"],
+                "additionalProperties": False,
+            },
+            "annotations": local_change,
+            "_meta": {
+                "ui": {"visibility": ["app"]},
+                "openai/visibility": "private",
+            },
+        },
     ]
 
 
@@ -2358,6 +2408,71 @@ def call_tool(name: str, arguments: Any) -> dict[str, Any]:
                         "text": "Enabled local CDP toolbar integration."
                         if enabled
                         else "Disabled local CDP toolbar integration.",
+                    }
+                ],
+            }
+        if name == "request_codex_task_stop":
+            reject_unknown_arguments(
+                args,
+                {"sessionId", "turnId", "source", "threshold", "language"},
+            )
+            session_id = args.get("sessionId")
+            turn_id = args.get("turnId")
+            source = args.get("source")
+            threshold = args.get("threshold")
+            language = args.get("language")
+            if not valid_cdp_identifier(session_id):
+                raise ValueError("sessionId must be a bounded Codex identifier.")
+            if turn_id is not None and not valid_cdp_identifier(turn_id):
+                raise ValueError("turnId must be a bounded Codex identifier.")
+            if source not in {"manual", "auto"}:
+                raise ValueError("source must be manual or auto.")
+            if isinstance(threshold, bool) or not isinstance(threshold, int):
+                raise ValueError("threshold must be an integer.")
+            if not 1 <= threshold <= 100:
+                raise ValueError("threshold must be between 1 and 100.")
+            if language not in {"en", "zh"}:
+                raise ValueError("language must be en or zh.")
+            request = {
+                "sessionId": session_id,
+                "source": source,
+                "threshold": threshold,
+                "language": language,
+            }
+            if isinstance(turn_id, str):
+                request["turnId"] = turn_id
+            result = request_direct_task_stop(request)
+            if (
+                not isinstance(result, dict)
+                or not isinstance(result.get("sent"), bool)
+                or set(result) - {"sent", "error", "idle", "stale"}
+                or ("error" in result and not isinstance(result["error"], str))
+                or ("idle" in result and not isinstance(result["idle"], bool))
+                or ("stale" in result and not isinstance(result["stale"], bool))
+                or (
+                    result.get("sent") is True
+                    and (result.get("idle") is True or result.get("stale") is True)
+                )
+                or (result.get("idle") is True and result.get("stale") is True)
+                or (
+                    result.get("sent") is False
+                    and result.get("idle") is not True
+                    and result.get("stale") is not True
+                    and "error" not in result
+                )
+                or (result.get("stale") is True and "error" not in result)
+            ):
+                raise OSError("Invalid direct stop result.")
+            return {
+                "structuredContent": result,
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "Stopped the bound Codex task."
+                            if result["sent"]
+                            else "The bound Codex task was not stopped."
+                        ),
                     }
                 ],
             }

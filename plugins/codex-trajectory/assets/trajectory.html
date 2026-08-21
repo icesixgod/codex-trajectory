@@ -753,12 +753,12 @@
         pipPreparing: "正在准备实时小窗…", pipUnavailable: "当前宿主不支持实时小窗。", pipFailed: "无法打开实时小窗", dockMode: "Codex 右侧栏", inlineLiveMode: "页面内实时视图", returnInline: "返回内联视图",
         taskTotal: "任务总计", liveOutput: "实时输出", latestBelow: "最新在下方", recentRecords: "最近记录", recordTokens: "本条 Token", noRecordTokens: "本条无 Token 增量",
         codexQuota: "Codex 额度", quotaRemaining: "剩余", quotaResets: "重置", primaryLimit: "主要", secondaryLimit: "次要", fiveHourLimit: "5 小时", weeklyLimit: "每周",
-        stopCurrent: "停止", stopCurrentAria: "请求停止当前任务", stopCurrentTitle: "请求当前任务停止全部相关 subagent，并保留 worktree 和未提交修改",
-        stopSending: "正在发送停止请求…", stopSendingShort: "发送中…", stopRequested: "已发送停止请求", stopRequestedShort: "已请求", stopFailed: "停止请求失败", stopUnsupported: "当前 Codex 宿主不支持发送停止请求", stopDifferentTask: "停止功能仅适用于打开轨迹时的 Codex 任务", stopAlreadyIdle: "当前任务已停止", stopIdleShort: "已停止",
-        autoStop: "自动停止", autoStopThreshold: "剩余额度阈值", autoStopArmed: "已启用", autoStopLatched: "本额度周期已触发", autoStopWaiting: "已启用 · 等待任务运行", autoStopOff: "未启用", autoStopHint: "任一额度窗口的剩余比例不高于阈值时，在额度恢复或周期重置前仅发送一次停止请求",
-        cdpToolbar: "内置浏览器快捷入口", cdpExperimental: "实验性 CDP", cdpEnable: "显示“查看轨迹”", cdpPort: "端口", cdpOff: "未启用，不会连接调试端口",
+        stopCurrent: "停止", stopCurrentAria: "直接停止当前任务", stopCurrentTitle: "暂停当前任务的活动 Goal，并直接中断当前回合；保留 worktree 和未提交修改",
+        stopSending: "正在直接停止任务…", stopSendingShort: "停止中…", stopRequested: "已直接停止任务", stopRequestedShort: "已停止", stopFailed: "直接停止失败", stopUnsupported: "当前 Codex 宿主不支持直接停止", stopDirectRequired: "无人值守停止需要先启用实验性 CDP，并连接本机调试端口", stopDifferentTask: "停止功能仅适用于打开轨迹时的 Codex 任务", stopAlreadyIdle: "当前任务已停止", stopIdleShort: "已停止",
+        autoStop: "自动停止", autoStopThreshold: "剩余额度阈值", autoStopArmed: "已启用", autoStopLatched: "本额度周期已触发", autoStopWaiting: "已启用 · 等待任务运行", autoStopOff: "未启用", autoStopHint: "仅使用本机直停通道；任一额度窗口的剩余比例不高于阈值时，在额度恢复或周期重置前直接停止一次",
+        cdpToolbar: "无人值守直停与内置浏览器入口", cdpExperimental: "实验性 CDP", cdpEnable: "启用直停与“查看轨迹”", cdpPort: "端口", cdpOff: "未启用，不会连接调试端口",
         cdpInjected: "已就绪；点击后在 Codex 内置浏览器打开", cdpConnecting: "CDP 已连接，正在定位 Codex 输入区", cdpWaiting: "等待本机 CDP 端口", cdpFailed: "CDP 注入失败", cdpSaving: "正在保存设置…",
-        cdpHelp: "需先完全退出应用，再用本机调试端口启动：", cdpPrivacy: "调试端口可控制 Codex 页面；仅绑定 127.0.0.1，默认关闭。快捷入口不调用模型、不发送任务消息。",
+        cdpHelp: "需先完全退出应用，再用仅绑定 127.0.0.1 的调试端口启动：", cdpPrivacy: "调试端口可控制 Codex 页面，默认关闭。直停不会调用模型、发送任务消息或进入“调整方向”队列。",
       } : {
         eyebrow: "Local task trajectory", overview: "Timing overview", hint: "Drag to select · wheel to zoom · right-click to clear",
         turns: "Turns", records: "Records", tools: "Tools", failures: "Failures", tokens: "Tokens", duration: "Duration",
@@ -777,12 +777,12 @@
         pipPreparing: "Preparing the live window…", pipUnavailable: "This host cannot open a live window.", pipFailed: "Could not open live window", dockMode: "Codex side panel", inlineLiveMode: "In-page live view", returnInline: "Return to inline view",
         taskTotal: "Task total", liveOutput: "Live output", latestBelow: "Newest below", recentRecords: "recent records", recordTokens: "Record tokens", noRecordTokens: "No token delta for this record",
         codexQuota: "Codex quota", quotaRemaining: "remaining", quotaResets: "Resets", primaryLimit: "Primary", secondaryLimit: "Secondary", fiveHourLimit: "5h", weeklyLimit: "Weekly",
-        stopCurrent: "Stop", stopCurrentAria: "Request current task stop", stopCurrentTitle: "Ask the current task to stop all related subagents while preserving worktrees and uncommitted changes",
-        stopSending: "Sending stop request…", stopSendingShort: "Sending…", stopRequested: "Stop requested", stopRequestedShort: "Requested", stopFailed: "Stop request failed", stopUnsupported: "This Codex host cannot send a stop request", stopDifferentTask: "Stop controls apply only to the Codex task that opened this trajectory", stopAlreadyIdle: "The current task is already stopped", stopIdleShort: "Idle",
-        autoStop: "Auto stop", autoStopThreshold: "Remaining quota threshold", autoStopArmed: "Armed", autoStopLatched: "Triggered for this quota cycle", autoStopWaiting: "Armed · waiting for the task to run", autoStopOff: "Off", autoStopHint: "Send one stop request when any quota window reaches the threshold, then wait for quota recovery or a window reset before rearming",
-        cdpToolbar: "In-app Browser shortcut", cdpExperimental: "Experimental CDP", cdpEnable: "Show “View trajectory”", cdpPort: "Port", cdpOff: "Off; no debugging-port connection", cdpInjected: "Ready; opens in the Codex in-app Browser without a message",
+        stopCurrent: "Stop", stopCurrentAria: "Stop the current task directly", stopCurrentTitle: "Pause the current task's active Goal and interrupt its turn directly while preserving worktrees and uncommitted changes",
+        stopSending: "Stopping the task directly…", stopSendingShort: "Stopping…", stopRequested: "Task stopped directly", stopRequestedShort: "Stopped", stopFailed: "Direct stop failed", stopUnsupported: "This Codex host cannot stop the task directly", stopDirectRequired: "Unattended stop requires experimental CDP and a connected local debugging port", stopDifferentTask: "Stop controls apply only to the Codex task that opened this trajectory", stopAlreadyIdle: "The current task is already stopped", stopIdleShort: "Idle",
+        autoStop: "Auto stop", autoStopThreshold: "Remaining quota threshold", autoStopArmed: "Armed", autoStopLatched: "Triggered for this quota cycle", autoStopWaiting: "Armed · waiting for the task to run", autoStopOff: "Off", autoStopHint: "Use only the local direct-stop path; stop once when any quota window reaches the threshold, then wait for quota recovery or a window reset before rearming",
+        cdpToolbar: "Unattended stop and in-app Browser shortcut", cdpExperimental: "Experimental CDP", cdpEnable: "Enable direct stop and “View trajectory”", cdpPort: "Port", cdpOff: "Off; no debugging-port connection", cdpInjected: "Ready; opens in the Codex in-app Browser without a message",
         cdpConnecting: "CDP connected; locating the Codex composer", cdpWaiting: "Waiting for the local CDP port", cdpFailed: "CDP injection failed", cdpSaving: "Saving setting…",
-        cdpHelp: "Quit the app completely, then relaunch it with the loopback debugging port:", cdpPrivacy: "The debugging port can control the Codex page; it is loopback-only and off by default. The shortcut does not call the model or post a task message.",
+        cdpHelp: "Quit the app completely, then relaunch it with a debugging port bound only to 127.0.0.1:", cdpPrivacy: "The debugging port can control the Codex page and is off by default. Direct stop does not call the model, post a task message, or enter the steering queue.",
       };
 
       const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, char => ({
@@ -909,6 +909,10 @@
         } finally {
           if (!background) cdpToolbarBusy = false;
           updateCdpToolbarControls();
+          if (document.getElementById("liveDock")) {
+            updateStopControls();
+            if (stopGuardEnabled) maybeRequestAutomaticStop(liveData);
+          }
           scheduleCdpToolbarRefresh();
         }
       }
@@ -931,12 +935,22 @@
         } finally {
           cdpToolbarBusy = false;
           updateCdpToolbarControls();
+          if (document.getElementById("liveDock")) {
+            updateStopControls();
+            if (stopGuardEnabled) maybeRequestAutomaticStop(liveData);
+          }
           scheduleCdpToolbarRefresh();
         }
       }
 
       function cdpToolbarIntegration() {
-        const launchCommand = `open -a ChatGPT --args --remote-debugging-address=127.0.0.1 --remote-debugging-port=${cdpToolbarStatus.port}`;
+        const debuggingArgs = `--remote-debugging-address=127.0.0.1 --remote-debugging-port=${cdpToolbarStatus.port}`;
+        const platform = `${navigator.userAgent || ""} ${navigator.platform || ""}`;
+        const launchCommand = /Windows/i.test(platform)
+          ? `$codex = Get-AppxPackage OpenAI.Codex; Start-Process "$($codex.InstallLocation)\\app\\Codex.exe" -ArgumentList '${debuggingArgs.replace(" ", "','")}'`
+          : /Mac/i.test(platform)
+            ? `open -a ChatGPT --args ${debuggingArgs}`
+            : `codex ${debuggingArgs}`;
         return `<div class="integration-bar">
           <div class="integration-copy">
             <div class="integration-title"><span>${labels.cdpToolbar}</span><span class="integration-experimental">${labels.cdpExperimental}</span></div>
@@ -960,8 +974,16 @@
         return Math.min(MAX_STOP_THRESHOLD, Math.max(MIN_STOP_THRESHOLD, Math.round(numeric)));
       }
 
+      function directStopBridgeAvailable() {
+        return browserStopBridge || (
+          cdpToolbarLoaded
+          && cdpToolbarStatus.enabled
+          && cdpToolbarStatus.cdpAvailable
+        );
+      }
+
       function stopBridgeAvailable() {
-        return typeof window.openai?.sendFollowUpMessage === "function" || browserStopBridge;
+        return directStopBridgeAvailable();
       }
 
       function displayedSessionId(snapshot = liveData || data) {
@@ -974,7 +996,7 @@
       }
 
       function stopUnavailableText(snapshot = liveData || data) {
-        if (!stopBridgeAvailable()) return labels.stopUnsupported;
+        if (!stopBridgeAvailable()) return labels.stopDirectRequired;
         if (!stopTargetsDisplayedTask(snapshot)) return labels.stopDifferentTask;
         return null;
       }
@@ -1157,7 +1179,7 @@
         }
         if (toggle) {
           toggle.checked = stopGuardEnabled;
-          toggle.disabled = !supported;
+          toggle.disabled = !supported && !stopGuardEnabled;
         }
         if (threshold) {
           if (document.activeElement !== threshold) threshold.value = String(stopGuardThreshold);
@@ -1171,23 +1193,7 @@
         }
       }
 
-      function stopRequestPrompt(source, triggeredItems) {
-        const quotaSummary = triggeredItems
-          .map(item => `${item.label} ${item.remainingText}`)
-          .join(zh ? "、" : ", ");
-        if (zh) {
-          const reason = source === "auto"
-            ? `触发原因：检测到 ${quotaSummary || "Codex 额度"}，已达到剩余额度 ≤ ${stopGuardThreshold}% 的自动停止阈值。`
-            : "触发原因：用户点击了 Codex Trajectory 的一键停止按钮。";
-          return `【Codex Trajectory 停止请求】请立即停止当前任务。如果此任务有活跃的 /goal，先使用可用的 Goal 控制能力将它暂停，防止结束当前回合后自动续跑。然后使用可用的代理控制能力，递归中断所有仍在运行的相关 subagent/子任务，并停止它们正在进行的工作；不要启动新的代理、工具或命令。保留所有 worktree、工作目录和未提交修改，不要删除、清理、重置或回滚任何文件。完成安全收尾后，尽快结束当前任务，不再继续原工作。${reason}`;
-        }
-        const reason = source === "auto"
-          ? `Trigger: ${quotaSummary || "Codex quota"} reached the automatic stop threshold of ≤ ${stopGuardThreshold}% remaining.`
-          : "Trigger: the user clicked the Codex Trajectory one-click stop control.";
-        return `[Codex Trajectory stop request] Stop the current task now. If this task has an active /goal, first use any available Goal control to pause it so it cannot automatically continue after the current turn ends. Then use any available agent controls to recursively interrupt every active related subagent or child task and stop their in-progress work; do not start new agents, tools, or commands. Preserve every worktree, working directory, and uncommitted change. Do not delete, clean, reset, or roll back files. After safe shutdown bookkeeping, end the current task promptly and do not continue the original work. ${reason}`;
-      }
-
-      async function requestCurrentTaskStop(source, triggeredItems = [], cycleKey = null) {
+      async function requestCurrentTaskStop(source, cycleKey = null) {
         if (stopRequestStatus === "sending" || stopRequestStatus === "sent") return;
         const snapshot = liveData || data;
         if (!stopRequestSupported(snapshot)) {
@@ -1211,30 +1217,44 @@
         stopRequestError = null;
         updateStopControls();
         try {
-          if (typeof window.openai?.sendFollowUpMessage === "function") {
-            await withTimeout(window.openai.sendFollowUpMessage({
-              prompt: stopRequestPrompt(source, triggeredItems),
-              scrollToBottom: false,
-            }));
-          } else {
-            const result = await request("trajectory/request-stop", {
+          let result;
+          if (browserStopBridge) {
+            result = await request("trajectory/request-stop", {
               sessionId: displayedSessionId(snapshot),
               turnId: runningTurnId(snapshot),
               source,
               threshold: stopGuardThreshold,
             });
-            if (result?.idle === true) {
-              stopRequestStatus = "task-idle";
-              if (typeof effectiveCycleKey === "string") {
-                stopGuardFiredKey = effectiveCycleKey;
-                persistStopGuard();
-              }
-              resetStopRetry();
-              updateStopControls();
-              return;
+          } else {
+            const args = {
+              sessionId: displayedSessionId(snapshot),
+              source,
+              threshold: stopGuardThreshold,
+              language: zh ? "zh" : "en",
+            };
+            const turnId = runningTurnId(snapshot);
+            if (typeof turnId === "string") args.turnId = turnId;
+            const response = await callTool("request_codex_task_stop", args);
+            if (response?.isError || !response?.structuredContent) {
+              const message = (response?.content || [])
+                .map(item => item?.text)
+                .filter(Boolean)
+                .join(" ");
+              throw new Error(message || labels.stopFailed);
             }
-            if (result?.sent !== true) throw new Error(result?.error || labels.stopFailed);
+            result = response.structuredContent;
           }
+          if (result?.idle === true) {
+            stopRequestStatus = "task-idle";
+            if (typeof effectiveCycleKey === "string") {
+              stopGuardFiredKey = effectiveCycleKey;
+              persistStopGuard();
+            }
+            resetStopRetry();
+            updateStopControls();
+            return;
+          }
+          if (result?.sent !== true) throw new Error(result?.error || labels.stopFailed);
           stopRequestStatus = "sent";
           resetStopRetry();
           if (typeof effectiveCycleKey === "string") {
@@ -1311,7 +1331,7 @@
           return;
         }
         updateStopControls();
-        void requestCurrentTaskStop("auto", cycle.triggeredItems, cycle.key);
+        void requestCurrentTaskStop("auto", cycle.key);
       }
 
       function bindStopControls() {
