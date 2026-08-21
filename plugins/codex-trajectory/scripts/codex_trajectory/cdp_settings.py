@@ -51,9 +51,19 @@ def lock_path() -> Path:
     return _state_dir() / "cdp-toolbar.lock"
 
 
+def _watcher_executable() -> Path:
+    """Choose an interpreter that cannot create a Windows console window."""
+    executable = Path(sys.executable)
+    if os.name != "nt":
+        return executable
+    base_executable = Path(str(getattr(sys, "_base_executable", executable)))
+    windowless = base_executable.with_name("pythonw.exe")
+    return windowless if windowless.is_file() else base_executable
+
+
 def daemon_runtime_id() -> str:
     """Identify the installed watcher runtime without exposing its local path."""
-    identity = f"{sys.executable}\0{_daemon_script().resolve()}".encode(
+    identity = f"{_watcher_executable().resolve()}\0{_daemon_script().resolve()}".encode(
         "utf-8", errors="surrogateescape"
     )
     return hashlib.sha256(identity).hexdigest()
@@ -345,7 +355,7 @@ def start_daemon() -> None:
     script = _daemon_script()
     if not script.is_file():
         raise OSError("CDP injector script is unavailable.")
-    _start_watcher_process([sys.executable, str(script), "--watch"], script)
+    _start_watcher_process([str(_watcher_executable()), str(script), "--watch"], script)
 
 
 def reconcile_daemon() -> None:

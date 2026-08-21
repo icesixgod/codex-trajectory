@@ -206,6 +206,19 @@ def test_start_daemon_is_idempotent_and_detached(
         cdp_settings.start_daemon()
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows-only console suppression")
+def test_windows_watcher_uses_the_base_pythonw_interpreter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base_python = tmp_path / "python.exe"
+    base_python.write_bytes(b"")
+    pythonw = tmp_path / "pythonw.exe"
+    pythonw.write_bytes(b"")
+    monkeypatch.setattr(cdp_settings.sys, "_base_executable", str(base_python))
+
+    assert cdp_settings._watcher_executable() == pythonw
+
+
 def test_start_daemon_replaces_verified_outdated_runtime(
     isolated_cdp_home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
