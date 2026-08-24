@@ -458,22 +458,28 @@ def _discover_windows_host(start_pid: int) -> HostIdentity | None:
         return None
     pid = start_pid
     seen: set[int] = set()
+    candidate: HostIdentity | None = None
     for _ in range(MAX_PROCESS_DEPTH):
         if pid <= 1 or pid in seen:
-            return None
+            break
         seen.add(pid)
         info = _windows_process_info(pid)
         if info is None:
-            return None
+            break
         ppid, started, executable, package_family = info
         if (
             ntpath.basename(executable).casefold() in {"chatgpt.exe", "codex.exe"}
             and isinstance(package_family, str)
             and package_family.startswith(WINDOWS_PACKAGE_PREFIX)
         ):
-            return HostIdentity("win32", pid, started, executable, package_family)
+            # The desktop app currently launches the MCP/App Server through a
+            # packaged codex.exe child while the loopback CDP listener remains
+            # owned by the outer packaged ChatGPT.exe process. Keep walking so
+            # both the plugin process and the CDP peer are descendants of the
+            # selected, authenticated desktop root.
+            candidate = HostIdentity("win32", pid, started, executable, package_family)
         pid = table.get(pid, ppid)
-    return None
+    return candidate
 
 
 def _windows_tcp_rows() -> list[tuple[str, int, str, int, int, int]]:

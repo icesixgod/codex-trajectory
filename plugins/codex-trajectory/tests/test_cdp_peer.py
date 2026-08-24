@@ -115,6 +115,32 @@ def test_windows_host_and_peer_require_one_package_family(
     assert cdp_peer._windows_peer_matches_host(200, identity) is False
 
 
+def test_windows_host_discovery_selects_outer_desktop_above_packaged_codex(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    desktop = windows_identity(pid=100)
+    app_server = HostIdentity(
+        "win32",
+        200,
+        "app-server-start",
+        r"C:\Program Files\WindowsApps\OpenAI.Codex_1.0.0.0_x64__publisher\app\resources\codex.exe",
+        desktop.package_family,
+    )
+    table = {400: 300, 300: 200, 200: 100, 100: 1}
+    processes: dict[int, tuple[int, str, str, str | None]] = {
+        400: (300, "python", r"C:\Python\python.exe", None),
+        300: (200, "uv", r"C:\Tools\uv.exe", None),
+        200: (100, app_server.started, app_server.executable, app_server.package_family),
+        100: (1, desktop.started, desktop.executable, desktop.package_family),
+    }
+    monkeypatch.setattr(cdp_peer, "_windows_process_table", lambda: table)
+    monkeypatch.setattr(cdp_peer, "_windows_process_info", processes.get)
+
+    assert cdp_peer._discover_windows_host(400) == desktop
+    assert cdp_peer._windows_peer_matches_host(100, desktop) is True
+    assert cdp_peer._windows_peer_matches_host(200, desktop) is True
+
+
 def test_windows_tcp_owner_match_is_exact_and_fail_closed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

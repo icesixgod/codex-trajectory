@@ -1018,6 +1018,8 @@ def _inject_cycle(
     """Inject only after binding the token-bearing connection to the Codex host."""
     connected = False
     injected = False
+    shell_target_seen = False
+    last_shell_error: Exception | None = None
     if enabled and (not viewer_url or host_identity is None):
         raise ValueError("An authenticated host and viewer URL are required for the shortcut.")
     source = injection_source(viewer_url or "") if enabled else REMOVE_SOURCE
@@ -1033,6 +1035,7 @@ def _inject_cycle(
         if not isinstance(websocket, str):
             continue
         codex_shell = _is_codex_shell_target(target)
+        shell_target_seen = shell_target_seen or codex_shell
         target_source = source if not enabled or codex_shell else REMOVE_SOURCE
         try:
             connection = WebSocketConnection(
@@ -1041,7 +1044,9 @@ def _inject_cycle(
                 deadline=deadline,
                 host_identity=host_identity if enabled and codex_shell else None,
             )
-        except (CdpError, OSError):
+        except (CdpError, OSError) as error:
+            if enabled and codex_shell:
+                last_shell_error = error
             continue
         try:
             if codex_shell:
@@ -1053,10 +1058,14 @@ def _inject_cycle(
                     and value.get("installed") is True
                     and value.get("visible") is True
                 )
-        except CdpError:
+        except CdpError as error:
+            if enabled and codex_shell:
+                last_shell_error = error
             continue
         finally:
             connection.close()
+    if enabled and shell_target_seen and not connected and last_shell_error is not None:
+        raise CdpError("Could not authenticate a Codex shell target.") from last_shell_error
     return connected, injected if enabled else False
 
 

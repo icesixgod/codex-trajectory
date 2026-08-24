@@ -36,6 +36,9 @@ jobs:
       - name: Enforce focused coverage floors
         run: |
           uv run coverage report --include='plugins/codex-trajectory/scripts/codex_trajectory/*.py' --fail-under=85
+          uv run coverage report --include='plugins/codex-trajectory/scripts/codex_trajectory/browser_view.py' --fail-under=90
+          uv run coverage report --include='plugins/codex-trajectory/scripts/codex_trajectory/cdp_peer.py' --fail-under=45
+          uv run coverage report --include='plugins/codex-trajectory/scripts/codex_trajectory/cdp_settings.py' --fail-under=80
           uv run coverage report --include='plugins/codex-trajectory/scripts/codex_trajectory_cdp.py' --fail-under=50
           uv run coverage report --include='plugins/codex-trajectory/scripts/codex_trajectory_mcp.py' --fail-under=85
       - run: uv run python scripts/validate_release.py
@@ -69,6 +72,18 @@ jobs:
       - run: uv sync --locked --group dev
       - run: uv run pytest -m "not ui" -q
       - run: uv run python scripts/smoke_mcp.py
+      - name: Install Chromium for the focused Windows CDP test
+        if: runner.os == 'Windows' && matrix.python == '3.12'
+        run: uv run playwright install chromium
+      - name: Exercise the Windows CDP browser transport
+        if: runner.os == 'Windows' && matrix.python == '3.12'
+        run: >-
+          uv run pytest
+          plugins/codex-trajectory/tests/test_cdp_transport.py
+          -m ui
+          -q
+        env:
+          RUN_UI_TESTS: "1"
 
   ui:
     name: Browser UI

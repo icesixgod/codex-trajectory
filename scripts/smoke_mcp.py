@@ -3,12 +3,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib
 import json
 import os
 import shutil
+import struct
 
-# This smoke test intentionally launches the packaged MCP entry point with fixed arguments.
+# This smoke test launches the exact entry point declared by the packaged plugin.
 import subprocess  # nosec B404
 import tempfile
 from pathlib import Path
@@ -16,6 +18,7 @@ from typing import Any
 
 ROOT = Path(__file__).parents[1]
 PLUGIN = ROOT / "plugins" / "codex-trajectory"
+WINDOWS_LAUNCHER_SHA256 = "BF3CF1118AD6D5FD1CF91A671D9CCBA6CD3AF7DFB7DABEEEBD37F6C6442EA67F"
 
 
 def require(condition: bool, message: str) -> None:
@@ -42,15 +45,88 @@ def compress_zstd(value: bytes) -> bytes:
     return bytes(zstd.compress(value))
 
 
+def declared_mcp_command(plugin: Path = PLUGIN) -> tuple[list[str], Path]:
+    """Resolve the exact stdio command and working directory from ``.mcp.json``."""
+    config = json.loads((plugin / ".mcp.json").read_text(encoding="utf-8"))
+    servers = config.get("mcpServers") if isinstance(config, dict) else None
+    server = servers.get("codex-trajectory") if isinstance(servers, dict) else None
+    if not isinstance(server, dict):
+        raise RuntimeError("Packaged MCP configuration is missing codex-trajectory.")
+    command = server.get("command")
+    arguments = server.get("args")
+    working_directory = server.get("cwd")
+    if (
+        not isinstance(command, str)
+        or not command
+        or not isinstance(arguments, list)
+        or not all(isinstance(argument, str) for argument in arguments)
+        or not isinstance(working_directory, str)
+        or not working_directory
+    ):
+        raise RuntimeError("Packaged MCP command is invalid.")
+    plugin_root = plugin.resolve()
+    cwd = (plugin_root / working_directory).resolve()
+    command_path = Path(command)
+    if command_path.parent != Path("."):
+        launcher = (cwd / command_path).resolve()
+        try:
+            launcher.relative_to(plugin_root)
+        except ValueError as error:
+            raise RuntimeError("Packaged MCP launcher escapes the plugin root.") from error
+        executable = shutil.which(str(launcher))
+    else:
+        executable = shutil.which(command)
+    if executable is None:
+        raise RuntimeError(f"The packaged MCP launcher {command!r} is unavailable.")
+    try:
+        cwd.relative_to(plugin_root)
+    except ValueError as error:
+        raise RuntimeError("Packaged MCP cwd escapes the plugin root.") from error
+    if not cwd.is_dir():
+        raise RuntimeError("Packaged MCP cwd is unavailable.")
+    return [executable, *arguments], cwd
+
+
+def windows_pe_subsystem(executable: Path) -> int:
+    """Read the PE subsystem without launching a potentially console-bound binary."""
+    with executable.open("rb") as stream:
+        dos_header = stream.read(64)
+        if len(dos_header) != 64 or dos_header[:2] != b"MZ":
+            raise RuntimeError("Windows MCP launcher is not a PE executable.")
+        pe_offset = struct.unpack_from("<I", dos_header, 60)[0]
+        if pe_offset < 64 or pe_offset > 16 * 1024 * 1024:
+            raise RuntimeError("Windows MCP launcher has an invalid PE header offset.")
+        stream.seek(pe_offset)
+        pe_header = stream.read(24)
+        if len(pe_header) != 24 or pe_header[:4] != b"PE\0\0":
+            raise RuntimeError("Windows MCP launcher has an invalid PE header.")
+        optional_header_size = struct.unpack_from("<H", pe_header, 20)[0]
+        optional_header = stream.read(optional_header_size)
+    if len(optional_header) < 70 or struct.unpack_from("<H", optional_header, 0)[0] not in {
+        0x10B,
+        0x20B,
+    }:
+        raise RuntimeError("Windows MCP launcher has an invalid optional header.")
+    return int(struct.unpack_from("<H", optional_header, 68)[0])
+
+
 def main() -> None:
     """Start the runtime and validate MCP discovery, UI, and Unicode output."""
     manifest = json.loads((PLUGIN / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
     expected_version = manifest.get("version")
     if not isinstance(expected_version, str):
         raise RuntimeError("Plugin manifest version is missing.")
-    uv = shutil.which("uv")
-    if uv is None:
-        raise RuntimeError("uv is required for the MCP smoke test.")
+    command, command_cwd = declared_mcp_command()
+    if os.name == "nt":
+        launcher = Path(command[0])
+        require(
+            hashlib.sha256(launcher.read_bytes()).hexdigest().upper() == WINDOWS_LAUNCHER_SHA256,
+            "Windows MCP launcher does not match its reviewed source build.",
+        )
+        require(
+            windows_pe_subsystem(launcher) == 2,
+            "Windows MCP launcher must use the GUI subsystem to avoid a console window.",
+        )
     with tempfile.TemporaryDirectory() as temporary:
         codex_home = Path(temporary)
         session = codex_home / "sessions" / "2026" / "rollout-smoke.jsonl.zst"
@@ -101,8 +177,8 @@ def main() -> None:
         environment = os.environ.copy()
         environment["CODEX_HOME"] = str(codex_home)
         completed = subprocess.run(  # nosec B603
-            [uv, "run", "--script", "./scripts/codex_trajectory_mcp.py"],
-            cwd=PLUGIN,
+            command,
+            cwd=command_cwd,
             env=environment,
             input="\n".join(messages) + "\n",
             text=True,

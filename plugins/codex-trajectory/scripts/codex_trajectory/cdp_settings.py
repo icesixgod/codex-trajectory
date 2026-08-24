@@ -23,7 +23,7 @@ from .json_support import strict_json_loads
 
 SETTINGS_VERSION = 1
 BROWSER_SHORTCUT_AVAILABLE = browser_shortcut_supported()
-DAEMON_RUNTIME_REVISION = 4
+DAEMON_RUNTIME_REVISION = 6
 DEFAULT_CDP_PORT = 9222
 MIN_CDP_PORT = 1024
 MAX_CDP_PORT = 65535
@@ -74,17 +74,32 @@ def _control_lock_path() -> Path:
 
 
 def _watcher_executable() -> Path:
-    """Keep the active environment while suppressing a Windows console window."""
+    """Use the base GUI interpreter so a venv redirector cannot reopen a console."""
     executable = Path(sys.executable)
     if os.name != "nt":
         return executable
-    return _windowless_watcher_executable(executable)
+    base_executable = Path(getattr(sys, "_base_executable", executable))
+    return _windowless_watcher_executable(base_executable)
 
 
 def _windowless_watcher_executable(executable: Path) -> Path:
-    """Prefer pythonw beside the active interpreter without escaping its environment."""
+    """Prefer pythonw beside a selected Windows interpreter."""
     windowless = executable.with_name("pythonw.exe")
     return windowless if windowless.is_file() else executable
+
+
+def _watcher_pythonpath() -> str:
+    """Preserve the active uv script environment for the base GUI interpreter."""
+    paths: list[str] = []
+    for entry in sys.path:
+        if not entry:
+            continue
+        path = Path(entry)
+        if path.is_absolute() and path.is_dir():
+            value = str(path)
+            if value not in paths:
+                paths.append(value)
+    return os.pathsep.join(paths)
 
 
 def daemon_runtime_id() -> str:
@@ -489,6 +504,16 @@ def _start_watcher_process(command: list[str], script: Path) -> None:
         | getattr(subprocess, "DETACHED_PROCESS", 0)
         | getattr(subprocess, "CREATE_NO_WINDOW", 0)
     )
+    environment = os.environ.copy()
+    active_pythonpath = _watcher_pythonpath()
+    inherited_pythonpath = environment.get("PYTHONPATH")
+    if active_pythonpath:
+        environment["PYTHONPATH"] = (
+            active_pythonpath
+            if not inherited_pythonpath
+            else os.pathsep.join((active_pythonpath, inherited_pythonpath))
+        )
+    options["env"] = environment
     breakaway_flag = getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0)
     try:
         subprocess.Popen(

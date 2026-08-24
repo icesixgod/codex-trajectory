@@ -6,7 +6,8 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ### Fixed
 
-- Run the Windows session-start watcher through uv's windowless `uvw.exe` launcher and keep it in the reviewed asynchronous hook process, preventing a console flash and avoiding watcher loss when the Codex Windows Job Object does not permit detached children to break away.
+- Remove the redundant `SessionStart` command hook and launch the MCP through one portable relative entry point: Unix executes `uv` directly, while a reviewed Windows GUI-subsystem shim prefers Astral's stdio-preserving `uvw.exe` and falls back to `uv.exe` with `CREATE_NO_WINDOW`. Start the optional watcher with the base `pythonw.exe` plus the active uv environment's import path instead of a venv redirector that can reopen `python.exe`. Together these prevent Session selection from creating a Windows Terminal/`cmd.exe` tab while preserving watcher recovery and Linux/macOS startup.
+- Select the outer authenticated `OpenAI.Codex` desktop ancestor when packaged `codex.exe` and `ChatGPT.exe` both appear in the Windows process chain, allowing the real parent-owned CDP listener to pass peer authentication; report total shell-target authentication failure through the fixed public error category instead of silently returning disconnected state.
 - Keep watcher runtime identity stable across the hook and MCP launch environments, replace stale toolbar markup deterministically, and make the Windows runtime and browser acceptance checks portable.
 
 ## [0.4.0] - 2026-08-24

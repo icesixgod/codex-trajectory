@@ -112,6 +112,35 @@ def test_enabled_injection_fails_closed_without_host_authentication() -> None:
         _inject_cycle(9222, True, "http://127.0.0.1:43123/private-token/")
 
 
+def test_enabled_injection_reports_when_every_codex_peer_fails_authentication(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        codex_trajectory_cdp,
+        "_targets",
+        lambda _port, **_kwargs: [
+            {
+                "url": "app://-/index.html",
+                "webSocketDebuggerUrl": "ws://127.0.0.1:9222/codex",
+            }
+        ],
+    )
+
+    class RejectedConnection:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            raise codex_trajectory_cdp.CdpError("peer authentication failed")
+
+    monkeypatch.setattr(codex_trajectory_cdp, "WebSocketConnection", RejectedConnection)
+
+    with pytest.raises(codex_trajectory_cdp.CdpError, match="authenticate"):
+        _inject_cycle(
+            9222,
+            True,
+            "http://127.0.0.1:43123/private-token/",
+            HOST_IDENTITY,
+        )
+
+
 def test_state_and_stop_continue_past_an_unusable_codex_renderer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

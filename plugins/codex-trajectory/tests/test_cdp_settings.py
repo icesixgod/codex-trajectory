@@ -51,9 +51,7 @@ def test_settings_default_round_trip_and_validation(isolated_cdp_home: Path) -> 
             cdp_settings.write_settings(False, invalid)  # type: ignore[arg-type]
 
 
-def test_settings_fail_closed_for_corrupt_values_and_symlinks(
-    isolated_cdp_home: Path,
-) -> None:
+def test_settings_fail_closed_for_corrupt_values(isolated_cdp_home: Path) -> None:
     path = cdp_settings.settings_path()
     path.parent.mkdir(parents=True)
     path.write_text("not-json", encoding="utf-8")
@@ -62,10 +60,19 @@ def test_settings_fail_closed_for_corrupt_values_and_symlinks(
     path.write_text(json.dumps({"enabled": True, "port": "bad"}), encoding="utf-8")
     assert cdp_settings.read_settings()["port"] == 9222
 
-    path.unlink()
+
+def test_settings_fail_closed_for_symlinks(isolated_cdp_home: Path) -> None:
+    path = cdp_settings.settings_path()
+    path.parent.mkdir(parents=True)
+
     target = isolated_cdp_home / "outside.json"
     target.write_text('{"enabled":true,"port":9444}', encoding="utf-8")
-    path.symlink_to(target)
+    try:
+        path.symlink_to(target)
+    except OSError as error:
+        if os.name == "nt" and error.winerror == 1314:
+            pytest.skip("Windows symlink privilege is unavailable")
+        raise
     assert cdp_settings.read_settings() == {
         "schemaVersion": 1,
         "enabled": False,
@@ -365,17 +372,30 @@ def test_start_daemon_is_idempotent_and_detached(
         cdp_settings.start_daemon()
 
 
-def test_windows_watcher_preserves_the_active_environment(tmp_path: Path) -> None:
+def test_windows_watcher_uses_the_base_gui_interpreter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     active_python = tmp_path / "uv-environment" / "python.exe"
+    base_python = tmp_path / "base" / "python.exe"
     active_python.parent.mkdir()
+    base_python.parent.mkdir()
     active_python.write_bytes(b"")
-    pythonw = active_python.with_name("pythonw.exe")
+    base_python.write_bytes(b"")
+    pythonw = base_python.with_name("pythonw.exe")
     pythonw.write_bytes(b"")
+    monkeypatch.setattr(cdp_settings, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(cdp_settings.sys, "executable", str(active_python))
+    monkeypatch.setattr(
+        cdp_settings.sys,
+        "_base_executable",
+        str(base_python),
+        raising=False,
+    )
 
-    assert cdp_settings._windowless_watcher_executable(active_python) == pythonw
+    assert cdp_settings._watcher_executable() == pythonw
 
     pythonw.unlink()
-    assert cdp_settings._windowless_watcher_executable(active_python) == active_python
+    assert cdp_settings._watcher_executable() == base_python
 
 
 def test_daemon_command_binds_the_authenticated_desktop_host(

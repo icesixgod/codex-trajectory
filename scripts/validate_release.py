@@ -24,6 +24,7 @@ MAX_JSON_NESTING_DEPTH = 256
 FROZEN_SCHEMA_SHA256 = {
     1: "b74e0aa0b75280151cdaf3502a819e0ebf501699e52a83315dda9fddf1ebf458",
 }
+WINDOWS_LAUNCHER_SHA256 = "bf3cf1118ad6d5fd1cf91a671d9ccba6cd3af7dfb7dabeeebd37f6c6442ea67f"
 
 
 def _validate_json_nesting(value: str) -> None:
@@ -451,7 +452,7 @@ def validate_skill() -> None:
 
 
 def validate_mcp() -> None:
-    """Validate the cross-platform uv script command."""
+    """Validate the portable MCP launcher and its windowless Windows binary."""
     config = load_json(PLUGIN / ".mcp.json")
     require(
         set(config) == {"mcpServers"},
@@ -468,64 +469,69 @@ def validate_mcp() -> None:
         set(server) == {"command", "args", "cwd", "env_vars"},
         "unexpected MCP server field",
     )
-    require(server.get("command") == "uv", "MCP runtime must be uv")
+    require(
+        server.get("command") == "./scripts/codex_trajectory_launcher",
+        "MCP runtime must use the portable relative launcher",
+    )
     require(
         server.get("args") == ["run", "--script", "./scripts/codex_trajectory_mcp.py"],
         "MCP uv command changed",
     )
     require(server.get("cwd") == ".", "MCP cwd must be the plugin root")
     require(server.get("env_vars") == ["CODEX_HOME"], "MCP environment allowlist changed")
+    launcher_root = PLUGIN / "scripts" / "codex_trajectory_launcher"
+    require(
+        launcher_root.read_bytes() == b'#!/bin/sh\nset -eu\n\nexec uv "$@"\n',
+        "Unix MCP launcher must directly exec uv",
+    )
+    source = launcher_root.with_suffix(".c").read_text(encoding="utf-8")
+    require(
+        "CREATE_NO_WINDOW" in source
+        and "STARTF_USESTDHANDLES" in source
+        and "CreateProcessW" in source
+        and "ShellExecute" not in source,
+        "Windows MCP launcher source lost its no-window stdio contract",
+    )
+    executable = launcher_root.with_suffix(".exe")
+    require(
+        hashlib.sha256(executable.read_bytes()).hexdigest() == WINDOWS_LAUNCHER_SHA256,
+        "Windows MCP launcher binary changed without review",
+    )
+    with executable.open("rb") as stream:
+        dos_header = stream.read(64)
+        require(
+            len(dos_header) == 64 and dos_header[:2] == b"MZ",
+            "Windows MCP launcher is not a PE executable",
+        )
+        pe_offset = struct.unpack_from("<I", dos_header, 60)[0]
+        stream.seek(pe_offset)
+        pe_header = stream.read(24)
+        require(
+            len(pe_header) == 24 and pe_header[:4] == b"PE\0\0",
+            "Windows MCP launcher PE header is invalid",
+        )
+        optional_header_size = struct.unpack_from("<H", pe_header, 20)[0]
+        optional_header = stream.read(optional_header_size)
+    require(
+        len(optional_header) >= 70 and struct.unpack_from("<H", optional_header, 68)[0] == 2,
+        "Windows MCP launcher must use the GUI subsystem",
+    )
 
 
-def validate_hooks() -> None:
-    """Validate the early, non-blocking watcher bootstrap hook."""
-    config = load_json(PLUGIN / "hooks" / "hooks.json")
+def validate_watcher_startup() -> None:
+    """Keep watcher recovery on MCP startup without a command-shell hook."""
     require(
-        config.get("description")
-        == "Restore the opted-in Codex Trajectory shortcut as a session starts.",
-        "unexpected hook description",
-    )
-    require(set(config) == {"description", "hooks"}, "unexpected hook config field")
-    hooks = config.get("hooks")
-    require(isinstance(hooks, dict), "hook map is missing")
-    hooks = cast(dict[str, Any], hooks)
-    require(set(hooks) == {"SessionStart"}, "unexpected lifecycle hook")
-    session_start = hooks.get("SessionStart")
-    require(
-        isinstance(session_start, list) and len(session_start) == 1,
-        "SessionStart hook group is invalid",
-    )
-    session_start = cast(list[Any], session_start)
-    group = session_start[0]
-    require(isinstance(group, dict), "SessionStart hook group must be an object")
-    group = cast(dict[str, Any], group)
-    require(set(group) == {"matcher", "hooks"}, "unexpected SessionStart group field")
-    require(group.get("matcher") == "startup|resume|clear", "unexpected SessionStart matcher")
-    handlers = group.get("hooks")
-    require(
-        isinstance(handlers, list) and len(handlers) == 1,
-        "SessionStart handler is invalid",
-    )
-    handlers = cast(list[Any], handlers)
-    handler = handlers[0]
-    require(isinstance(handler, dict), "SessionStart handler must be an object")
-    handler = cast(dict[str, Any], handler)
-    require(
-        set(handler) == {"type", "command", "commandWindows", "timeout", "async"},
-        "unexpected SessionStart handler field",
-    )
-    require(handler.get("type") == "command", "bootstrap hook must be a command")
-    require(handler.get("async") is True, "bootstrap hook must not block session startup")
-    require(handler.get("timeout") == 86400, "bootstrap hook timeout changed")
-    require(
-        handler.get("command")
-        == 'uv run --script "${PLUGIN_ROOT}/scripts/codex_trajectory_bootstrap.py"',
-        "bootstrap hook command changed",
+        not (PLUGIN / "hooks" / "hooks.json").exists(),
+        "plugin must not bundle a command hook that opens a Windows terminal",
     )
     require(
-        handler.get("commandWindows")
-        == 'uvw run --script "%PLUGIN_ROOT%\\scripts\\codex_trajectory_bootstrap.py"',
-        "Windows bootstrap hook command changed",
+        not (PLUGIN / "scripts" / "codex_trajectory_bootstrap.py").exists(),
+        "obsolete command-hook bootstrap must not be packaged",
+    )
+    mcp_source = (PLUGIN / "scripts" / "codex_trajectory_mcp.py").read_text(encoding="utf-8")
+    require(
+        "reconcile_daemon()" in mcp_source,
+        "MCP startup must restore the opted-in watcher",
     )
 
 
@@ -700,7 +706,7 @@ def main() -> None:
     validate_marketplace()
     validate_skill()
     validate_mcp()
-    validate_hooks()
+    validate_watcher_startup()
     validate_schema()
     validate_attribution()
     validate_repository_contents()

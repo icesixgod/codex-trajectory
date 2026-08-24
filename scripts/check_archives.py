@@ -43,7 +43,6 @@ REQUIRED = {
     "plugins/codex-trajectory/assets/trajectory-browser.js",
     "plugins/codex-trajectory/assets/trajectory.html",
     "plugins/codex-trajectory/assets/whale-girl-mining-32f.png",
-    "plugins/codex-trajectory/hooks/hooks.json",
     "plugins/codex-trajectory/scripts/codex_trajectory/__init__.py",
     "plugins/codex-trajectory/scripts/codex_trajectory/browser_view.py",
     "plugins/codex-trajectory/scripts/codex_trajectory/cdp_peer.py",
@@ -54,7 +53,9 @@ REQUIRED = {
     "plugins/codex-trajectory/scripts/codex_trajectory/projection.py",
     "plugins/codex-trajectory/scripts/codex_trajectory/protocol.py",
     "plugins/codex-trajectory/scripts/codex_trajectory/sessions.py",
-    "plugins/codex-trajectory/scripts/codex_trajectory_bootstrap.py",
+    "plugins/codex-trajectory/scripts/codex_trajectory_launcher",
+    "plugins/codex-trajectory/scripts/codex_trajectory_launcher.c",
+    "plugins/codex-trajectory/scripts/codex_trajectory_launcher.exe",
     "plugins/codex-trajectory/scripts/codex_trajectory_mcp.py",
     "plugins/codex-trajectory/scripts/codex_trajectory_cdp.py",
     "plugins/codex-trajectory/skills/inspect-codex-trajectory/SKILL.md",
@@ -63,6 +64,7 @@ REQUIRED = {
     "schemas/trajectory-v2.schema.json",
     "scripts/check_archives.py",
     "scripts/smoke_mcp.py",
+    "scripts/smoke_windows_codex.py",
     "scripts/validate_release.py",
     "uv.lock",
 }
@@ -264,6 +266,9 @@ def _validate_inventory(
     missing = REQUIRED - files.keys()
     if missing:
         raise ValueError(f"required release member is missing: {sorted(missing)[0]}")
+    launcher = files["plugins/codex-trajectory/scripts/codex_trajectory_launcher"]
+    if not launcher.executable:
+        raise ValueError("Unix MCP launcher is not executable in the release archive")
     return root, files
 
 

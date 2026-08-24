@@ -48,6 +48,9 @@ jobs:
           uv run mypy --no-incremental --platform win32
           uv run pytest --cov --cov-report=term-missing
           uv run coverage report --include='plugins/codex-trajectory/scripts/codex_trajectory/*.py' --fail-under=85
+          uv run coverage report --include='plugins/codex-trajectory/scripts/codex_trajectory/browser_view.py' --fail-under=90
+          uv run coverage report --include='plugins/codex-trajectory/scripts/codex_trajectory/cdp_peer.py' --fail-under=45
+          uv run coverage report --include='plugins/codex-trajectory/scripts/codex_trajectory/cdp_settings.py' --fail-under=80
           uv run coverage report --include='plugins/codex-trajectory/scripts/codex_trajectory_cdp.py' --fail-under=50
           uv run coverage report --include='plugins/codex-trajectory/scripts/codex_trajectory_mcp.py' --fail-under=85
           RUN_UI_TESTS=1 uv run pytest plugins/codex-trajectory/tests/test_ui.py plugins/codex-trajectory/tests/test_cdp_transport.py -q
