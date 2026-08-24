@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import ctypes
 import errno
 import hashlib
 import http.client
 import importlib
 import json
+import math
 import os
+import secrets
 import stat
 import subprocess
 import sys
@@ -18,12 +21,12 @@ from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Any, BinaryIO
 
-from .cdp_peer import browser_shortcut_supported, discover_host_identity
+from .cdp_peer import HostIdentity, browser_shortcut_supported, discover_host_identity
 from .json_support import strict_json_loads
 
 SETTINGS_VERSION = 1
 BROWSER_SHORTCUT_AVAILABLE = browser_shortcut_supported()
-DAEMON_RUNTIME_REVISION = 6
+DAEMON_RUNTIME_REVISION = 8
 DEFAULT_CDP_PORT = 9222
 MIN_CDP_PORT = 1024
 MAX_CDP_PORT = 65535
@@ -35,7 +38,9 @@ DAEMON_RESTART_TIMEOUT_SECONDS = 5.0
 DAEMON_START_COOLDOWN_SECONDS = 5.0
 DAEMON_CONTROL_LOCK_TIMEOUT_SECONDS = 10.0
 DAEMON_CONTROL_LOCK_POLL_SECONDS = 0.05
+DAEMON_HANDOFF_READY_TIMEOUT_SECONDS = 5.0
 PUBLIC_DAEMON_ERROR = "CDP integration is temporarily unavailable."
+MCP_STARTED_AT_ENV = "CODEX_TRAJECTORY_MCP_STARTED_AT"
 
 _DAEMON_CONTROL_LOCK = threading.Lock()
 _CONTROL_LOCK_BUSY_ERRNOS = {errno.EACCES, errno.EAGAIN, errno.EDEADLK}
@@ -233,9 +238,24 @@ def write_daemon_status(value: dict[str, Any]) -> None:
             if isinstance(value.get("runtimeId"), str) and len(value["runtimeId"]) <= 128
             else None
         ),
+        "mcpStartedAt": _bounded_status_number(value.get("mcpStartedAt")),
+        "watcherStartedAt": _bounded_status_number(value.get("watcherStartedAt")),
+        "viewerReadyAt": _bounded_status_number(value.get("viewerReadyAt")),
+        "injectedAt": _bounded_status_number(value.get("injectedAt")),
+        "injectionDurationMs": _bounded_status_number(
+            value.get("injectionDurationMs"), maximum=60_000.0
+        ),
         "updatedAt": time.time(),
     }
     _atomic_write(status_path(), allowed)
+
+
+def _bounded_status_number(value: Any, *, maximum: float = 10_000_000_000.0) -> float | None:
+    """Keep private timing telemetry numeric, finite, and tightly bounded."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) and 0 <= number <= maximum else None
 
 
 def _public_daemon_error(value: Any) -> str | None:
@@ -281,7 +301,7 @@ def _daemon_status() -> dict[str, Any]:
     )
     running = fresh and _pid_running(value.get("pid"))
     runtime_id = value.get("runtimeId")
-    return {
+    result = {
         "pid": value.get("pid") if running else None,
         "runtimeId": runtime_id if fresh and isinstance(runtime_id, str) else None,
         "daemonRunning": running,
@@ -290,6 +310,35 @@ def _daemon_status() -> dict[str, Any]:
         "viewerServing": running and value.get("viewerServing") is True,
         "lastError": _public_daemon_error(value.get("lastError")) if fresh else None,
     }
+    for key in (
+        "mcpStartedAt",
+        "watcherStartedAt",
+        "viewerReadyAt",
+        "injectedAt",
+        "injectionDurationMs",
+    ):
+        result[key] = _bounded_status_number(value.get(key)) if fresh else None
+    return result
+
+
+def _startup_timings(runtime: dict[str, Any]) -> dict[str, float | None] | None:
+    """Expose durations only, keeping absolute process timestamps private."""
+
+    def elapsed(later_key: str, earlier_key: str) -> float | None:
+        later = runtime.get(later_key)
+        earlier = runtime.get(earlier_key)
+        if not isinstance(later, (int, float)) or not isinstance(earlier, (int, float)):
+            return None
+        value = (float(later) - float(earlier)) * 1000
+        return round(value, 3) if 0 <= value <= 60_000 else None
+
+    timings = {
+        "mcpToWatcherMs": elapsed("watcherStartedAt", "mcpStartedAt"),
+        "watcherToViewerMs": elapsed("viewerReadyAt", "watcherStartedAt"),
+        "viewerToInjectionMs": elapsed("injectedAt", "viewerReadyAt"),
+        "lastInjectionDurationMs": runtime.get("injectionDurationMs"),
+    }
+    return timings if any(value is not None for value in timings.values()) else None
 
 
 def _probe_cdp(port: int) -> bool:
@@ -331,6 +380,7 @@ def public_status() -> dict[str, Any]:
         "injected": runtime["injected"],
         "viewerServing": runtime["viewerServing"],
         "lastError": runtime["lastError"],
+        "startupTimings": _startup_timings(runtime),
     }
 
 
@@ -338,9 +388,121 @@ def _daemon_script() -> Path:
     return Path(__file__).resolve().parent.parent / "codex_trajectory_cdp.py"
 
 
-def _lock_owner_pid() -> int | None:
+def _windows_file_user_pids(path: Path) -> set[int] | None:
+    """Ask Windows Restart Manager which processes are using the watcher lock."""
+    if os.name != "nt":
+        return None
+
+    class FileTime(ctypes.Structure):
+        _fields_ = [("low", ctypes.c_ulong), ("high", ctypes.c_ulong)]
+
+    class UniqueProcess(ctypes.Structure):
+        _fields_ = [("pid", ctypes.c_ulong), ("started", FileTime)]
+
+    class ProcessInfo(ctypes.Structure):
+        _fields_ = [
+            ("process", UniqueProcess),
+            ("appName", ctypes.c_wchar * 256),
+            ("serviceName", ctypes.c_wchar * 64),
+            ("applicationType", ctypes.c_int),
+            ("appStatus", ctypes.c_ulong),
+            ("sessionId", ctypes.c_ulong),
+            ("restartable", ctypes.c_int),
+        ]
+
+    session = ctypes.c_ulong()
+    session_key = ctypes.create_unicode_buffer(33)
+    try:
+        restart_manager = ctypes.WinDLL("rstrtmgr", use_last_error=True)
+        start = restart_manager.RmStartSession
+        start.argtypes = [ctypes.POINTER(ctypes.c_ulong), ctypes.c_ulong, ctypes.c_wchar_p]
+        start.restype = ctypes.c_ulong
+        register = restart_manager.RmRegisterResources
+        register.argtypes = [
+            ctypes.c_ulong,
+            ctypes.c_uint,
+            ctypes.POINTER(ctypes.c_wchar_p),
+            ctypes.c_uint,
+            ctypes.c_void_p,
+            ctypes.c_uint,
+            ctypes.c_void_p,
+        ]
+        register.restype = ctypes.c_ulong
+        get_list = restart_manager.RmGetList
+        get_list.argtypes = [
+            ctypes.c_ulong,
+            ctypes.POINTER(ctypes.c_uint),
+            ctypes.POINTER(ctypes.c_uint),
+            ctypes.POINTER(ProcessInfo),
+            ctypes.POINTER(ctypes.c_ulong),
+        ]
+        get_list.restype = ctypes.c_ulong
+        end = restart_manager.RmEndSession
+        end.argtypes = [ctypes.c_ulong]
+        end.restype = ctypes.c_ulong
+
+        if start(ctypes.byref(session), 0, session_key) != 0:
+            return None
+        try:
+            resources = (ctypes.c_wchar_p * 1)(str(path.resolve()))
+            if register(session, 1, resources, 0, None, 0, None) != 0:
+                return None
+            for _ in range(3):
+                needed = ctypes.c_uint()
+                available = ctypes.c_uint()
+                reasons = ctypes.c_ulong()
+                result = get_list(
+                    session,
+                    ctypes.byref(needed),
+                    ctypes.byref(available),
+                    None,
+                    ctypes.byref(reasons),
+                )
+                if result == 0 and needed.value == 0:
+                    return set()
+                if result not in {0, 234} or needed.value > 4096:
+                    return None
+                process_array = (ProcessInfo * needed.value)()
+                available.value = needed.value
+                result = get_list(
+                    session,
+                    ctypes.byref(needed),
+                    ctypes.byref(available),
+                    process_array,
+                    ctypes.byref(reasons),
+                )
+                if result == 0:
+                    return {
+                        int(process_array[index].process.pid) for index in range(available.value)
+                    }
+                if result != 234:
+                    return None
+            return None
+        finally:
+            end(session)
+    except (AttributeError, OSError, ValueError):
+        return None
+
+
+def _lock_owner_pid(expected_pid: int | None = None) -> int | None:
+    """Read the watcher PID, including the legacy Windows locked-byte layout."""
     raw_bytes = _read_bounded_regular(lock_path(), MAX_LOCK_FILE_BYTES)
     if raw_bytes is None:
+        if os.name == "nt" and isinstance(expected_pid, int) and expected_pid > 0:
+            try:
+                lock_state = lock_path().lstat()
+            except OSError:
+                return None
+            pid_size = len(str(expected_pid))
+            file_user_pids = _windows_file_user_pids(lock_path())
+            if (
+                stat.S_ISREG(lock_state.st_mode)
+                and lock_state.st_nlink == 1
+                and lock_state.st_size in {pid_size, pid_size + 1}
+                and file_user_pids is not None
+                and expected_pid in file_user_pids
+            ):
+                return expected_pid
         return None
     try:
         raw = raw_bytes.decode("ascii").strip()
@@ -457,7 +619,7 @@ def _stop_outdated_daemon(runtime: dict[str, Any]) -> None:
         or not isinstance(pid, int)
         or pid <= 0
         or pid == os.getpid()
-        or _lock_owner_pid() != pid
+        or _lock_owner_pid(pid) != pid
     ):
         raise OSError("Could not verify the outdated CDP watcher process.")
     settings = read_settings()
@@ -540,16 +702,46 @@ def _daemon_start_key() -> tuple[str, bool, int, str]:
     )
 
 
+def _handoff_ready_path() -> Path:
+    """Return a unique private readiness marker for one watcher handoff."""
+    return _state_dir() / f".cdp-handoff-{secrets.token_hex(16)}.ready"
+
+
+def _wait_for_handoff_ready(path: Path) -> bool:
+    """Wait until the replacement has bound its viewer without reading a token."""
+    deadline = time.monotonic() + DAEMON_HANDOFF_READY_TIMEOUT_SECONDS
+    expected = daemon_runtime_id().encode("ascii")
+    while time.monotonic() < deadline:
+        if _read_bounded_regular(path, 256) == expected:
+            return True
+        time.sleep(DAEMON_CONTROL_LOCK_POLL_SECONDS)
+    return False
+
+
+def _watcher_command(
+    script: Path,
+    *,
+    host_identity: HostIdentity | None,
+    handoff_ready: Path | None = None,
+) -> list[str]:
+    """Build one authenticated watcher command with an optional handoff gate."""
+    command = [str(_watcher_executable()), str(script)]
+    if host_identity is not None:
+        command.extend(["--host-identity", host_identity.encode()])
+    if handoff_ready is not None:
+        command.extend(["--wait-for-lock", "--handoff-ready", str(handoff_ready)])
+    command.append("--watch")
+    return command
+
+
 def _start_daemon_locked(*, cooldown: bool) -> None:
     """Start the detached watcher while the in-process supervisor lock is held."""
     global _last_daemon_start_at, _last_daemon_start_failed, _last_daemon_start_key
 
     runtime = _daemon_status()
-    if runtime["daemonRunning"]:
-        if runtime.get("runtimeId") == daemon_runtime_id():
-            _last_daemon_start_failed = False
-            return
-        _stop_outdated_daemon(runtime)
+    if runtime["daemonRunning"] and runtime.get("runtimeId") == daemon_runtime_id():
+        _last_daemon_start_failed = False
+        return
     key = _daemon_start_key()
     now = time.monotonic()
     if (
@@ -567,13 +759,28 @@ def _start_daemon_locked(*, cooldown: bool) -> None:
     if not script.is_file():
         _last_daemon_start_failed = True
         raise OSError("CDP injector script is unavailable.")
-    command = [str(_watcher_executable()), str(script)]
+    outdated = runtime["daemonRunning"]
     host_identity = discover_host_identity()
-    if host_identity is not None:
-        command.extend(["--host-identity", host_identity.encode()])
-    command.append("--watch")
+    handoff_ready = _handoff_ready_path() if outdated and host_identity is not None else None
+    command = _watcher_command(
+        script,
+        host_identity=host_identity,
+        handoff_ready=handoff_ready,
+    )
     try:
+        # Without a verifiable host identity the replacement cannot safely bind
+        # a viewer before owning the watcher lock, so keep the proven fallback.
+        if outdated and handoff_ready is None:
+            _stop_outdated_daemon(runtime)
         _start_watcher_process(command, script)
+        if handoff_ready is not None:
+            try:
+                if not _wait_for_handoff_ready(handoff_ready):
+                    raise OSError("The replacement CDP watcher did not become ready.")
+                _stop_outdated_daemon(runtime)
+            finally:
+                with suppress(OSError):
+                    handoff_ready.unlink()
     except OSError:
         _last_daemon_start_failed = True
         raise

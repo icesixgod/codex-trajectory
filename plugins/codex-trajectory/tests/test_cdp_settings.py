@@ -102,6 +102,46 @@ def test_private_state_reads_reject_hardlinks_and_oversized_files(
     assert cdp_settings._lock_owner_pid() is None
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows locked-byte compatibility")
+def test_windows_legacy_watcher_lock_can_be_verified_for_upgrade(
+    isolated_cdp_home: Path,
+) -> None:
+    path = cdp_settings.lock_path()
+    path.parent.mkdir(parents=True)
+    child_source = r"""
+import msvcrt
+import os
+import sys
+from pathlib import Path
+
+stream = Path(sys.argv[1]).open("w+b")
+stream.write(str(os.getpid()).encode("ascii"))
+stream.flush()
+stream.seek(0)
+msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+print(os.getpid(), flush=True)
+sys.stdin.readline()
+stream.seek(0)
+msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+stream.close()
+"""
+    process = subprocess.Popen(
+        [sys.executable, "-c", child_source, str(path)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    assert process.stdout is not None
+    pid = int(process.stdout.readline())
+    try:
+        assert cdp_settings._lock_owner_pid(pid) == pid
+        assert cdp_settings._lock_owner_pid(pid + 1) != pid + 1
+    finally:
+        stdout, stderr = process.communicate("\n", timeout=5)
+    assert process.returncode == 0, stdout + stderr
+
+
 def test_public_status_uses_fresh_live_heartbeat(
     isolated_cdp_home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -116,6 +156,11 @@ def test_public_status_uses_fresh_live_heartbeat(
             "injected": True,
             "viewerServing": True,
             "lastError": "/Users/private/project/session.jsonl: connection failed",
+            "mcpStartedAt": 100.0,
+            "watcherStartedAt": 101.0,
+            "viewerReadyAt": 101.25,
+            "injectedAt": 101.75,
+            "injectionDurationMs": 12.5,
         }
     )
 
@@ -131,6 +176,12 @@ def test_public_status_uses_fresh_live_heartbeat(
         "injected": True,
         "viewerServing": True,
         "lastError": cdp_settings.PUBLIC_DAEMON_ERROR,
+        "startupTimings": {
+            "mcpToWatcherMs": 1000.0,
+            "watcherToViewerMs": 250.0,
+            "viewerToInjectionMs": 500.0,
+            "lastInjectionDurationMs": 12.5,
+        },
     }
     assert "/Users/private" not in cdp_settings.status_path().read_text(encoding="utf-8")
 
@@ -465,6 +516,57 @@ def test_runtime_identity_does_not_depend_on_the_launcher(
     )
 
     assert cdp_settings.daemon_runtime_id() == runtime
+
+
+def test_outdated_authenticated_watcher_handoffs_before_stopping(
+    isolated_cdp_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    identity = HostIdentity(
+        "darwin",
+        4321,
+        "Mon Aug 24 18:01:41 2026",
+        "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT",
+    )
+    cdp_settings.write_settings(True, 9222)
+    monkeypatch.setattr(cdp_settings, "discover_host_identity", lambda: identity)
+    monkeypatch.setattr(
+        cdp_settings,
+        "_daemon_status",
+        lambda: {
+            "pid": 1234,
+            "runtimeId": "outdated-runtime",
+            "daemonRunning": True,
+            "connected": True,
+            "injected": True,
+            "viewerServing": True,
+            "lastError": None,
+        },
+    )
+    events: list[str] = []
+    commands: list[list[str]] = []
+
+    def start(command: list[str], _script: Path) -> None:
+        commands.append(command)
+        events.append("start")
+
+    monkeypatch.setattr(cdp_settings, "_start_watcher_process", start)
+    monkeypatch.setattr(
+        cdp_settings,
+        "_wait_for_handoff_ready",
+        lambda _path: events.append("ready") is None or True,
+    )
+    monkeypatch.setattr(
+        cdp_settings,
+        "_stop_outdated_daemon",
+        lambda _runtime: events.append("stop"),
+    )
+
+    cdp_settings.start_daemon()
+
+    assert events == ["start", "ready", "stop"]
+    assert "--wait-for-lock" in commands[0]
+    assert "--handoff-ready" in commands[0]
+    assert commands[0][-1] == "--watch"
 
 
 def test_start_daemon_replaces_verified_outdated_runtime(

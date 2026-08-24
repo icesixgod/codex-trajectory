@@ -10,6 +10,7 @@ from pathlib import Path
 
 import codex_trajectory_cdp
 import pytest
+from codex_trajectory import cdp_settings
 from codex_trajectory.cdp_peer import HostIdentity
 from codex_trajectory_cdp import (
     REMOVE_SOURCE,
@@ -105,6 +106,46 @@ def test_injection_sends_the_viewer_token_only_to_an_authenticated_codex_target(
     assert "private-token" in evaluated["ws://127.0.0.1:9222/codex"][0]
     assert identities["ws://127.0.0.1:9222/external"] is None
     assert identities["ws://127.0.0.1:9222/codex"] == HOST_IDENTITY
+
+
+def test_fast_injection_defers_auxiliary_target_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    targets = [
+        {
+            "url": "app://-/index.html",
+            "webSocketDebuggerUrl": "ws://127.0.0.1:9222/codex",
+        },
+        {
+            "url": "https://example.invalid/",
+            "webSocketDebuggerUrl": "ws://127.0.0.1:9222/auxiliary",
+        },
+    ]
+    monkeypatch.setattr(codex_trajectory_cdp, "_targets", lambda _port, **_kwargs: targets)
+    evaluated: list[str] = []
+
+    class Connection:
+        def __init__(self, url: str, **_kwargs: object) -> None:
+            self.url = url
+
+        def close(self) -> None:
+            return None
+
+    def fake_evaluate(connection: Connection, _source: str, **_kwargs: object) -> object:
+        evaluated.append(connection.url)
+        return {"installed": True, "visible": True}
+
+    monkeypatch.setattr(codex_trajectory_cdp, "WebSocketConnection", Connection)
+    monkeypatch.setattr(codex_trajectory_cdp, "_evaluate", fake_evaluate)
+
+    assert _inject_cycle(
+        9222,
+        True,
+        "http://127.0.0.1:43123/private-token/",
+        HOST_IDENTITY,
+        fast=True,
+    ) == (True, True)
+    assert evaluated == ["ws://127.0.0.1:9222/codex"]
 
 
 def test_enabled_injection_fails_closed_without_host_authentication() -> None:
@@ -517,6 +558,19 @@ def test_process_lock_rejects_links_without_modifying_targets(tmp_path: Path) ->
         assert target.read_text(encoding="utf-8") == "keep"
 
 
+def test_process_lock_exposes_owner_outside_the_locked_byte(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "watcher.lock"
+    lock = _acquire_process_lock(path)
+    assert lock is not None
+    monkeypatch.setattr(cdp_settings, "lock_path", lambda: path)
+    try:
+        assert cdp_settings._lock_owner_pid(os.getpid()) == os.getpid()
+    finally:
+        lock.close()
+
+
 @pytest.mark.ui
 @pytest.mark.skipif(os.environ.get("RUN_UI_TESTS") != "1", reason="UI tests are opt-in")
 def test_authenticated_cdp_transport_replaces_a_legacy_browser_link(
@@ -595,7 +649,7 @@ def test_disabled_cleanup_cycle_does_not_require_a_browser_view_url(
 def test_watch_removes_injection_from_previous_port_before_switch(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    calls: list[tuple[int, bool, str | None, HostIdentity | None]] = []
+    calls: list[tuple[int, bool, str | None, HostIdentity | None, bool]] = []
 
     class Resource:
         closed = False
@@ -618,8 +672,10 @@ def test_watch_removes_injection_from_previous_port_before_switch(
         enabled: bool,
         viewer_url: str | None = None,
         host_identity: HostIdentity | None = None,
+        *,
+        fast: bool = False,
     ) -> tuple[bool, bool]:
-        calls.append((port, enabled, viewer_url, host_identity))
+        calls.append((port, enabled, viewer_url, host_identity, fast))
         return True, False
 
     monkeypatch.setattr(codex_trajectory_cdp, "_acquire_process_lock", lambda _path: lock)
@@ -635,14 +691,90 @@ def test_watch_removes_injection_from_previous_port_before_switch(
 
     assert codex_trajectory_cdp.watch() == 0
     assert calls == [
-        (9222, True, None, None),
-        (9222, False, None, None),
-        (9333, True, None, None),
-        (9333, False, None, None),
+        (9222, True, None, None, True),
+        (9222, False, None, None, False),
+        (9333, True, None, None, True),
+        (9333, False, None, None, False),
     ]
     assert all(status["viewerServing"] is False for status in statuses)
     assert all(status["injected"] is False for status in statuses)
     assert lock.closed is True
+
+
+def test_handoff_starts_viewer_before_waiting_for_the_watcher_lock(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    events: list[str] = []
+
+    class Resource:
+        def close(self) -> None:
+            events.append("lock-close")
+
+    class Server:
+        url = "http://127.0.0.1:43123/private-token/"
+
+        def __init__(self, *_args: object) -> None:
+            return None
+
+        def start(self) -> None:
+            events.append("viewer-start")
+
+        def close(self) -> None:
+            events.append("viewer-close")
+
+    settings = iter(
+        [
+            {"enabled": True, "port": 9222},
+            {"enabled": True, "port": 9222},
+            {"enabled": False, "port": 9222},
+        ]
+    )
+    monkeypatch.setattr(codex_trajectory_cdp, "BrowserViewServer", Server)
+    monkeypatch.setattr(codex_trajectory_cdp, "host_identity_alive", lambda _identity: True)
+    monkeypatch.setattr(codex_trajectory_cdp, "read_settings", lambda: next(settings))
+    monkeypatch.setattr(
+        codex_trajectory_cdp,
+        "_write_handoff_ready",
+        lambda _path: events.append("ready"),
+    )
+    monkeypatch.setattr(
+        codex_trajectory_cdp,
+        "_wait_for_process_lock",
+        lambda _path: events.append("lock") or Resource(),
+    )
+    monkeypatch.setattr(codex_trajectory_cdp, "lock_path", lambda: tmp_path / "lock")
+    monkeypatch.setattr(
+        codex_trajectory_cdp,
+        "_inject_cycle",
+        lambda *_args, **_kwargs: (True, False),
+    )
+    monkeypatch.setattr(codex_trajectory_cdp, "write_daemon_status", lambda _value: None)
+
+    assert (
+        codex_trajectory_cdp.watch(
+            HOST_IDENTITY,
+            wait_for_lock=True,
+            handoff_ready=str(tmp_path / (".cdp-handoff-" + "a" * 32 + ".ready")),
+        )
+        == 0
+    )
+    assert events[:3] == ["viewer-start", "ready", "lock"]
+    assert events[-2:] == ["viewer-close", "lock-close"]
+
+
+def test_handoff_marker_is_private_bounded_runtime_identity(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    state = tmp_path / "state"
+    marker = state / (".cdp-handoff-" + "a" * 32 + ".ready")
+    monkeypatch.setattr(codex_trajectory_cdp, "lock_path", lambda: state / "watcher.lock")
+
+    codex_trajectory_cdp._write_handoff_ready(str(marker))
+
+    assert marker.read_text(encoding="ascii") == codex_trajectory_cdp.daemon_runtime_id()
+    assert "private-token" not in marker.read_text(encoding="ascii")
+    with pytest.raises(ValueError, match="handoff marker"):
+        codex_trajectory_cdp._write_handoff_ready(str(tmp_path / "outside.ready"))
 
 
 @pytest.mark.ui

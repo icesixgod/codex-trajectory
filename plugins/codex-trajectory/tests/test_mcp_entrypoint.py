@@ -26,7 +26,28 @@ def test_mcp_config_uses_the_portable_windowless_launcher() -> None:
     assert launcher.with_suffix(".exe").is_file()
 
 
-def test_mcp_reconciles_the_watcher_before_serving(
+def test_mcp_starts_optional_initialization_before_serving(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(
+        codex_trajectory_mcp,
+        "_start_background_initialization",
+        lambda: calls.append("initialize"),
+    )
+    monkeypatch.setattr(
+        codex_trajectory_mcp,
+        "protocol_main",
+        lambda: calls.append("serve"),
+    )
+
+    codex_trajectory_mcp.main()
+
+    assert calls == ["initialize", "serve"]
+    assert float(codex_trajectory_mcp.os.environ["CODEX_TRAJECTORY_MCP_STARTED_AT"]) > 0
+
+
+def test_background_initialization_reconciles_then_prewarms(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[str] = []
@@ -35,18 +56,14 @@ def test_mcp_reconciles_the_watcher_before_serving(
         "reconcile_daemon",
         lambda: calls.append("reconcile"),
     )
-    monkeypatch.setattr(
-        codex_trajectory_mcp,
-        "protocol_main",
-        lambda: calls.append("serve"),
-    )
+    monkeypatch.setattr(codex_trajectory_mcp, "prewarm_caches", lambda: calls.append("prewarm"))
 
-    codex_trajectory_mcp.main()
+    codex_trajectory_mcp._initialize_in_background()
 
-    assert calls == ["reconcile", "serve"]
+    assert calls == ["reconcile", "prewarm"]
 
 
-def test_mcp_still_serves_when_watcher_recovery_fails(
+def test_background_prewarm_continues_when_watcher_recovery_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[str] = []
@@ -55,12 +72,8 @@ def test_mcp_still_serves_when_watcher_recovery_fails(
         raise OSError("temporary watcher race")
 
     monkeypatch.setattr(codex_trajectory_mcp, "reconcile_daemon", fail_reconcile)
-    monkeypatch.setattr(
-        codex_trajectory_mcp,
-        "protocol_main",
-        lambda: calls.append("serve"),
-    )
+    monkeypatch.setattr(codex_trajectory_mcp, "prewarm_caches", lambda: calls.append("prewarm"))
 
-    codex_trajectory_mcp.main()
+    codex_trajectory_mcp._initialize_in_background()
 
-    assert calls == ["serve"]
+    assert calls == ["prewarm"]

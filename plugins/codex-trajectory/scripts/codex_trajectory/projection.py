@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import threading
 from base64 import b64encode
 from collections import OrderedDict, deque
 from copy import deepcopy
@@ -64,11 +65,24 @@ MAX_RECORDS = 1_000
 MAX_TURNS = 1_000
 MAX_WARNINGS = 100
 MAX_OVERVIEW_CACHE = 256
+MAX_TRAJECTORY_CACHE = 16
 MAX_TRACKED_CALLS = 4_096
 MAX_SAFE_INTEGER = 2**53 - 1
 _SESSION_OVERVIEW_CACHE: OrderedDict[
     Path, tuple[tuple[tuple[str, int, int, int], ...], dict[str, Any]]
 ] = OrderedDict()
+_SESSION_OVERVIEW_CACHE_LOCK = threading.Lock()
+_TRAJECTORY_CACHE: OrderedDict[
+    tuple[
+        Path,
+        tuple[tuple[str, int, int, int], ...],
+        int,
+        DetailLevel,
+        int | None,
+    ],
+    dict[str, Any],
+] = OrderedDict()
+_TRAJECTORY_CACHE_LOCK = threading.Lock()
 
 
 def parse_timestamp(value: Any) -> int | None:
@@ -291,10 +305,11 @@ def search_haystack(value: dict[str, Any]) -> str:
 def session_overview(path: Path) -> dict[str, Any]:
     """Build a compact session summary without returning transcript bodies."""
     signature = session_signature(path)
-    cached = _SESSION_OVERVIEW_CACHE.get(path)
-    if cached is not None and cached[0] == signature:
-        _SESSION_OVERVIEW_CACHE.move_to_end(path)
-        return deepcopy(cached[1])
+    with _SESSION_OVERVIEW_CACHE_LOCK:
+        cached = _SESSION_OVERVIEW_CACHE.get(path)
+        if cached is not None and cached[0] == signature:
+            _SESSION_OVERVIEW_CACHE.move_to_end(path)
+            return deepcopy(cached[1])
 
     metadata = first_session_metadata(path)
     paginated = str(metadata.get("history_mode") or "legacy").casefold() == "paginated"
@@ -500,10 +515,14 @@ def session_overview(path: Path) -> dict[str, Any]:
         "agentPath": safe_text(metadata.get("agent_path"), 200),
         "git": safe_git(metadata.get("git")),
     }
-    _SESSION_OVERVIEW_CACHE[path] = (signature, overview)
-    _SESSION_OVERVIEW_CACHE.move_to_end(path)
-    while len(_SESSION_OVERVIEW_CACHE) > MAX_OVERVIEW_CACHE:
-        _SESSION_OVERVIEW_CACHE.popitem(last=False)
+    # The source can append while an overview is being projected. Do not cache
+    # a mixed snapshot under a signature that no longer describes the lineage.
+    if session_signature(path) == signature:
+        with _SESSION_OVERVIEW_CACHE_LOCK:
+            _SESSION_OVERVIEW_CACHE[path] = (signature, overview)
+            _SESSION_OVERVIEW_CACHE.move_to_end(path)
+            while len(_SESSION_OVERVIEW_CACHE) > MAX_OVERVIEW_CACHE:
+                _SESSION_OVERVIEW_CACHE.popitem(last=False)
     return deepcopy(overview)
 
 
@@ -2172,6 +2191,40 @@ def parse_session(
     }
 
 
+def cached_trajectory(
+    path: Path,
+    max_records: int = DEFAULT_MAX_RECORDS,
+    detail_level: DetailLevel = "summary",
+    before_record: int | None = None,
+) -> dict[str, Any]:
+    """Return one immutable-signature projection from a small process cache."""
+    normalized_detail = normalize_detail_level(detail_level)
+    limited = max(MIN_RECORDS, min(int(max_records), MAX_RECORDS))
+    signature = session_signature(path)
+    key = (path, signature, limited, normalized_detail, before_record)
+    with _TRAJECTORY_CACHE_LOCK:
+        cached = _TRAJECTORY_CACHE.get(key)
+        if cached is not None:
+            _TRAJECTORY_CACHE.move_to_end(key)
+            return deepcopy(cached)
+
+    trajectory = parse_session(path, limited, normalized_detail, before_record)
+    if session_signature(path) == signature:
+        with _TRAJECTORY_CACHE_LOCK:
+            _TRAJECTORY_CACHE[key] = trajectory
+            _TRAJECTORY_CACHE.move_to_end(key)
+            while len(_TRAJECTORY_CACHE) > MAX_TRAJECTORY_CACHE:
+                _TRAJECTORY_CACHE.popitem(last=False)
+    return deepcopy(trajectory)
+
+
+def prewarm_caches() -> None:
+    """Warm the bounded session and latest-summary caches after MCP startup."""
+    list_session_overviews(limit=20, include_archived=True)
+    path = resolve_session(None, include_archived=True)
+    cached_trajectory(path, DEFAULT_MAX_RECORDS, "summary")
+
+
 def trajectory_result(arguments: dict[str, Any], with_ui: bool) -> dict[str, Any]:
     """Resolve and project a session for one MCP tool call."""
     allowed = {"sessionId", "maxRecords", "beforeRecord", "includeArchived", "detailLevel"}
@@ -2195,7 +2248,7 @@ def trajectory_result(arguments: dict[str, Any], with_ui: bool) -> dict[str, Any
             raise ValueError(f"beforeRecord must be between 1 and {MAX_SAFE_INTEGER}.")
     detail_level = normalize_detail_level(arguments.get("detailLevel", "summary"))
     path = resolve_session(session_id, include_archived)
-    trajectory = parse_session(path, requested_max, detail_level, before_record)
+    trajectory = cached_trajectory(path, requested_max, detail_level, before_record)
     stats = trajectory["stats"]
     summary = (
         f"Trajectory for {trajectory['session']['id']}: "
@@ -2248,7 +2301,7 @@ def trajectory_update_result(arguments: dict[str, Any]) -> dict[str, Any]:
         "revision": current_revision,
     }
     if revision != current_revision:
-        update["trajectory"] = parse_session(path, LIVE_MAX_RECORDS, "summary")
+        update["trajectory"] = cached_trajectory(path, LIVE_MAX_RECORDS, "summary")
     state = "unchanged" if update["unchanged"] else "updated"
     return {
         "structuredContent": update,

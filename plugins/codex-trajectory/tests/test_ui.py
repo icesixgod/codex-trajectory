@@ -209,6 +209,7 @@ def test_loopback_browser_view_renders_the_full_trajectory_ui(page: Page) -> Non
     payload = deepcopy(demo_trajectories()["session-alpha"])
     payload["turns"][-1]["status"] = "complete"
     requested: list[tuple[str, dict[str, object]]] = []
+    refreshed = Event()
     stop_requests: list[dict[str, object]] = []
     task_state: dict[str, object] = {"running": True, "turnId": "turn-active"}
     theme_state: dict[str, Any] = {
@@ -225,6 +226,11 @@ def test_loopback_browser_view_renders_the_full_trajectory_ui(page: Page) -> Non
 
     def provider(name: str, arguments: dict[str, object]) -> dict[str, object]:
         requested.append((name, arguments))
+        if (
+            name == "get_codex_trajectory"
+            and sum(requested_name == name for requested_name, _arguments in requested) >= 2
+        ):
+            refreshed.set()
         if name == "get_codex_toolbar_injection_status":
             return {
                 "structuredContent": {
@@ -311,21 +317,8 @@ def test_loopback_browser_view_renders_the_full_trajectory_ui(page: Page) -> Non
             ),
         }
         assert stop_requests == []
-        frame.get_by_role("button", name="Refresh").evaluate(
-            """button => new Promise(resolve => {
-              const app = document.getElementById("app");
-              let started = false;
-              const observer = new MutationObserver(() => {
-                started ||= app.getAttribute("aria-busy") === "true";
-                if (started && app.getAttribute("aria-busy") === "false") {
-                  observer.disconnect();
-                  resolve();
-                }
-              });
-              observer.observe(app, {attributes: true, attributeFilter: ["aria-busy"]});
-              button.click();
-            })"""
-        )
+        frame.get_by_role("button", name="Refresh").click()
+        assert refreshed.wait(timeout=5)
         expect(frame.get_by_text("Safe summary", exact=True)).to_be_visible()
         names = [name for name, _arguments in requested]
         assert names.count("get_codex_trajectory") >= 2

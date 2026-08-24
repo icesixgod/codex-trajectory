@@ -499,7 +499,6 @@ def wrapper_html(
       id="viewer"
       title="Codex Trajectory"
       sandbox="allow-scripts"
-      src="{trajectory_path}"
     ></iframe>
 <script>
 const trajectories = {payload};
@@ -671,6 +670,7 @@ function notify(value) {{
   );
 }}
 viewer.addEventListener("load", () => notify(trajectory()));
+viewer.src = {json.dumps(trajectory_path)};
 window.addEventListener("message", event => {{
   if (event.source !== viewer.contentWindow) return;
   if (event.data?.method === "trajectory/follow-up") {{

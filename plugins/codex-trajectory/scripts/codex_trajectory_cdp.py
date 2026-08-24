@@ -12,7 +12,9 @@ import base64
 import hashlib
 import importlib
 import json
+import math
 import os
+import re
 import secrets
 import socket
 import stat
@@ -33,6 +35,7 @@ from codex_trajectory.cdp_peer import (
     host_identity_alive,
 )
 from codex_trajectory.cdp_settings import (
+    MCP_STARTED_AT_ENV,
     daemon_runtime_id,
     lock_path,
     read_settings,
@@ -49,9 +52,12 @@ THEME_OPERATION_TIMEOUT_SECONDS = 4.0
 TASK_STATE_OPERATION_TIMEOUT_SECONDS = 22.0
 STOP_OPERATION_TIMEOUT_SECONDS = 44.0
 INJECT_OPERATION_TIMEOUT_SECONDS = 8.0
+HANDOFF_LOCK_TIMEOUT_SECONDS = 8.0
+HANDOFF_SETTINGS_TIMEOUT_SECONDS = 5.0
 MAX_HTTP_BYTES = 512 * 1024
 MAX_HTTP_HEADER_BYTES = 64 * 1024
 MAX_WEBSOCKET_MESSAGE_BYTES = 8 * 1024 * 1024
+HANDOFF_READY_NAME = re.compile(r"\.cdp-handoff-[0-9a-f]{32}\.ready\Z")
 
 REMOVE_SOURCE = r"""
 (() => {
@@ -1014,6 +1020,8 @@ def _inject_cycle(
     enabled: bool,
     viewer_url: str | None = None,
     host_identity: HostIdentity | None = None,
+    *,
+    fast: bool = False,
 ) -> tuple[bool, bool]:
     """Inject only after binding the token-bearing connection to the Codex host."""
     connected = False
@@ -1058,6 +1066,10 @@ def _inject_cycle(
                     and value.get("installed") is True
                     and value.get("visible") is True
                 )
+                if fast and injected:
+                    # Make the authenticated shortcut visible first. Legacy
+                    # cleanup in auxiliary renderers runs on the next cycle.
+                    break
         except CdpError as error:
             if enabled and codex_shell:
                 last_shell_error = error
@@ -1067,6 +1079,17 @@ def _inject_cycle(
     if enabled and shell_target_seen and not connected and last_shell_error is not None:
         raise CdpError("Could not authenticate a Codex shell target.") from last_shell_error
     return connected, injected if enabled else False
+
+
+def _mcp_started_at() -> float | None:
+    """Read one inherited, non-secret process timestamp for local diagnostics."""
+    raw = os.environ.get(MCP_STARTED_AT_ENV)
+    try:
+        value = float(raw) if raw is not None else float("nan")
+    except ValueError:
+        return None
+    now = time.time()
+    return value if math.isfinite(value) and 0 <= value <= now + 60 else None
 
 
 def _acquire_process_lock(path: Path) -> Any:
@@ -1121,20 +1144,119 @@ def _acquire_process_lock(path: Path) -> Any:
         return None
     stream.seek(0)
     stream.truncate()
-    stream.write(str(os.getpid()).encode("ascii"))
+    # Byte zero remains the cross-process lock. Keeping the PID after it lets
+    # Windows supervisors read and verify the owner without touching the
+    # byte range protected by msvcrt.locking.
+    stream.write(b"0" + str(os.getpid()).encode("ascii"))
     stream.flush()
     return stream
 
 
-def watch(host_identity: HostIdentity | None = None) -> int:
+def _wait_for_process_lock(path: Path) -> Any:
+    """Wait briefly for an outdated watcher to release the shared lock."""
+    deadline = time.monotonic() + HANDOFF_LOCK_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        lock = _acquire_process_lock(path)
+        if lock is not None:
+            return lock
+        time.sleep(0.05)
+    return None
+
+
+def _validated_handoff_ready_path(raw: str) -> Path:
+    """Constrain a supervisor-provided marker to the private plugin state dir."""
+    candidate = Path(raw)
+    expected_parent = lock_path().parent.resolve()
+    if candidate.parent.resolve() != expected_parent or not HANDOFF_READY_NAME.fullmatch(
+        candidate.name
+    ):
+        raise ValueError("Invalid CDP watcher handoff marker.")
+    return candidate
+
+
+def _write_handoff_ready(raw: str) -> None:
+    """Signal viewer readiness without persisting its bearer-token URL."""
+    path = _validated_handoff_ready_path(raw)
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if path.parent.is_symlink():
+        raise OSError("Refusing an unsafe CDP watcher state directory.")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor = os.open(path, flags, 0o600)
+    try:
+        opened = os.fstat(descriptor)
+        linked = os.lstat(path)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or stat.S_ISLNK(linked.st_mode)
+            or opened.st_dev != linked.st_dev
+            or opened.st_ino != linked.st_ino
+            or opened.st_nlink != 1
+        ):
+            raise OSError("Refusing an unsafe CDP watcher handoff marker.")
+        payload = daemon_runtime_id().encode("ascii")
+        if os.write(descriptor, payload) != len(payload):
+            raise OSError("Could not write the CDP watcher handoff marker.")
+        os.fsync(descriptor)
+    except BaseException:
+        with suppress(OSError):
+            path.unlink()
+        raise
+    finally:
+        os.close(descriptor)
+
+
+def _wait_for_restored_settings() -> None:
+    """Avoid observing the supervisor's momentary disable during a handoff."""
+    deadline = time.monotonic() + HANDOFF_SETTINGS_TIMEOUT_SECONDS
+    while read_settings()["enabled"] is not True and time.monotonic() < deadline:
+        time.sleep(0.05)
+
+
+def watch(
+    host_identity: HostIdentity | None = None,
+    *,
+    wait_for_lock: bool = False,
+    handoff_ready: str | None = None,
+) -> int:
     """Apply the configured injection until the user disables it."""
-    lock = _acquire_process_lock(lock_path())
-    if lock is None:
-        return 0
+    watcher_started_at = time.time()
+    mcp_started_at = _mcp_started_at()
     last_error: str | None = None
     viewer_server: BrowserViewServer | None = None
+    viewer_ready_at: float | None = None
+    injected_at: float | None = None
+    injection_duration_ms: float | None = None
     applied_port: int | None = None
+    lock = None
     try:
+        if handoff_ready is not None:
+            settings = read_settings()
+            if settings["enabled"] is not True or host_identity is None:
+                return 0
+            if not host_identity_alive(host_identity):
+                return 0
+            viewer_server = BrowserViewServer(
+                _browser_tool,
+                _browser_stop,
+                _browser_theme,
+                _browser_task_state,
+            )
+            viewer_server.start()
+            viewer_ready_at = time.time()
+            _write_handoff_ready(handoff_ready)
+
+        lock = (
+            _wait_for_process_lock(lock_path())
+            if wait_for_lock
+            else _acquire_process_lock(lock_path())
+        )
+        if lock is None:
+            return 0
+        if handoff_ready is not None:
+            _wait_for_restored_settings()
+
         while True:
             settings = read_settings()
             enabled = settings["enabled"] is True
@@ -1156,13 +1278,24 @@ def watch(host_identity: HostIdentity | None = None) -> int:
                         _browser_task_state,
                     )
                     viewer_server.start()
+                    viewer_ready_at = time.time()
                 viewer_url = viewer_server.url if viewer_server is not None else None
-                connected, injected = _inject_cycle(
-                    port,
-                    enabled,
-                    viewer_url,
-                    host_identity,
-                )
+                injection_started = time.perf_counter()
+                try:
+                    connected, injected = _inject_cycle(
+                        port,
+                        enabled,
+                        viewer_url,
+                        host_identity,
+                        fast=enabled and injected_at is None,
+                    )
+                finally:
+                    injection_duration_ms = round(
+                        (time.perf_counter() - injection_started) * 1000,
+                        3,
+                    )
+                if injected and injected_at is None:
+                    injected_at = time.time()
                 applied_port = port if enabled else None
                 last_error = None
             except (CdpError, OSError, ValueError) as error:
@@ -1175,6 +1308,11 @@ def watch(host_identity: HostIdentity | None = None) -> int:
                     "viewerServing": enabled and viewer_server is not None,
                     "lastError": last_error,
                     "runtimeId": daemon_runtime_id(),
+                    "mcpStartedAt": mcp_started_at,
+                    "watcherStartedAt": watcher_started_at,
+                    "viewerReadyAt": viewer_ready_at,
+                    "injectedAt": injected_at,
+                    "injectionDurationMs": injection_duration_ms,
                 }
             )
             if not enabled:
@@ -1186,7 +1324,8 @@ def watch(host_identity: HostIdentity | None = None) -> int:
                 _inject_cycle(applied_port, False)
         if viewer_server is not None:
             viewer_server.close()
-        lock.close()
+        if lock is not None:
+            lock.close()
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -1195,6 +1334,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--watch", action="store_true", help="Watch settings and keep injection live."
     )
     parser.add_argument("--host-identity", help=argparse.SUPPRESS)
+    parser.add_argument("--wait-for-lock", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--handoff-ready", help=argparse.SUPPRESS)
     return parser.parse_args(argv)
 
 
@@ -1208,7 +1349,16 @@ def main(argv: list[str] | None = None) -> int:
         )
     except ValueError as error:
         raise SystemExit("Invalid Codex host identity.") from error
-    return watch(host_identity)
+    handoff_requested = args.handoff_ready is not None
+    if args.wait_for_lock != handoff_requested:
+        raise SystemExit("Invalid CDP watcher handoff arguments.")
+    if args.handoff_ready is not None and host_identity is None:
+        raise SystemExit("A Codex host identity is required for watcher handoff.")
+    return watch(
+        host_identity,
+        wait_for_lock=args.wait_for_lock,
+        handoff_ready=args.handoff_ready,
+    )
 
 
 if __name__ == "__main__":

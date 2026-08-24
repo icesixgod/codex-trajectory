@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 
 import pytest
+from codex_trajectory import projection
 from codex_trajectory.json_support import MAX_JSON_NESTING_DEPTH, strict_json_loads
 from codex_trajectory.privacy import (
     bounded,
@@ -19,6 +20,7 @@ from codex_trajectory.privacy import (
     source_kind,
 )
 from codex_trajectory.projection import (
+    cached_trajectory,
     call_tool,
     duration_milliseconds,
     epoch_milliseconds,
@@ -1025,6 +1027,90 @@ def test_session_overview_cache_invalidates_after_append(tmp_path: Path) -> None
 
     assert cached == first
     assert refreshed["turns"] == first["turns"] + 1
+
+
+def test_trajectory_cache_reuses_immutable_signature_and_returns_a_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = write_rollout(tmp_path / "trajectory-cache.jsonl")
+    real_parse = projection.parse_session
+    calls = 0
+
+    def counted_parse(*args: object, **kwargs: object) -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        return real_parse(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(projection, "parse_session", counted_parse)
+    first = cached_trajectory(path)
+    first["session"]["id"] = "mutated"
+    second = cached_trajectory(path)
+
+    assert calls == 1
+    assert second["session"]["id"] == "session-alpha"
+
+
+def test_trajectory_cache_invalidates_after_append(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = write_rollout(tmp_path / "trajectory-cache-append.jsonl")
+    real_parse = projection.parse_session
+    calls = 0
+
+    def counted_parse(*args: object, **kwargs: object) -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        return real_parse(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(projection, "parse_session", counted_parse)
+    first = cached_trajectory(path)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                {
+                    "timestamp": "2026-08-14T00:00:12Z",
+                    "type": "event_msg",
+                    "payload": {"type": "task_started"},
+                }
+            )
+            + "\n"
+        )
+    refreshed = cached_trajectory(path)
+
+    assert calls == 2
+    assert refreshed["stats"]["turns"] == first["stats"]["turns"] + 1
+
+
+def test_prewarm_populates_overviews_then_latest_summary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    path = tmp_path / "latest.jsonl"
+    calls: list[tuple[object, ...]] = []
+    monkeypatch.setattr(
+        projection,
+        "list_session_overviews",
+        lambda **kwargs: calls.append(("list", kwargs)) or [],
+    )
+    monkeypatch.setattr(
+        projection,
+        "resolve_session",
+        lambda session_id, include_archived: (
+            calls.append(("resolve", session_id, include_archived)) or path
+        ),
+    )
+    monkeypatch.setattr(
+        projection,
+        "cached_trajectory",
+        lambda *args: calls.append(("trajectory", *args)) or {},
+    )
+
+    projection.prewarm_caches()
+
+    assert calls == [
+        ("list", {"limit": 20, "include_archived": True}),
+        ("resolve", None, True),
+        ("trajectory", path, projection.DEFAULT_MAX_RECORDS, "summary"),
+    ]
 
 
 @pytest.mark.parametrize(
