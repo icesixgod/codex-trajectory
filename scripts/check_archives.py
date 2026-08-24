@@ -11,7 +11,7 @@ import tarfile
 import unicodedata
 import zipfile
 from dataclasses import dataclass
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import IO
 
 REQUIRED = {
@@ -43,18 +43,24 @@ REQUIRED = {
     "plugins/codex-trajectory/assets/trajectory-browser.js",
     "plugins/codex-trajectory/assets/trajectory.html",
     "plugins/codex-trajectory/assets/whale-girl-mining-32f.png",
+    "plugins/codex-trajectory/hooks/hooks.json",
     "plugins/codex-trajectory/scripts/codex_trajectory/__init__.py",
+    "plugins/codex-trajectory/scripts/codex_trajectory/browser_view.py",
+    "plugins/codex-trajectory/scripts/codex_trajectory/cdp_peer.py",
     "plugins/codex-trajectory/scripts/codex_trajectory/cdp_settings.py",
     "plugins/codex-trajectory/scripts/codex_trajectory/json_support.py",
+    "plugins/codex-trajectory/scripts/codex_trajectory/pricing.py",
     "plugins/codex-trajectory/scripts/codex_trajectory/privacy.py",
     "plugins/codex-trajectory/scripts/codex_trajectory/projection.py",
     "plugins/codex-trajectory/scripts/codex_trajectory/protocol.py",
     "plugins/codex-trajectory/scripts/codex_trajectory/sessions.py",
+    "plugins/codex-trajectory/scripts/codex_trajectory_bootstrap.py",
     "plugins/codex-trajectory/scripts/codex_trajectory_mcp.py",
     "plugins/codex-trajectory/scripts/codex_trajectory_cdp.py",
     "plugins/codex-trajectory/skills/inspect-codex-trajectory/SKILL.md",
     "pyproject.toml",
     "schemas/trajectory-v1.schema.json",
+    "schemas/trajectory-v2.schema.json",
     "scripts/check_archives.py",
     "scripts/smoke_mcp.py",
     "scripts/validate_release.py",
@@ -93,6 +99,10 @@ WINDOWS_RESERVED = {
 RELEASE_ROOT_PATTERN = re.compile(
     r"codex-trajectory-(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)"
 )
+ARCHIVE_NAME_PATTERN = re.compile(
+    r"codex-trajectory-v((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))"
+    r"\.(?:zip|tar\.gz)"
+)
 
 
 @dataclass(frozen=True)
@@ -102,6 +112,14 @@ class ReleaseMember:
     size: int
     sha256: str
     executable: bool
+
+
+def archive_version(path: str) -> str:
+    """Return the semantic version encoded in one canonical archive filename."""
+    match = ARCHIVE_NAME_PATTERN.fullmatch(Path(path).name)
+    if match is None:
+        raise ValueError("release archive filename is not versioned canonically")
+    return match.group(1)
 
 
 def executable_mode(mode: int, name: str) -> bool:
@@ -344,6 +362,13 @@ def main() -> None:
     args = parser.parse_args()
     zip_root, zip_members = inspect_zip(args.zip_archive)
     tar_root, tar_members = inspect_tar(args.tar_archive)
+    zip_version = archive_version(args.zip_archive)
+    tar_version = archive_version(args.tar_archive)
+    if zip_version != tar_version:
+        raise ValueError("ZIP and tar.gz archive filename versions differ")
+    expected_root = f"codex-trajectory-{zip_version}"
+    if zip_root != expected_root or tar_root != expected_root:
+        raise ValueError("release archive root does not match its filename version")
     if zip_root != tar_root:
         raise ValueError("ZIP and tar.gz release roots differ")
     if zip_members != tar_members:

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 import os
 import shutil
@@ -31,6 +32,16 @@ def request(identifier: int, method: str, params: dict[str, Any] | None = None) 
     return json.dumps(value, ensure_ascii=False)
 
 
+def compress_zstd(value: bytes) -> bytes:
+    """Create the compressed rollout shape used by current Codex stores."""
+    try:
+        zstd = importlib.import_module("compression.zstd")
+    except ModuleNotFoundError:
+        zstd = importlib.import_module("zstandard")
+        return bytes(zstd.ZstdCompressor().compress(value))
+    return bytes(zstd.compress(value))
+
+
 def main() -> None:
     """Start the runtime and validate MCP discovery, UI, and Unicode output."""
     manifest = json.loads((PLUGIN / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
@@ -42,7 +53,7 @@ def main() -> None:
         raise RuntimeError("uv is required for the MCP smoke test.")
     with tempfile.TemporaryDirectory() as temporary:
         codex_home = Path(temporary)
-        session = codex_home / "sessions" / "2026" / "rollout-smoke.jsonl"
+        session = codex_home / "sessions" / "2026" / "rollout-smoke.jsonl.zst"
         session.parent.mkdir(parents=True)
         events = [
             {
@@ -56,15 +67,26 @@ def main() -> None:
                 "payload": {"type": "user_message", "message": "检查 Unicode 轨迹"},
             },
         ]
-        session.write_text(
-            "".join(json.dumps(event, ensure_ascii=False) + "\n" for event in events),
-            encoding="utf-8",
+        session.write_bytes(
+            compress_zstd(
+                "".join(json.dumps(event, ensure_ascii=False) + "\n" for event in events).encode(
+                    "utf-8"
+                )
+            )
         )
         messages = [
-            request(1, "initialize", {"protocolVersion": "2025-06-18", "capabilities": {}}),
+            request(
+                1,
+                "initialize",
+                {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "codex-trajectory-smoke", "version": "1.0.0"},
+                },
+            ),
             request(2, "tools/list"),
             request(3, "resources/list"),
-            request(4, "resources/read", {"uri": "ui://codex-trajectory/trajectory-v1.html"}),
+            request(4, "resources/read", {"uri": "ui://codex-trajectory/trajectory-v2.html"}),
             request(
                 5,
                 "tools/call",
@@ -129,7 +151,9 @@ def main() -> None:
     require(
         direct_stop_tool.get("_meta", {}).get("ui", {}).get("visibility") == ["app"]
         and direct_stop_tool.get("_meta", {}).get("openai/visibility") == "private"
-        and direct_stop_tool.get("annotations", {}).get("readOnlyHint") is False,
+        and direct_stop_tool.get("annotations", {}).get("readOnlyHint") is False
+        and direct_stop_tool.get("annotations", {}).get("destructiveHint") is True
+        and direct_stop_tool.get("annotations", {}).get("idempotentHint") is False,
         "Direct stop tool is not scoped to the app resource.",
     )
     require(
@@ -141,14 +165,14 @@ def main() -> None:
         "MCP UI resource content is invalid.",
     )
     structured = by_id[5]["result"]["structuredContent"]
-    require(structured["schemaVersion"] == 1, "Unexpected trajectory schema version.")
+    require(structured["schemaVersion"] == 2, "Unexpected trajectory schema version.")
     require(structured["detailLevel"] == "summary", "Smoke test did not use summary mode.")
     require(
         "Unicode" in json.dumps(structured, ensure_ascii=False),
         "Unicode content did not survive the MCP round trip.",
     )
     live_update = by_id[6]["result"]["structuredContent"]
-    require(live_update["schemaVersion"] == 1, "Unexpected live-update schema version.")
+    require(live_update["schemaVersion"] == 2, "Unexpected live-update schema version.")
     require(live_update["unchanged"] is False, "Initial live update was not returned.")
     require(
         live_update["trajectory"]["detailLevel"] == "summary",

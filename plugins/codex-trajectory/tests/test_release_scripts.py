@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
 import tarfile
 import zipfile
@@ -10,7 +11,13 @@ from pathlib import Path
 import pytest
 
 from scripts import validate_release
-from scripts.check_archives import REQUIRED, inspect_tar, inspect_zip, relative_member
+from scripts.check_archives import (
+    REQUIRED,
+    archive_version,
+    inspect_tar,
+    inspect_zip,
+    relative_member,
+)
 from scripts.validate_release import MAX_JSON_NESTING_DEPTH, MAX_RELEASE_JSON_BYTES, load_json
 
 
@@ -49,6 +56,23 @@ def test_release_archives_compare_file_bytes_and_modes(tmp_path: Path) -> None:
     changed["README.md"] = b"different"
     _, changed_members = inspect_tar(str(write_tar(tmp_path / "changed.tar.gz", changed)))
     assert zip_members != changed_members
+
+
+@pytest.mark.parametrize(
+    "runtime_module",
+    [
+        "plugins/codex-trajectory/scripts/codex_trajectory/browser_view.py",
+        "plugins/codex-trajectory/scripts/codex_trajectory/pricing.py",
+    ],
+)
+def test_release_archive_rejects_missing_runtime_module(
+    tmp_path: Path, runtime_module: str
+) -> None:
+    files = release_files()
+    del files[runtime_module]
+
+    with pytest.raises(ValueError, match="required release member is missing"):
+        inspect_zip(str(write_zip(tmp_path / "missing-runtime.zip", files)))
 
 
 @pytest.mark.parametrize(
@@ -123,6 +147,19 @@ def test_release_archive_rejects_case_inconsistent_directories(tmp_path: Path) -
 def test_release_archive_requires_a_canonical_versioned_root(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="top-level directory"):
         inspect_zip(str(write_zip(tmp_path / "unsafe-root.zip", release_files(), root=".git")))
+
+
+def test_release_archive_filename_requires_an_exact_version() -> None:
+    assert archive_version("dist/codex-trajectory-v0.3.2.tar.gz") == "0.3.2"
+    assert archive_version("codex-trajectory-v10.20.30.zip") == "10.20.30"
+    for name in (
+        "release.zip",
+        "codex-trajectory-0.3.2.zip",
+        "codex-trajectory-v01.2.3.zip",
+        "codex-trajectory-v0.3.2.zip.backup",
+    ):
+        with pytest.raises(ValueError, match="filename"):
+            archive_version(name)
 
 
 def test_release_archive_rejects_file_directory_prefix_collisions(tmp_path: Path) -> None:
@@ -240,3 +277,49 @@ def test_versioned_release_rejects_nonempty_unreleased_section(
         encoding="utf-8",
     )
     validate_release.validate_release_notes("0.3.1")
+
+
+def test_release_versions_include_lockfile_and_issue_template(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = tmp_path / "plugins" / "codex-trajectory"
+    package = plugin / "scripts" / "codex_trajectory"
+    issue_template = tmp_path / ".github" / "ISSUE_TEMPLATE"
+    package.mkdir(parents=True)
+    issue_template.mkdir(parents=True)
+    (tmp_path / "pyproject.toml").write_text('version = "0.4.0"\n', encoding="utf-8")
+    (package / "__init__.py").write_text('__version__ = "0.4.0"\n', encoding="utf-8")
+    (tmp_path / "uv.lock").write_text(
+        '[[package]]\nname = "codex-trajectory"\nversion = "0.4.0"\n',
+        encoding="utf-8",
+    )
+    bug_report = issue_template / "bug_report.yml"
+    bug_report.write_text("      placeholder: 0.4.0\n", encoding="utf-8")
+    monkeypatch.setattr(validate_release, "ROOT", tmp_path)
+    monkeypatch.setattr(validate_release, "PLUGIN", plugin)
+
+    validate_release.validate_versions("0.4.0")
+
+    bug_report.write_text("      placeholder: 0.3.2\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="bug-report placeholder version"):
+        validate_release.validate_versions("0.4.0")
+
+
+def test_published_v1_schema_is_byte_for_byte_frozen(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = validate_release.ROOT / "schemas" / "trajectory-v1.schema.json"
+    schema = tmp_path / "schemas" / "trajectory-v1.schema.json"
+    schema.parent.mkdir(parents=True)
+    schema.write_bytes(source.read_bytes())
+    monkeypatch.setattr(validate_release, "ROOT", tmp_path)
+
+    assert (
+        hashlib.sha256(schema.read_bytes()).hexdigest() == validate_release.FROZEN_SCHEMA_SHA256[1]
+    )
+
+    schema.write_bytes(schema.read_bytes() + b"\n")
+    with pytest.raises(ValueError, match="byte-for-byte unchanged"):
+        validate_release.validate_schema()

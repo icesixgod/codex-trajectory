@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.10"
-# dependencies = []
+# dependencies = ["zstandard==0.25.0; python_version < '3.14'"]
 # ///
-"""Start the dependency-free Codex Trajectory MCP server."""
+"""Start the Codex Trajectory MCP server."""
 
 from contextlib import suppress
 

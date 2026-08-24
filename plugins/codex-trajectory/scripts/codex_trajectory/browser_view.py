@@ -84,7 +84,7 @@ def injection_source(viewer_url: str) -> str:
   const GLOBAL = "__codexTrajectoryToolbarV1";
   const BUTTON_ID = "codex-trajectory-toolbar-entry";
   const STYLE_ID = "codex-trajectory-toolbar-style";
-  const VERSION = 7;
+  const VERSION = 9;
   const VIEWER_URL = {encoded_url};
   const existing = window[GLOBAL];
   if (existing?.version === VERSION) {{
@@ -124,34 +124,51 @@ def injection_source(viewer_url: str) -> str:
       ? withoutHost
       : null;
   }};
+  const inVisibleDocumentTree = element => {{
+    if (!(element instanceof HTMLElement) || !element.isConnected) return false;
+    for (let node = element; node instanceof HTMLElement; node = node.parentElement) {{
+      const style = getComputedStyle(node);
+      if (node.hidden
+        || node.getAttribute("aria-hidden") === "true"
+        || style.display === "none"
+        || style.visibility === "hidden") return false;
+    }}
+    return true;
+  }};
+  const visibleSessionIds = (selector, attribute) => new Set(
+    Array.from(document.querySelectorAll(selector))
+      .filter(inVisibleDocumentTree)
+      .map(element => normalizeSessionId(element.getAttribute(attribute)))
+      .filter(value => value && !value.startsWith("client-new-thread:"))
+  );
+  const onlySessionId = values => values.size === 1 ? Array.from(values)[0] : null;
   const currentSessionId = () => {{
-    const selected = document.querySelector(
+    const selectedIds = visibleSessionIds(
       '[data-app-action-sidebar-thread-active="true"][data-app-action-sidebar-thread-id], '
         + '[data-app-action-sidebar-thread-selected="true"]'
-        + '[data-app-action-sidebar-thread-id]'
+        + '[data-app-action-sidebar-thread-id]',
+      "data-app-action-sidebar-thread-id"
     );
-    const selectedId = normalizeSessionId(
-      selected?.getAttribute("data-app-action-sidebar-thread-id")
-    );
-    if (!selectedId || !selectedId.startsWith("client-new-thread:")) return selectedId;
+    if (selectedIds.size > 1) return null;
+    const selectedId = onlySessionId(selectedIds);
+    if (selectedId) return selectedId;
 
-    // Codex keeps the client-generated sidebar key after App Server materializes
-    // the task. The conversation surface exposes the canonical UUID used by
-    // thread/read and turn/interrupt, so never send the temporary key to them.
-    const composerId = normalizeSessionId(
-      document.querySelector("[data-above-composer-conversation-id]")
-        ?.getAttribute("data-above-composer-conversation-id")
+    // Codex may omit the selected sidebar marker or keep a client-generated key
+    // after App Server materializes the task. The conversation surface exposes
+    // the canonical UUID used by thread/read and turn/interrupt. React may keep
+    // an old surface mounted while navigation completes, so accept a fallback
+    // only when every visible marker agrees on one canonical task.
+    const surfaceIds = visibleSessionIds(
+      "[data-above-composer-conversation-id]",
+      "data-above-composer-conversation-id"
     );
-    if (composerId && !composerId.startsWith("client-new-thread:")) return composerId;
-    const annotations = Array.from(
-      document.querySelectorAll("[data-response-annotation-conversation]")
-    );
-    const annotatedId = normalizeSessionId(
-      annotations.at(-1)?.getAttribute("data-response-annotation-conversation")
-    );
-    return annotatedId && !annotatedId.startsWith("client-new-thread:")
-      ? annotatedId
-      : null;
+    for (const value of visibleSessionIds(
+      "[data-response-annotation-conversation]",
+      "data-response-annotation-conversation"
+    )) {{
+      surfaceIds.add(value);
+    }}
+    return onlySessionId(surfaceIds);
   }};
 
   const style = document.createElement("style");

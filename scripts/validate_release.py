@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import re
@@ -20,6 +21,9 @@ VERSION_PATTERN = re.compile(r"(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)")
 MAX_RELEASE_JSON_BYTES = 1024 * 1024
 MAX_JSON_INTEGER_DIGITS = 256
 MAX_JSON_NESTING_DEPTH = 256
+FROZEN_SCHEMA_SHA256 = {
+    1: "b74e0aa0b75280151cdaf3502a819e0ebf501699e52a83315dda9fddf1ebf458",
+}
 
 
 def _validate_json_nesting(value: str) -> None:
@@ -361,6 +365,16 @@ def validate_versions(manifest_version: str) -> None:
         r'^__version__\s*=\s*"([^"]+)"',
         "runtime package",
     )
+    lock_version = declared_version(
+        ROOT / "uv.lock",
+        r'^\[\[package\]\]\s*\nname\s*=\s*"codex-trajectory"\s*\nversion\s*=\s*"([^"]+)"',
+        "lockfile project",
+    )
+    issue_template_version = declared_version(
+        ROOT / ".github" / "ISSUE_TEMPLATE" / "bug_report.yml",
+        r"^\s*placeholder:\s*([^\s]+)",
+        "bug-report placeholder",
+    )
     require(
         project_version == manifest_version,
         f"project version {project_version} != manifest version {manifest_version}",
@@ -368,6 +382,15 @@ def validate_versions(manifest_version: str) -> None:
     require(
         package_version == manifest_version,
         f"runtime version {package_version} != manifest version {manifest_version}",
+    )
+    require(
+        lock_version == manifest_version,
+        f"lockfile project version {lock_version} != manifest version {manifest_version}",
+    )
+    require(
+        issue_template_version == manifest_version,
+        "bug-report placeholder version "
+        f"{issue_template_version} != manifest version {manifest_version}",
     )
 
 
@@ -454,30 +477,128 @@ def validate_mcp() -> None:
     require(server.get("env_vars") == ["CODEX_HOME"], "MCP environment allowlist changed")
 
 
+def validate_hooks() -> None:
+    """Validate the early, non-blocking watcher bootstrap hook."""
+    config = load_json(PLUGIN / "hooks" / "hooks.json")
+    require(
+        config.get("description")
+        == "Restore the opted-in Codex Trajectory shortcut as a session starts.",
+        "unexpected hook description",
+    )
+    require(set(config) == {"description", "hooks"}, "unexpected hook config field")
+    hooks = config.get("hooks")
+    require(isinstance(hooks, dict), "hook map is missing")
+    hooks = cast(dict[str, Any], hooks)
+    require(set(hooks) == {"SessionStart"}, "unexpected lifecycle hook")
+    session_start = hooks.get("SessionStart")
+    require(
+        isinstance(session_start, list) and len(session_start) == 1,
+        "SessionStart hook group is invalid",
+    )
+    session_start = cast(list[Any], session_start)
+    group = session_start[0]
+    require(isinstance(group, dict), "SessionStart hook group must be an object")
+    group = cast(dict[str, Any], group)
+    require(set(group) == {"matcher", "hooks"}, "unexpected SessionStart group field")
+    require(group.get("matcher") == "startup|resume|clear", "unexpected SessionStart matcher")
+    handlers = group.get("hooks")
+    require(
+        isinstance(handlers, list) and len(handlers) == 1,
+        "SessionStart handler is invalid",
+    )
+    handlers = cast(list[Any], handlers)
+    handler = handlers[0]
+    require(isinstance(handler, dict), "SessionStart handler must be an object")
+    handler = cast(dict[str, Any], handler)
+    require(
+        set(handler) == {"type", "command", "commandWindows", "timeout", "async"},
+        "unexpected SessionStart handler field",
+    )
+    require(handler.get("type") == "command", "bootstrap hook must be a command")
+    require(handler.get("async") is True, "bootstrap hook must not block session startup")
+    require(handler.get("timeout") == 10, "bootstrap hook timeout changed")
+    require(
+        handler.get("command")
+        == 'uv run --script "${PLUGIN_ROOT}/scripts/codex_trajectory_bootstrap.py"',
+        "bootstrap hook command changed",
+    )
+    require(
+        handler.get("commandWindows")
+        == 'uv run --script "%PLUGIN_ROOT%\\scripts\\codex_trajectory_bootstrap.py"',
+        "Windows bootstrap hook command changed",
+    )
+
+
 def validate_schema() -> None:
-    """Validate the complete versioned trajectory schema."""
-    schema = load_json(ROOT / "schemas" / "trajectory-v1.schema.json")
-    Draft202012Validator.check_schema(schema)
-    require(
-        schema.get("$schema") == "https://json-schema.org/draft/2020-12/schema",
-        "unexpected JSON Schema draft",
-    )
-    properties = schema.get("properties")
-    require(isinstance(properties, dict), "schema properties are missing")
-    properties = cast(dict[str, Any], properties)
-    schema_version = properties.get("schemaVersion")
-    require(
-        isinstance(schema_version, dict) and schema_version.get("const") == 1,
-        "schemaVersion must be 1",
-    )
-    require(schema.get("additionalProperties") is False, "schema root must be closed")
-    definitions = schema.get("$defs")
-    require(isinstance(definitions, dict), "schema definitions are missing")
-    definitions = cast(dict[str, Any], definitions)
-    require(
-        {"session", "stats", "turn", "record", "warning", "sessionOverview"} <= definitions.keys(),
-        "schema definitions are incomplete",
-    )
+    """Validate every published trajectory schema without mutating older contracts."""
+    for version, expected_digest in FROZEN_SCHEMA_SHA256.items():
+        path = ROOT / "schemas" / f"trajectory-v{version}.schema.json"
+        actual_digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        require(
+            actual_digest == expected_digest,
+            f"published schema version {version} must remain byte-for-byte unchanged",
+        )
+    for expected_version in (1, 2):
+        schema = load_json(ROOT / "schemas" / f"trajectory-v{expected_version}.schema.json")
+        Draft202012Validator.check_schema(schema)
+        require(
+            schema.get("$id")
+            == (
+                "https://github.com/icesixgod/codex-trajectory/blob/main/"
+                f"schemas/trajectory-v{expected_version}.schema.json"
+            ),
+            f"schema version {expected_version} has an unexpected ID",
+        )
+        require(
+            schema.get("$schema") == "https://json-schema.org/draft/2020-12/schema",
+            f"unexpected JSON Schema draft in version {expected_version}",
+        )
+        require(
+            schema.get("title") == f"Codex Trajectory v{expected_version}",
+            f"schema version {expected_version} has an unexpected title",
+        )
+        properties = schema.get("properties")
+        require(isinstance(properties, dict), "schema properties are missing")
+        properties = cast(dict[str, Any], properties)
+        schema_version = properties.get("schemaVersion")
+        require(
+            isinstance(schema_version, dict) and schema_version.get("const") == expected_version,
+            f"schemaVersion must be {expected_version}",
+        )
+        require(schema.get("additionalProperties") is False, "schema root must be closed")
+        definitions = schema.get("$defs")
+        require(isinstance(definitions, dict), "schema definitions are missing")
+        definitions = cast(dict[str, Any], definitions)
+        require(
+            {"session", "stats", "turn", "record", "warning", "sessionOverview"}
+            <= definitions.keys(),
+            "schema definitions are incomplete",
+        )
+        cost_owners = ("stats", "turn", "record")
+        if expected_version == 1:
+            require(
+                "costEstimate" not in definitions
+                and all(
+                    isinstance(definitions.get(owner), dict)
+                    and "cost" not in definitions[owner].get("properties", {})
+                    for owner in cost_owners
+                ),
+                "schema version 1 must remain free of version 2 cost fields",
+            )
+        else:
+            require(
+                {"costEstimate", "nullableCostEstimate"} <= definitions.keys(),
+                "schema version 2 cost definitions are incomplete",
+            )
+            require(
+                all(
+                    isinstance(definitions.get(owner), dict)
+                    and "cost" in definitions[owner].get("properties", {})
+                    and "cost" in definitions[owner].get("required", [])
+                    for owner in cost_owners
+                ),
+                "schema version 2 cost fields must be required",
+            )
 
 
 def validate_attribution() -> None:
@@ -579,6 +700,7 @@ def main() -> None:
     validate_marketplace()
     validate_skill()
     validate_mcp()
+    validate_hooks()
     validate_schema()
     validate_attribution()
     validate_repository_contents()

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.10"
-# dependencies = []
+# dependencies = ["zstandard==0.25.0; python_version < '3.14'"]
 # ///
 """Inject the optional Codex Trajectory toolbar entry over loopback CDP."""
 
@@ -10,7 +10,7 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
-import http.client
+import importlib
 import json
 import os
 import secrets
@@ -26,6 +26,12 @@ from typing import Any
 from urllib.parse import urlparse
 
 from codex_trajectory.browser_view import BrowserViewServer, injection_source
+from codex_trajectory.cdp_peer import (
+    HostIdentity,
+    PeerAuthenticationError,
+    authenticate_connected_peer,
+    host_identity_alive,
+)
 from codex_trajectory.cdp_settings import (
     daemon_runtime_id,
     lock_path,
@@ -36,9 +42,15 @@ from codex_trajectory.json_support import strict_json_loads
 
 POLL_SECONDS = 1.0
 CONNECT_TIMEOUT_SECONDS = 0.75
-APP_SERVER_COMMAND_TIMEOUT_SECONDS = 18.0
-STOP_APP_SERVER_COMMAND_TIMEOUT_SECONDS = 30.0
+APP_SERVER_COMMAND_TIMEOUT_SECONDS = 10.0
+STOP_APP_SERVER_RPC_TIMEOUT_MS = 8_000
+STOP_APP_SERVER_COMMAND_TIMEOUT_SECONDS = 34.0
+THEME_OPERATION_TIMEOUT_SECONDS = 4.0
+TASK_STATE_OPERATION_TIMEOUT_SECONDS = 22.0
+STOP_OPERATION_TIMEOUT_SECONDS = 44.0
+INJECT_OPERATION_TIMEOUT_SECONDS = 8.0
 MAX_HTTP_BYTES = 512 * 1024
+MAX_HTTP_HEADER_BYTES = 64 * 1024
 MAX_WEBSOCKET_MESSAGE_BYTES = 8 * 1024 * 1024
 
 REMOVE_SOURCE = r"""
@@ -56,35 +68,129 @@ class CdpError(RuntimeError):
     """A bounded local CDP transport failure."""
 
 
+def _bounded_deadline(deadline: float | None, timeout_seconds: float) -> float:
+    local_deadline = time.monotonic() + timeout_seconds
+    return min(deadline, local_deadline) if deadline is not None else local_deadline
+
+
+def _remaining_seconds(deadline: float, message: str) -> float:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise CdpError(message)
+    return remaining
+
+
+def _set_socket_deadline(sock: socket.socket, deadline: float, message: str) -> None:
+    sock.settimeout(_remaining_seconds(deadline, message))
+
+
+def _recv_until(
+    sock: socket.socket,
+    marker: bytes,
+    limit: int,
+    deadline: float,
+    *,
+    timeout_message: str,
+    closed_message: str,
+    limit_message: str,
+) -> bytes:
+    value = bytearray()
+    while marker not in value:
+        _set_socket_deadline(sock, deadline, timeout_message)
+        try:
+            chunk = sock.recv(4096)
+        except (OSError, TimeoutError) as error:
+            raise CdpError(timeout_message) from error
+        if not chunk:
+            raise CdpError(closed_message)
+        value.extend(chunk)
+        if len(value) > limit:
+            raise CdpError(limit_message)
+    return bytes(value)
+
+
 class WebSocketConnection:
     """Small dependency-free WebSocket client sufficient for local CDP JSON-RPC."""
 
-    def __init__(self, url: str) -> None:
-        parsed = urlparse(url)
-        if parsed.scheme != "ws" or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
+    def __init__(
+        self,
+        url: str,
+        *,
+        expected_port: int | None = None,
+        deadline: float | None = None,
+        host_identity: HostIdentity | None = None,
+    ) -> None:
+        try:
+            parsed = urlparse(url)
+            hostname = parsed.hostname
+            port = parsed.port
+        except ValueError as error:
+            raise CdpError("CDP returned an invalid WebSocket URL.") from error
+        if parsed.scheme != "ws" or hostname not in {"127.0.0.1", "localhost", "::1"}:
             raise CdpError("CDP WebSocket was not loopback-only.")
-        if parsed.port is None:
+        if hostname == "::1":
+            raise CdpError("CDP WebSocket did not match the IPv4 discovery endpoint.")
+        if port is None:
             raise CdpError("CDP WebSocket did not specify a port.")
+        if expected_port is not None and port != expected_port:
+            raise CdpError("CDP WebSocket did not match the discovery endpoint.")
+        if (
+            parsed.username is not None
+            or parsed.password is not None
+            or parsed.fragment
+            or "\r" in parsed.path
+            or "\n" in parsed.path
+            or "\r" in parsed.query
+            or "\n" in parsed.query
+        ):
+            raise CdpError("CDP returned an invalid WebSocket URL.")
+        self._deadline = deadline
+        connect_deadline = _bounded_deadline(deadline, CONNECT_TIMEOUT_SECONDS)
+        connect_host = "127.0.0.1" if hostname == "localhost" else hostname
         self._socket = socket.create_connection(
-            (parsed.hostname, parsed.port), timeout=CONNECT_TIMEOUT_SECONDS
+            (connect_host, port),
+            timeout=_remaining_seconds(connect_deadline, "CDP connection timed out."),
         )
-        self._socket.settimeout(CONNECT_TIMEOUT_SECONDS)
         self._next_id = 1
-        self._handshake(parsed.hostname, parsed.port, parsed.path or "/", parsed.query)
+        try:
+            if host_identity is not None:
+                try:
+                    authenticate_connected_peer(self._socket, host_identity)
+                except PeerAuthenticationError as error:
+                    raise CdpError("CDP peer authentication failed.") from error
+            self._handshake(
+                hostname,
+                port,
+                parsed.path or "/",
+                parsed.query,
+                connect_deadline,
+            )
+        except BaseException:
+            self._socket.close()
+            raise
 
-    def _handshake(self, host: str, port: int, path: str, query: str) -> None:
+    def _handshake(
+        self,
+        host: str,
+        port: int,
+        path: str,
+        query: str,
+        deadline: float,
+    ) -> None:
         request_path = f"{path}?{query}" if query else path
         key = base64.b64encode(secrets.token_bytes(16)).decode("ascii")
+        header_host = f"[{host}]" if ":" in host else host
         request = (
             f"GET {request_path} HTTP/1.1\r\n"
-            f"Host: {host}:{port}\r\n"
+            f"Host: {header_host}:{port}\r\n"
             "Upgrade: websocket\r\n"
             "Connection: Upgrade\r\n"
             f"Sec-WebSocket-Key: {key}\r\n"
             "Sec-WebSocket-Version: 13\r\n\r\n"
         ).encode("ascii")
+        _set_socket_deadline(self._socket, deadline, "CDP handshake timed out.")
         self._socket.sendall(request)
-        response = self._read_until(b"\r\n\r\n", 64 * 1024)
+        response = self._read_until(b"\r\n\r\n", MAX_HTTP_HEADER_BYTES, deadline)
         header = response.decode("latin-1")
         if not header.startswith("HTTP/1.1 101"):
             raise CdpError("CDP rejected the WebSocket upgrade.")
@@ -99,26 +205,26 @@ class WebSocketConnection:
         if headers.get("sec-websocket-accept") != expected:
             raise CdpError("CDP returned an invalid WebSocket handshake.")
 
-    def _read_until(self, marker: bytes, limit: int) -> bytes:
-        value = bytearray()
-        while marker not in value:
-            chunk = self._socket.recv(4096)
-            if not chunk:
-                raise CdpError("CDP closed the connection.")
-            value.extend(chunk)
-            if len(value) > limit:
-                raise CdpError("CDP handshake exceeded the size limit.")
-        return bytes(value)
+    def _read_until(self, marker: bytes, limit: int, deadline: float) -> bytes:
+        return _recv_until(
+            self._socket,
+            marker,
+            limit,
+            deadline,
+            timeout_message="CDP handshake timed out.",
+            closed_message="CDP closed the connection.",
+            limit_message="CDP handshake exceeded the size limit.",
+        )
 
     def _read_exact(self, length: int, deadline: float | None = None) -> bytes:
         value = bytearray()
         while len(value) < length:
             if deadline is not None:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise CdpError("CDP command timed out.")
-                self._socket.settimeout(remaining)
-            chunk = self._socket.recv(length - len(value))
+                _set_socket_deadline(self._socket, deadline, "CDP command timed out.")
+            try:
+                chunk = self._socket.recv(length - len(value))
+            except (OSError, TimeoutError) as error:
+                raise CdpError("CDP command timed out.") from error
             if not chunk:
                 raise CdpError("CDP closed the connection.")
             value.extend(chunk)
@@ -193,8 +299,8 @@ class WebSocketConnection:
             separators=(",", ":"),
         ).encode("utf-8")
         previous_timeout = self._socket.gettimeout()
-        deadline = time.monotonic() + timeout_seconds
-        self._socket.settimeout(timeout_seconds)
+        deadline = _bounded_deadline(self._deadline, timeout_seconds)
+        self._socket.settimeout(_remaining_seconds(deadline, "CDP command timed out."))
         try:
             self._send_frame(0x1, payload)
             while True:
@@ -214,6 +320,12 @@ class WebSocketConnection:
 
     def close(self) -> None:
         with suppress(CdpError, OSError):
+            if self._deadline is not None:
+                _set_socket_deadline(
+                    self._socket,
+                    self._deadline,
+                    "CDP connection deadline elapsed.",
+                )
             self._send_frame(0x8, b"")
         self._socket.close()
 
@@ -229,28 +341,88 @@ class WebSocketConnection:
         self.close()
 
 
-def _http_json(port: int, route: str) -> Any:
-    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=CONNECT_TIMEOUT_SECONDS)
+def _http_json(port: int, route: str, *, deadline: float | None = None) -> Any:
+    request_deadline = _bounded_deadline(deadline, CONNECT_TIMEOUT_SECONDS)
+    sock: socket.socket | None = None
     try:
-        connection.request("GET", route, headers={"Accept": "application/json"})
-        response = connection.getresponse()
-        if response.status != 200:
+        sock = socket.create_connection(
+            ("127.0.0.1", port),
+            timeout=_remaining_seconds(request_deadline, "CDP discovery timed out."),
+        )
+        _set_socket_deadline(sock, request_deadline, "CDP discovery timed out.")
+        request = (
+            f"GET {route} HTTP/1.1\r\n"
+            f"Host: 127.0.0.1:{port}\r\n"
+            "Accept: application/json\r\n"
+            "Connection: close\r\n\r\n"
+        ).encode("ascii")
+        sock.sendall(request)
+        response = _recv_until(
+            sock,
+            b"\r\n\r\n",
+            MAX_HTTP_HEADER_BYTES,
+            request_deadline,
+            timeout_message="CDP discovery timed out.",
+            closed_message="CDP closed the HTTP connection.",
+            limit_message="CDP HTTP headers exceeded the size limit.",
+        )
+        raw_header, body_prefix = response.split(b"\r\n\r\n", 1)
+        lines = raw_header.decode("latin-1").split("\r\n")
+        status_parts = lines[0].split(" ", 2)
+        if (
+            len(status_parts) < 2
+            or status_parts[0] not in {"HTTP/1.0", "HTTP/1.1"}
+            or status_parts[1] != "200"
+        ):
             raise CdpError("Codex CDP endpoint is unavailable.")
-        body = response.read(MAX_HTTP_BYTES + 1)
-    except (http.client.HTTPException, OSError, TimeoutError, ValueError) as error:
+        headers: dict[str, list[str]] = {}
+        for line in lines[1:]:
+            if ":" not in line:
+                raise CdpError("CDP returned an invalid HTTP response.")
+            name, value = line.split(":", 1)
+            normalized_name = name.strip().casefold()
+            if not normalized_name:
+                raise CdpError("CDP returned an invalid HTTP response.")
+            headers.setdefault(normalized_name, []).append(value.strip())
+        if headers.get("transfer-encoding"):
+            raise CdpError("CDP returned an unsupported HTTP response.")
+        content_lengths = headers.get("content-length", [])
+        if len(content_lengths) != 1:
+            raise CdpError("CDP returned an invalid HTTP response.")
+        try:
+            body_length = int(content_lengths[0], 10)
+        except ValueError as error:
+            raise CdpError("CDP returned an invalid HTTP response.") from error
+        if body_length < 0:
+            raise CdpError("CDP returned an invalid HTTP response.")
+        if body_length > MAX_HTTP_BYTES:
+            raise CdpError("CDP target list exceeded the size limit.")
+        body_buffer = bytearray(body_prefix)
+        while len(body_buffer) < body_length:
+            _set_socket_deadline(sock, request_deadline, "CDP discovery timed out.")
+            try:
+                chunk = sock.recv(min(64 * 1024, body_length - len(body_buffer)))
+            except (OSError, TimeoutError) as error:
+                raise CdpError("CDP discovery timed out.") from error
+            if not chunk:
+                raise CdpError("CDP closed the HTTP connection.")
+            body_buffer.extend(chunk)
+        body = bytes(body_buffer[:body_length])
+    except CdpError:
+        raise
+    except (OSError, TimeoutError, UnicodeError, ValueError) as error:
         raise CdpError("Codex CDP endpoint is unavailable.") from error
     finally:
-        connection.close()
-    if len(body) > MAX_HTTP_BYTES:
-        raise CdpError("CDP target list exceeded the size limit.")
+        if sock is not None:
+            sock.close()
     try:
         return strict_json_loads(body.decode("utf-8"))
     except (ValueError, UnicodeDecodeError) as error:
         raise CdpError("CDP endpoint returned invalid JSON.") from error
 
 
-def _targets(port: int) -> list[dict[str, Any]]:
-    value = _http_json(port, "/json/list")
+def _targets(port: int, *, deadline: float | None = None) -> list[dict[str, Any]]:
+    value = _http_json(port, "/json/list", deadline=deadline)
     if not isinstance(value, list):
         raise CdpError("CDP target list was invalid.")
     targets: list[dict[str, Any]] = []
@@ -270,6 +442,14 @@ def _is_codex_shell_target(target: dict[str, Any]) -> bool:
     return isinstance(url, str) and (
         url == "app://-/index.html" or url.startswith("app://-/index.html?")
     )
+
+
+def _valid_cdp_identifier(value: Any) -> bool:
+    if not isinstance(value, str) or not 1 <= len(value) <= 128:
+        return False
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+    allowed = f"{alphabet}._:-"
+    return value[0] in alphabet and all(character in allowed for character in value)
 
 
 def _runtime_value(result: dict[str, Any]) -> Any:
@@ -370,14 +550,21 @@ CODEX_THEME_SOURCE = r"""
 
 def _read_codex_theme(port: int) -> dict[str, Any]:
     """Read the effective Codex palette from the selected app renderer."""
-    for target in _targets(port):
+    deadline = time.monotonic() + THEME_OPERATION_TIMEOUT_SECONDS
+    for target in _targets(port, deadline=deadline):
+        if time.monotonic() >= deadline:
+            break
         if not _is_codex_shell_target(target):
             continue
         websocket = target.get("webSocketDebuggerUrl")
         if not isinstance(websocket, str):
             continue
         try:
-            with WebSocketConnection(websocket) as connection:
+            with WebSocketConnection(
+                websocket,
+                expected_port=port,
+                deadline=deadline,
+            ) as connection:
                 value = _evaluate(connection, CODEX_THEME_SOURCE)
         except (CdpError, OSError):
             continue
@@ -407,7 +594,7 @@ def _task_state_source(session_id: str, candidate_turn_id: str | None = None) ->
   const callAppServer = (method, params) => new Promise((resolve, reject) => {{
     const requestId = "codex-trajectory-state-"
       + `${{Date.now()}}-${{Math.random().toString(36).slice(2)}}`;
-    const timeoutMs = CANDIDATE_TURN_ID ? 3000 : 8000;
+    const timeoutMs = 3000;
     const cleanup = () => {{
       clearTimeout(timeout);
       window.removeEventListener("message", onMessage);
@@ -447,7 +634,7 @@ def _task_state_source(session_id: str, candidate_turn_id: str | None = None) ->
   try {{
     const read = await callAppServer("thread/read", {{
       threadId: EXPECTED_SESSION_ID,
-      includeTurns: !CANDIDATE_TURN_ID,
+      includeTurns: false,
     }});
     if (read?.thread?.id !== EXPECTED_SESSION_ID) {{
       return {{ matched: true, reason: "thread-mismatch" }};
@@ -455,10 +642,7 @@ def _task_state_source(session_id: str, candidate_turn_id: str | None = None) ->
     if (read.thread.status?.type !== "active") {{
       return {{ matched: true, running: false, turnId: null }};
     }}
-    const turns = Array.isArray(read.thread.turns) ? read.thread.turns : [];
-    const activeTurn = CANDIDATE_TURN_ID || [...turns]
-      .reverse()
-      .find(turn => turn?.status === "inProgress")?.id;
+    const activeTurn = CANDIDATE_TURN_ID;
     return {{
       matched: true,
       running: Boolean(activeTurn),
@@ -477,16 +661,26 @@ def _read_active_task_state(
     candidate_turn_id: str | None = None,
 ) -> dict[str, Any]:
     """Return the active App Server turn state for the bound Codex task."""
-    source = _task_state_source(session_id, candidate_turn_id)
+    if candidate_turn_id is not None and not _valid_cdp_identifier(candidate_turn_id):
+        raise CdpError("The bound Codex turn candidate was invalid.")
+    bound_candidate = candidate_turn_id or f"codex-trajectory-probe-{secrets.token_hex(16)}"
+    source = _task_state_source(session_id, bound_candidate)
+    deadline = time.monotonic() + TASK_STATE_OPERATION_TIMEOUT_SECONDS
     matched_reason: str | None = None
-    for target in _targets(port):
+    for target in _targets(port, deadline=deadline):
+        if time.monotonic() >= deadline:
+            break
         if not _is_codex_shell_target(target):
             continue
         websocket = target.get("webSocketDebuggerUrl")
         if not isinstance(websocket, str):
             continue
         try:
-            with WebSocketConnection(websocket) as connection:
+            with WebSocketConnection(
+                websocket,
+                expected_port=port,
+                deadline=deadline,
+            ) as connection:
                 value = _evaluate(
                     connection,
                     source,
@@ -537,7 +731,7 @@ def _stop_request_source(request: dict[str, Any]) -> str:
   }}
   const callAppServer = (method, params) => new Promise((resolve, reject) => {{
     const requestId = `codex-trajectory-${{Date.now()}}-${{Math.random().toString(36).slice(2)}}`;
-    const timeoutMs = 8000;
+    const timeoutMs = {STOP_APP_SERVER_RPC_TIMEOUT_MS};
     const cleanup = () => {{
       clearTimeout(timeout);
       window.removeEventListener("message", onMessage);
@@ -591,6 +785,7 @@ def _stop_request_source(request: dict[str, Any]) -> str:
       stage === "interrupt"
       && (
         detail.includes("no active turn")
+        || detail.includes("expected active turn id")
         || detail.includes("expected turn mismatch")
         || detail.includes("turn not found")
         || detail.includes("already completed")
@@ -599,6 +794,17 @@ def _stop_request_source(request: dict[str, Any]) -> str:
     if (stage === "goal-read") return "goal-state-error";
     if (stage === "goal-set") return "goal-pause-error";
     return "app-server-error";
+  }};
+  const activeTurnIdFromError = error => {{
+    const message = String(error?.message || error || "");
+    const match = message.match(/ but found `?([^`]+)`?$/i);
+    const value = match?.[1];
+    return typeof value === "string"
+      && value.length >= 1
+      && value.length <= 128
+      && /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(value)
+      ? value
+      : null;
   }};
   const pauseActiveGoal = async () => {{
     let response;
@@ -657,6 +863,15 @@ def _stop_request_source(request: dict[str, Any]) -> str:
     return {{ matched: true, sent: true, goalPaused: goal.paused }};
   }} catch (error) {{
     const interruptReason = failureReason(error, "interrupt");
+    const activeTurnId = activeTurnIdFromError(error);
+    if (interruptReason === "task-idle" && activeTurnId) {{
+      return {{
+        matched: true,
+        sent: false,
+        reason: "turn-stale",
+        activeTurnId,
+      }};
+    }}
     try {{
       const after = await readTaskStatus();
       if (after.reason === "thread-mismatch") {{
@@ -679,32 +894,61 @@ def _stop_request_source(request: dict[str, Any]) -> str:
 
 def _request_active_task_stop(port: int, request: dict[str, Any]) -> dict[str, Any]:
     """Pause any active Goal, then interrupt the bound Codex turn over loopback CDP."""
-    source = _stop_request_source(request)
+    deadline = time.monotonic() + STOP_OPERATION_TIMEOUT_SECONDS
+    active_request = request
+    rebound = False
     matched_reason: str | None = None
-    for target in _targets(port):
+    for target in _targets(port, deadline=deadline):
+        if time.monotonic() >= deadline:
+            break
         if not _is_codex_shell_target(target):
             continue
         websocket = target.get("webSocketDebuggerUrl")
         if not isinstance(websocket, str):
             continue
         try:
-            with WebSocketConnection(websocket) as connection:
-                value = _evaluate(
-                    connection,
-                    source,
-                    user_gesture=True,
-                    timeout_seconds=STOP_APP_SERVER_COMMAND_TIMEOUT_SECONDS,
-                )
+            connection = WebSocketConnection(
+                websocket,
+                expected_port=port,
+                deadline=deadline,
+            )
         except (CdpError, OSError):
             continue
-        if not isinstance(value, dict):
-            continue
-        if value.get("sent") is True:
-            return {"sent": True}
-        if value.get("matched") is True and matched_reason is None:
-            # Do not let one unusable auxiliary renderer mask a healthy Codex
-            # shell target later in the CDP target list.
-            matched_reason = str(value.get("reason") or "stop-unavailable")
+        try:
+            while time.monotonic() < deadline:
+                try:
+                    value = _evaluate(
+                        connection,
+                        _stop_request_source(active_request),
+                        user_gesture=True,
+                        timeout_seconds=STOP_APP_SERVER_COMMAND_TIMEOUT_SECONDS,
+                    )
+                except (CdpError, OSError):
+                    break
+                if not isinstance(value, dict):
+                    break
+                if value.get("sent") is True:
+                    return {"sent": True}
+                reason = str(value.get("reason") or "stop-unavailable")
+                next_turn_id = value.get("activeTurnId")
+                if (
+                    reason == "turn-stale"
+                    and not rebound
+                    and _valid_cdp_identifier(next_turn_id)
+                    and next_turn_id != active_request["turnId"]
+                ):
+                    active_request = {**active_request, "turnId": next_turn_id}
+                    rebound = True
+                    continue
+                if value.get("matched") is True and (
+                    matched_reason is None or reason == "task-idle"
+                ):
+                    # An idle result from a healthy renderer is more actionable
+                    # than an earlier auxiliary-renderer bridge error.
+                    matched_reason = reason
+                break
+        finally:
+            connection.close()
     if matched_reason == "task-idle":
         return {"sent": False, "idle": True}
     errors = {
@@ -722,9 +966,7 @@ def _request_active_task_stop(port: int, request: dict[str, Any]) -> dict[str, A
             "error": errors.get(matched_reason, "The Codex stop bridge is unavailable."),
         }
         if matched_reason == "turn-stale":
-            # The loopback wrapper clears this rejected candidate and performs
-            # one full App Server bootstrap on its next state read. Routine
-            # polling remains history-free while stale turns recover promptly.
+            # No safe replacement turn id was present in the App Server error.
             result["stale"] = True
         return result
     return {"sent": False, "error": "Could not reach the bound Codex task."}
@@ -732,6 +974,11 @@ def _request_active_task_stop(port: int, request: dict[str, Any]) -> dict[str, A
 
 def _browser_stop(request: dict[str, Any]) -> dict[str, Any]:
     settings = read_settings()
+    if settings["enabled"] is not True:
+        return {
+            "sent": False,
+            "error": "Direct stop requires the experimental loopback CDP integration.",
+        }
     return _request_active_task_stop(int(settings["port"]), request)
 
 
@@ -757,23 +1004,7 @@ def request_task_stop(request: dict[str, Any]) -> dict[str, Any]:
             return {"sent": False, "error": "Could not identify the active Codex turn."}
         request = {**request, "turnId": candidate}
     try:
-        result = _request_active_task_stop(port, request)
-    except (CdpError, OSError):
-        return {"sent": False, "error": "Could not reach the bound Codex task."}
-    if result.get("stale") is not True:
-        return result
-    try:
-        state = _read_active_task_state(port, request["sessionId"])
-    except (CdpError, OSError):
-        return result
-    if state.get("running") is not True:
-        return {"sent": False, "idle": True}
-    turn_id = state.get("turnId")
-    if not isinstance(turn_id, str) or turn_id == request["turnId"]:
-        return result
-    rebound = {**request, "turnId": turn_id}
-    try:
-        return _request_active_task_stop(port, rebound)
+        return _request_active_task_stop(port, request)
     except (CdpError, OSError):
         return {"sent": False, "error": "Could not reach the bound Codex task."}
 
@@ -782,26 +1013,39 @@ def _inject_cycle(
     port: int,
     enabled: bool,
     viewer_url: str | None = None,
+    host_identity: HostIdentity | None = None,
 ) -> tuple[bool, bool]:
+    """Inject only after binding the token-bearing connection to the Codex host."""
     connected = False
     injected = False
-    if enabled and not viewer_url:
-        raise ValueError("viewer_url is required while the CDP shortcut is enabled.")
+    if enabled and (not viewer_url or host_identity is None):
+        raise ValueError("An authenticated host and viewer URL are required for the shortcut.")
     source = injection_source(viewer_url or "") if enabled else REMOVE_SOURCE
-    target_items = _targets(port)
+    deadline = time.monotonic() + INJECT_OPERATION_TIMEOUT_SECONDS
+    target_items = sorted(
+        _targets(port, deadline=deadline),
+        key=lambda target: 0 if _is_codex_shell_target(target) else 1,
+    )
     for target in target_items:
+        if time.monotonic() >= deadline:
+            break
         websocket = target.get("webSocketDebuggerUrl")
         if not isinstance(websocket, str):
             continue
-        try:
-            connection = WebSocketConnection(websocket)
-        except (CdpError, OSError):
-            continue
         codex_shell = _is_codex_shell_target(target)
         target_source = source if not enabled or codex_shell else REMOVE_SOURCE
-        if codex_shell:
-            connected = True
         try:
+            connection = WebSocketConnection(
+                websocket,
+                expected_port=port,
+                deadline=deadline,
+                host_identity=host_identity if enabled and codex_shell else None,
+            )
+        except (CdpError, OSError):
+            continue
+        try:
+            if codex_shell:
+                connected = True
             value = _evaluate(connection, target_source)
             if enabled and codex_shell:
                 injected = injected or (
@@ -840,12 +1084,14 @@ def _acquire_process_lock(path: Path) -> Any:
             or opened.st_nlink != 1
         ):
             raise OSError("Refusing an unsafe CDP watcher lock file.")
-        with suppress(OSError, AttributeError):
-            os.fchmod(descriptor, 0o600)
+        fchmod: Any = vars(os).get("fchmod")
+        if callable(fchmod):
+            with suppress(OSError):
+                fchmod(descriptor, 0o600)
         stream = os.fdopen(descriptor, "r+b")
         descriptor = -1
         if os.name == "nt":
-            import msvcrt
+            msvcrt: Any = importlib.import_module("msvcrt")
 
             stream.seek(0)
             if stream.read(1) == b"":
@@ -853,13 +1099,9 @@ def _acquire_process_lock(path: Path) -> Any:
                 stream.write(b"0")
                 stream.flush()
             stream.seek(0)
-            msvcrt.locking(  # type: ignore[attr-defined]
-                stream.fileno(),
-                msvcrt.LK_NBLCK,  # type: ignore[attr-defined]
-                1,
-            )
+            msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
         else:
-            import fcntl
+            fcntl: Any = importlib.import_module("fcntl")
 
             fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
@@ -875,7 +1117,7 @@ def _acquire_process_lock(path: Path) -> Any:
     return stream
 
 
-def watch() -> int:
+def watch(host_identity: HostIdentity | None = None) -> int:
     """Apply the configured injection until the user disables it."""
     lock = _acquire_process_lock(lock_path())
     if lock is None:
@@ -888,6 +1130,8 @@ def watch() -> int:
             settings = read_settings()
             enabled = settings["enabled"] is True
             port = int(settings["port"])
+            if host_identity is not None and not host_identity_alive(host_identity):
+                return 0
             connected = False
             injected = False
             try:
@@ -895,7 +1139,7 @@ def watch() -> int:
                     with suppress(CdpError, OSError, ValueError):
                         _inject_cycle(applied_port, False)
                     applied_port = None
-                if enabled and viewer_server is None:
+                if enabled and host_identity is not None and viewer_server is None:
                     viewer_server = BrowserViewServer(
                         _browser_tool,
                         _browser_stop,
@@ -904,7 +1148,12 @@ def watch() -> int:
                     )
                     viewer_server.start()
                 viewer_url = viewer_server.url if viewer_server is not None else None
-                connected, injected = _inject_cycle(port, enabled, viewer_url)
+                connected, injected = _inject_cycle(
+                    port,
+                    enabled,
+                    viewer_url,
+                    host_identity,
+                )
                 applied_port = port if enabled else None
                 last_error = None
             except (CdpError, OSError, ValueError) as error:
@@ -936,6 +1185,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--watch", action="store_true", help="Watch settings and keep injection live."
     )
+    parser.add_argument("--host-identity", help=argparse.SUPPRESS)
     return parser.parse_args(argv)
 
 
@@ -943,7 +1193,13 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
     if not args.watch:
         raise SystemExit("Use --watch; the trajectory page manages this process.")
-    return watch()
+    try:
+        host_identity = (
+            HostIdentity.decode(args.host_identity) if args.host_identity is not None else None
+        )
+    except ValueError as error:
+        raise SystemExit("Invalid Codex host identity.") from error
+    return watch(host_identity)
 
 
 if __name__ == "__main__":

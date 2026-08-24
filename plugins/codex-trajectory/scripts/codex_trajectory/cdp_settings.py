@@ -2,21 +2,28 @@
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import http.client
+import importlib
 import json
 import os
 import stat
 import subprocess
 import sys
+import threading
 import time
-from contextlib import suppress
+from collections.abc import Iterator
+from contextlib import contextmanager, suppress
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
+from .cdp_peer import browser_shortcut_supported, discover_host_identity
 from .json_support import strict_json_loads
 
 SETTINGS_VERSION = 1
+BROWSER_SHORTCUT_AVAILABLE = browser_shortcut_supported()
+DAEMON_RUNTIME_REVISION = 3
 DEFAULT_CDP_PORT = 9222
 MIN_CDP_PORT = 1024
 MAX_CDP_PORT = 65535
@@ -25,6 +32,16 @@ MAX_STATE_FILE_BYTES = 64 * 1024
 MAX_LOCK_FILE_BYTES = 64
 STATUS_FRESH_SECONDS = 5.0
 DAEMON_RESTART_TIMEOUT_SECONDS = 5.0
+DAEMON_START_COOLDOWN_SECONDS = 5.0
+DAEMON_CONTROL_LOCK_TIMEOUT_SECONDS = 10.0
+DAEMON_CONTROL_LOCK_POLL_SECONDS = 0.05
+PUBLIC_DAEMON_ERROR = "CDP integration is temporarily unavailable."
+
+_DAEMON_CONTROL_LOCK = threading.Lock()
+_CONTROL_LOCK_BUSY_ERRNOS = {errno.EACCES, errno.EAGAIN, errno.EDEADLK}
+_last_daemon_start_key: tuple[str, bool, int, str] | None = None
+_last_daemon_start_at = float("-inf")
+_last_daemon_start_failed = False
 
 
 def _codex_home() -> Path:
@@ -51,21 +68,31 @@ def lock_path() -> Path:
     return _state_dir() / "cdp-toolbar.lock"
 
 
+def _control_lock_path() -> Path:
+    """Return the private lock that serializes settings and watcher replacement."""
+    return _state_dir() / "cdp-toolbar-control.lock"
+
+
 def _watcher_executable() -> Path:
-    """Choose an interpreter that cannot create a Windows console window."""
+    """Keep the active environment while suppressing a Windows console window."""
     executable = Path(sys.executable)
     if os.name != "nt":
         return executable
-    base_executable = Path(str(getattr(sys, "_base_executable", executable)))
-    windowless = base_executable.with_name("pythonw.exe")
-    return windowless if windowless.is_file() else base_executable
+    return _windowless_watcher_executable(executable)
+
+
+def _windowless_watcher_executable(executable: Path) -> Path:
+    """Prefer pythonw beside the active interpreter without escaping its environment."""
+    windowless = executable.with_name("pythonw.exe")
+    return windowless if windowless.is_file() else executable
 
 
 def daemon_runtime_id() -> str:
     """Identify the installed watcher runtime without exposing its local path."""
-    identity = f"{_watcher_executable().resolve()}\0{_daemon_script().resolve()}".encode(
-        "utf-8", errors="surrogateescape"
-    )
+    identity = (
+        f"{DAEMON_RUNTIME_REVISION}\0"
+        f"{_watcher_executable().resolve()}\0{_daemon_script().resolve()}"
+    ).encode("utf-8", errors="surrogateescape")
     return hashlib.sha256(identity).hexdigest()
 
 
@@ -183,9 +210,10 @@ def write_daemon_status(value: dict[str, Any]) -> None:
     allowed = {
         "pid": value.get("pid"),
         "connected": value.get("connected") is True,
-        "injected": value.get("injected") is True,
-        "viewerServing": value.get("viewerServing") is True,
-        "lastError": str(value.get("lastError") or "")[:500] or None,
+        "injected": BROWSER_SHORTCUT_AVAILABLE and value.get("injected") is True,
+        "viewerServing": (BROWSER_SHORTCUT_AVAILABLE and value.get("viewerServing") is True),
+        # Watcher exceptions can contain private paths or peer-controlled CDP text.
+        "lastError": _public_daemon_error(value.get("lastError")),
         "runtimeId": (
             str(value.get("runtimeId"))
             if isinstance(value.get("runtimeId"), str) and len(value["runtimeId"]) <= 128
@@ -196,14 +224,37 @@ def write_daemon_status(value: dict[str, Any]) -> None:
     _atomic_write(status_path(), allowed)
 
 
+def _public_daemon_error(value: Any) -> str | None:
+    """Expose only a stable status category, never exception text."""
+    return PUBLIC_DAEMON_ERROR if value else None
+
+
 def _pid_running(value: Any) -> bool:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         return False
+    if os.name == "nt":
+        return _pid_running_windows(value)
     try:
         os.kill(value, 0)
     except (OSError, OverflowError, ValueError):
         return False
     return True
+
+
+def _pid_running_windows(pid: int) -> bool:
+    """Check a Windows process without sending it a console or control signal."""
+    try:
+        winapi: Any = importlib.import_module("_winapi")
+        handle = winapi.OpenProcess(winapi.SYNCHRONIZE, False, pid)
+    except (ImportError, OSError, OverflowError, ValueError):
+        return False
+    try:
+        return bool(winapi.WaitForSingleObject(handle, 0) == winapi.WAIT_TIMEOUT)
+    except (OSError, OverflowError, ValueError):
+        return False
+    finally:
+        with suppress(OSError):
+            winapi.CloseHandle(handle)
 
 
 def _daemon_status() -> dict[str, Any]:
@@ -223,7 +274,7 @@ def _daemon_status() -> dict[str, Any]:
         "connected": running and value.get("connected") is True,
         "injected": running and value.get("injected") is True,
         "viewerServing": running and value.get("viewerServing") is True,
-        "lastError": str(value.get("lastError") or "")[:500] or None if fresh else None,
+        "lastError": _public_daemon_error(value.get("lastError")) if fresh else None,
     }
 
 
@@ -258,8 +309,9 @@ def public_status() -> dict[str, Any]:
     return {
         "schemaVersion": SETTINGS_VERSION,
         "enabled": settings["enabled"],
+        "browserShortcutAvailable": BROWSER_SHORTCUT_AVAILABLE,
         "port": settings["port"],
-        "cdpAvailable": _probe_cdp(settings["port"]),
+        "cdpAvailable": settings["enabled"] is True and _probe_cdp(settings["port"]),
         "daemonRunning": runtime["daemonRunning"],
         "connected": runtime["connected"],
         "injected": runtime["injected"],
@@ -284,6 +336,106 @@ def _lock_owner_pid() -> int | None:
     return value if value > 0 else None
 
 
+def _open_control_lock() -> BinaryIO:
+    """Open the private single-link regular file used for supervisor locking."""
+    path = _control_lock_path()
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if path.parent.is_symlink():
+        raise OSError("Refusing an unsafe CDP supervisor lock directory.")
+    flags = os.O_RDWR | os.O_CREAT
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    if hasattr(os, "O_NONBLOCK"):
+        flags |= os.O_NONBLOCK
+    descriptor = os.open(path, flags, 0o600)
+    stream: BinaryIO | None = None
+    try:
+        opened = os.fstat(descriptor)
+        linked = os.lstat(path)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or stat.S_ISLNK(linked.st_mode)
+            or opened.st_dev != linked.st_dev
+            or opened.st_ino != linked.st_ino
+            or opened.st_nlink != 1
+        ):
+            raise OSError("Refusing an unsafe CDP supervisor lock file.")
+        fchmod: Any = vars(os).get("fchmod")
+        if callable(fchmod):
+            with suppress(OSError):
+                fchmod(descriptor, 0o600)
+        stream = os.fdopen(descriptor, "r+b")
+        descriptor = -1
+        if os.name == "nt" and opened.st_size == 0:
+            stream.seek(0)
+            try:
+                stream.write(b"0")
+                stream.flush()
+            except OSError:
+                # A simultaneous creator may have initialized and locked the
+                # byte between our fstat and write. The lock retry below will
+                # wait for it as long as the byte now exists.
+                if os.fstat(stream.fileno()).st_size == 0:
+                    raise
+        return stream
+    except BaseException:
+        if stream is not None:
+            stream.close()
+        raise
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+def _try_acquire_control_lock(stream: BinaryIO) -> None:
+    stream.seek(0)
+    if os.name == "nt":
+        msvcrt: Any = importlib.import_module("msvcrt")
+        msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+        return
+
+    fcntl: Any = importlib.import_module("fcntl")
+    fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+@contextmanager
+def _cross_process_control_lock() -> Iterator[None]:
+    stream = _open_control_lock()
+    deadline = time.monotonic() + DAEMON_CONTROL_LOCK_TIMEOUT_SECONDS
+    try:
+        while True:
+            try:
+                _try_acquire_control_lock(stream)
+                break
+            except OSError as error:
+                if error.errno not in _CONTROL_LOCK_BUSY_ERRNOS:
+                    raise
+                if time.monotonic() >= deadline:
+                    raise OSError("Timed out waiting for the CDP supervisor lock.") from error
+                time.sleep(DAEMON_CONTROL_LOCK_POLL_SECONDS)
+        yield
+    finally:
+        stream.close()
+
+
+@contextmanager
+def _daemon_control() -> Iterator[None]:
+    """Serialize daemon settings transitions within and between MCP processes."""
+    with _DAEMON_CONTROL_LOCK, _cross_process_control_lock():
+        yield
+
+
+def _settings_revision() -> tuple[int, int, int, int] | None:
+    """Return a revision that changes when the atomic settings file is replaced."""
+    try:
+        value = settings_path().lstat()
+    except OSError:
+        return None
+    if not stat.S_ISREG(value.st_mode) or value.st_nlink != 1:
+        return None
+    return (value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns)
+
+
 def _stop_outdated_daemon(runtime: dict[str, Any]) -> None:
     pid = runtime.get("pid")
     if (
@@ -297,8 +449,10 @@ def _stop_outdated_daemon(runtime: dict[str, Any]) -> None:
     settings = read_settings()
     enabled = settings["enabled"] is True
     port = int(settings["port"])
+    temporary_revision: tuple[int, int, int, int] | None = None
     if enabled:
         write_settings(False, port)
+        temporary_revision = _settings_revision()
     deadline = time.monotonic() + DAEMON_RESTART_TIMEOUT_SECONDS
     try:
         while _pid_running(pid) and time.monotonic() < deadline:
@@ -306,7 +460,14 @@ def _stop_outdated_daemon(runtime: dict[str, Any]) -> None:
         if _pid_running(pid):
             raise OSError("The outdated CDP watcher did not stop safely.")
     finally:
-        if enabled:
+        current = read_settings()
+        if (
+            enabled
+            and temporary_revision is not None
+            and _settings_revision() == temporary_revision
+            and current["enabled"] is False
+            and current["port"] == port
+        ):
             write_settings(True, port)
 
 
@@ -345,33 +506,88 @@ def _start_watcher_process(command: list[str], script: Path) -> None:
         subprocess.Popen(command, creationflags=detached_flags, **options)
 
 
-def start_daemon() -> None:
-    """Start the detached watcher; its cross-process lock removes duplicate instances."""
+def _daemon_start_key() -> tuple[str, bool, int, str]:
+    settings = read_settings()
+    return (
+        str(settings_path()),
+        settings["enabled"] is True,
+        int(settings["port"]),
+        daemon_runtime_id(),
+    )
+
+
+def _start_daemon_locked(*, cooldown: bool) -> None:
+    """Start the detached watcher while the in-process supervisor lock is held."""
+    global _last_daemon_start_at, _last_daemon_start_failed, _last_daemon_start_key
+
     runtime = _daemon_status()
     if runtime["daemonRunning"]:
         if runtime.get("runtimeId") == daemon_runtime_id():
+            _last_daemon_start_failed = False
             return
         _stop_outdated_daemon(runtime)
+    key = _daemon_start_key()
+    now = time.monotonic()
+    if (
+        cooldown
+        and key == _last_daemon_start_key
+        and 0 <= now - _last_daemon_start_at < DAEMON_START_COOLDOWN_SECONDS
+    ):
+        if _last_daemon_start_failed:
+            raise OSError("The previous CDP watcher start attempt did not succeed.")
+        return
+    _last_daemon_start_key = key
+    _last_daemon_start_at = now
+    _last_daemon_start_failed = False
     script = _daemon_script()
     if not script.is_file():
+        _last_daemon_start_failed = True
         raise OSError("CDP injector script is unavailable.")
-    _start_watcher_process([str(_watcher_executable()), str(script), "--watch"], script)
+    command = [str(_watcher_executable()), str(script)]
+    host_identity = discover_host_identity()
+    if host_identity is not None:
+        command.extend(["--host-identity", host_identity.encode()])
+    command.append("--watch")
+    try:
+        _start_watcher_process(command, script)
+    except OSError:
+        _last_daemon_start_failed = True
+        raise
+
+
+def start_daemon() -> None:
+    """Start the detached watcher; its cross-process lock removes duplicate instances."""
+    with _daemon_control():
+        _start_daemon_locked(cooldown=False)
 
 
 def reconcile_daemon() -> None:
     """Honor the persisted opt-in and replace a missing or outdated watcher."""
-    if read_settings()["enabled"] is True:
-        start_daemon()
+    with _daemon_control():
+        if read_settings()["enabled"] is True:
+            _start_daemon_locked(cooldown=True)
+
+
+def recover_daemon(expected_port: int) -> dict[str, Any]:
+    """Restart a missing opted-in watcher without overwriting a newer user setting."""
+    validated_port = _validate_port(expected_port)
+    with _daemon_control():
+        settings = read_settings()
+        if settings["enabled"] is True and settings["port"] == validated_port:
+            _start_daemon_locked(cooldown=True)
+    return public_status()
 
 
 def configure(enabled: bool, port: int) -> dict[str, Any]:
     """Persist the choice and start a watcher that applies or removes the injection."""
-    write_settings(enabled, port)
-    start_daemon()
+    with _daemon_control():
+        write_settings(enabled, port)
+        _start_daemon_locked(cooldown=False)
     return public_status()
 
 
 __all__ = [
+    "BROWSER_SHORTCUT_AVAILABLE",
     "DEFAULT_CDP_PORT",
     "MAX_CDP_PORT",
     "MIN_CDP_PORT",
@@ -381,6 +597,7 @@ __all__ = [
     "public_status",
     "read_settings",
     "reconcile_daemon",
+    "recover_daemon",
     "settings_path",
     "status_path",
     "write_daemon_status",

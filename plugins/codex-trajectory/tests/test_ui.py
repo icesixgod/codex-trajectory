@@ -43,6 +43,15 @@ def page() -> Iterator[Page]:
               const define = (target, name, descriptor) => {
                 try { Object.defineProperty(target, name, descriptor); } catch {}
               };
+              window.__trajectoryCanvasTexts = [];
+              const fillText = CanvasRenderingContext2D.prototype.fillText;
+              define(CanvasRenderingContext2D.prototype, "fillText", {
+                configurable: true,
+                value(text, ...args) {
+                  window.__trajectoryCanvasTexts.push({text: String(text), font: this.font});
+                  return fillText.call(this, text, ...args);
+                },
+              });
               define(Document.prototype, "pictureInPictureEnabled", {
                 configurable: true,
                 get: () => true,
@@ -122,6 +131,22 @@ def test_cdp_injection_places_safe_entry_after_full_access(page: Page, harness_u
     )
     expect(page.locator("#codex-trajectory-cdp-drawer")).to_have_count(0)
 
+    page.locator("body").evaluate(
+        """body => {
+          const marker = document.createElement('div');
+          marker.id = 'hidden-stale-session';
+          marker.hidden = true;
+          marker.dataset.appActionSidebarThreadActive = 'true';
+          marker.dataset.appActionSidebarThreadId = 'local:session-stale';
+          body.append(marker);
+        }"""
+    )
+    page.evaluate("window.__codexTrajectoryToolbarV1.ensure()")
+    expect(link).to_have_attribute(
+        "href",
+        "http://127.0.0.1:43123/private-token/?sessionId=session-alpha&lang=en-US",
+    )
+
     page.locator("textarea").fill("draft")
     link.evaluate(
         "element => element.addEventListener('click', event => event.preventDefault(), "
@@ -146,6 +171,26 @@ def test_cdp_injection_places_safe_entry_after_full_access(page: Page, harness_u
         "http://127.0.0.1:43123/private-token/"
         "?sessionId=01a01e91-c881-7641-bc8b-acb1173ba846&lang=en-US",
     )
+    expect(link).to_have_attribute("aria-disabled", "false")
+
+    page.locator("body").evaluate(
+        """body => {
+          const marker = document.createElement('div');
+          marker.id = 'conflicting-visible-session';
+          marker.dataset.aboveComposerConversationId =
+            '01a01e91-c881-7641-bc8b-acb1173ba847';
+          body.append(marker);
+        }"""
+    )
+    page.evaluate("window.__codexTrajectoryToolbarV1.ensure()")
+    expect(link).to_have_attribute("aria-disabled", "true")
+    expect(link).to_have_attribute(
+        "href",
+        "http://127.0.0.1:43123/private-token/?lang=en-US",
+    )
+
+    page.locator("#conflicting-visible-session").evaluate("element => element.remove()")
+    page.evaluate("window.__codexTrajectoryToolbarV1.ensure()")
     expect(link).to_have_attribute("aria-disabled", "false")
 
     page.locator("[data-above-composer-conversation-id]").evaluate("element => element.remove()")
@@ -187,6 +232,7 @@ def test_loopback_browser_view_renders_the_full_trajectory_ui(page: Page) -> Non
                     "enabled": True,
                     "port": 9222,
                     "cdpAvailable": True,
+                    "browserShortcutAvailable": True,
                     "daemonRunning": True,
                     "connected": True,
                     "injected": True,
@@ -197,7 +243,7 @@ def test_loopback_browser_view_renders_the_full_trajectory_ui(page: Page) -> Non
         if name == "get_codex_trajectory_update":
             return {
                 "structuredContent": {
-                    "schemaVersion": 1,
+                    "schemaVersion": 2,
                     "unchanged": True,
                     "revision": "1" * 64,
                 }
@@ -361,7 +407,7 @@ def test_loopback_auto_stop_interrupts_at_exact_limit_without_task_state_poll(
         if name == "get_codex_trajectory_update":
             return {
                 "structuredContent": {
-                    "schemaVersion": 1,
+                    "schemaVersion": 2,
                     "unchanged": True,
                     "revision": "1" * 64,
                 }
@@ -435,7 +481,7 @@ def test_loopback_stale_turn_is_rebound_before_stop_retry(page: Page) -> None:
         if name == "get_codex_trajectory_update":
             return {
                 "structuredContent": {
-                    "schemaVersion": 1,
+                    "schemaVersion": 2,
                     "unchanged": True,
                     "revision": "1" * 64,
                 }
@@ -520,7 +566,7 @@ def test_loopback_auto_stop_does_not_repeat_for_goal_continuation(page: Page) ->
         if name == "get_codex_trajectory_update":
             return {
                 "structuredContent": {
-                    "schemaVersion": 1,
+                    "schemaVersion": 2,
                     "unchanged": True,
                     "revision": "1" * 64,
                 }
@@ -603,14 +649,17 @@ def test_viewer_can_enable_and_disable_cdp_toolbar_setting(page: Page, harness_u
     toggle = frame.locator("#cdpToolbarEnabled")
     expect(toggle).not_to_be_checked()
     expect(frame.locator("#cdpToolbarStatus")).to_have_text("Off; no debugging-port connection")
+    expect(frame.locator(".integration-title")).to_contain_text("Unattended direct stop")
+    expect(frame.locator(".integration-switch")).to_contain_text("Enable direct stop")
 
     toggle.check()
     page.wait_for_function("window.__trajectoryCdpToolbar.enabled === true")
     expect(toggle).to_be_checked()
     expect(frame.locator("#cdpToolbarStatus")).to_have_text(
-        "Ready; opens in the Codex in-app Browser without a message"
+        "Direct stop is ready; the safe Browser shortcut is unavailable on this platform"
     )
-    assert page.evaluate("window.__trajectoryCdpToolbar.injected") is True
+    assert page.evaluate("window.__trajectoryCdpToolbar.browserShortcutAvailable") is False
+    assert page.evaluate("window.__trajectoryCdpToolbar.injected") is False
 
     frame.locator("#cdpToolbarPort").fill("9333")
     frame.locator("#cdpToolbarPort").press("Tab")
@@ -638,6 +687,125 @@ def test_recent_sessions_load_after_the_initial_trajectory(page: Page, harness_u
     )
 
 
+def test_authenticated_browser_shortcut_keeps_compatibility(page: Page, harness_url: str) -> None:
+    page.goto(f"{harness_url}/en-browser-shortcut")
+    frame = viewer(page)
+    frame.get_by_text("Safe summary", exact=True).wait_for()
+    toggle = frame.locator("#cdpToolbarEnabled")
+
+    expect(frame.locator(".integration-title")).to_contain_text(
+        "Unattended stop and in-app Browser shortcut"
+    )
+    expect(frame.locator(".integration-switch")).to_contain_text(
+        "Enable direct stop and “View trajectory”"
+    )
+    toggle.check()
+    page.wait_for_function("window.__trajectoryCdpToolbar.enabled === true")
+    expect(frame.locator("#cdpToolbarStatus")).to_have_text(
+        "Ready; opens in the Codex in-app Browser without a message"
+    )
+    assert page.evaluate("window.__trajectoryCdpToolbar.browserShortcutAvailable") is True
+    assert page.evaluate("window.__trajectoryCdpToolbar.injected") is True
+
+
+def test_viewer_recovers_an_enabled_dead_cdp_watcher(page: Page, harness_url: str) -> None:
+    page.goto(f"{harness_url}/en-dead-watcher-browser")
+    frame = viewer(page)
+    frame.get_by_text("Safe summary", exact=True).wait_for()
+    status = frame.locator("#cdpToolbarStatus")
+
+    expect(status).to_have_text("Restarting the local watcher…")
+    expect(status).to_have_text(
+        "Ready; opens in the Codex in-app Browser without a message",
+        timeout=3_000,
+    )
+    recovery_calls = page.evaluate(
+        """() => window.__trajectoryCalls.filter((call, index) =>
+          window.__trajectoryToolNames[index] === "set_codex_toolbar_injection"
+          && call.reconcileOnly === true)"""
+    )
+    assert recovery_calls == [{"enabled": True, "port": 9222, "reconcileOnly": True}]
+    assert page.evaluate("window.__trajectoryCdpToolbar.daemonRunning") is True
+
+
+def test_direct_stop_fallback_does_not_reconcile_or_poll_a_dead_watcher(
+    page: Page, harness_url: str
+) -> None:
+    page.goto(f"{harness_url}/en-dead-watcher")
+    frame = viewer(page)
+    frame.get_by_text("Safe summary", exact=True).wait_for()
+    status = frame.locator("#cdpToolbarStatus")
+
+    expect(status).to_have_text(
+        "Direct stop is ready; the safe Browser shortcut is unavailable on this platform"
+    )
+    page.wait_for_timeout(1_800)
+    recovery_calls = page.evaluate(
+        """() => window.__trajectoryCalls.filter((call, index) =>
+          window.__trajectoryToolNames[index] === "set_codex_toolbar_injection"
+          && call.reconcileOnly === true)"""
+    )
+    status_reads = page.evaluate(
+        "window.__trajectoryToolNames.filter(name => "
+        "name === 'get_codex_toolbar_injection_status').length"
+    )
+    assert recovery_calls == []
+    assert status_reads == 1
+    expect(status).not_to_contain_text("Syncing")
+    expect(status).not_to_contain_text("failed")
+
+
+def test_viewer_retries_an_initial_cdp_status_failure(page: Page, harness_url: str) -> None:
+    page.goto(f"{harness_url}/en-cdp-status-retry")
+    frame = viewer(page)
+    frame.get_by_text("Safe summary", exact=True).wait_for()
+    status = frame.locator("#cdpToolbarStatus")
+
+    page.wait_for_function(
+        "window.__trajectoryToolNames.filter(name => "
+        "name === 'get_codex_toolbar_injection_status').length >= 1"
+    )
+    expect(status).not_to_have_text("Off; no debugging-port connection")
+    expect(status).to_have_text(
+        "Direct stop is ready; the safe Browser shortcut is unavailable on this platform",
+        timeout=4_000,
+    )
+    status_reads = page.evaluate(
+        "window.__trajectoryToolNames.filter(name => "
+        "name === 'get_codex_toolbar_injection_status').length"
+    )
+    assert status_reads >= 2
+    page.wait_for_timeout(1_000)
+    settled_status_reads = page.evaluate(
+        "window.__trajectoryToolNames.filter(name => "
+        "name === 'get_codex_toolbar_injection_status').length"
+    )
+    assert settled_status_reads == status_reads
+
+
+def test_stale_cdp_status_read_does_not_overwrite_a_disable(page: Page, harness_url: str) -> None:
+    page.goto(f"{harness_url}/en-cdp-status-race")
+    frame = viewer(page)
+    frame.get_by_text("Safe summary", exact=True).wait_for()
+    status = frame.locator("#cdpToolbarStatus")
+    toggle = frame.locator("#cdpToolbarEnabled")
+    expect(status).to_have_text("CDP connected; locating Full access")
+    expect(toggle).to_be_checked()
+
+    page.evaluate("window.__trajectoryCdpStatusDelayMs = 800")
+    page.wait_for_function(
+        "window.__trajectoryToolNames.filter(name => "
+        "name === 'get_codex_toolbar_injection_status').length >= 2",
+        timeout=4_000,
+    )
+    toggle.uncheck()
+    page.wait_for_function("window.__trajectoryCdpToolbar.enabled === false")
+    expect(toggle).not_to_be_checked()
+    page.wait_for_timeout(1_000)
+    expect(toggle).not_to_be_checked()
+    expect(status).to_have_text("Off; no debugging-port connection")
+
+
 def test_safe_summary_search_filter_keyboard_and_detail_inspector(
     page: Page, harness_url: str
 ) -> None:
@@ -650,6 +818,8 @@ def test_safe_summary_search_filter_keyboard_and_detail_inspector(
     assert turn_toggles.first.get_attribute("aria-expanded") == "false"
     assert turn_toggles.last.get_attribute("aria-expanded") == "true"
     assert "Model gpt-5" in turn_toggles.first.inner_text()
+    assert "Estimated cost ≈$0.000832" in turn_toggles.first.inner_text()
+    assert "Estimated cost ≈$0.000656" in turn_toggles.last.inner_text()
     turn_groups = frame.locator("tbody.turn-group")
     assert turn_groups.count() == 2
     assert turn_groups.first.locator(".turn-token-label").all_inner_texts() == [
@@ -693,18 +863,37 @@ def test_safe_summary_search_filter_keyboard_and_detail_inspector(
         token_panel.locator('[data-token-metric="cached"] .token-metric-value').inner_text()
         == "384"
     )
+    assert (
+        token_panel.locator('[data-token-metric="cost"] .token-metric-value').inner_text()
+        == "≈$0.001488"
+    )
+    assert (
+        frame.locator(".stat").filter(has_text="Estimated cost").locator(".stat-value").inner_text()
+        == "≈$0.001488"
+    )
     assert token_panel.locator(".token-metric[title]").count() == 0
     assert frame.locator(".stat[title]").count() == 0
     assert "cache is part of input and reasoning is part of output" in token_panel.inner_text()
     assert "Cache hit 75%" in token_panel.locator(".token-badges").inner_text()
+    assert "Pricing coverage Complete" in token_panel.locator(".token-badges").inner_text()
+    assert "not a Codex subscription bill" in token_panel.locator(".cost-note").inner_text()
     token_turns = token_panel.locator("details.token-turns")
+    token_table = token_panel.locator('[role="table"]')
+    expect(token_table).to_have_attribute("aria-labelledby", "tokenTurnsSummary")
+    assert token_table.locator('[role="rowgroup"]').count() == 2
+    assert token_table.locator('[role="columnheader"]').count() == 8
     assert token_turns.evaluate("element => element.open") is False
     assert token_panel.locator(".token-turn-row").count() == 0
     token_turns.locator("summary").click()
     token_panel.locator(".token-turn-row").first.wait_for()
     assert token_panel.locator(".token-turn-row").count() == 2
     assert token_panel.locator(".token-turn-row").first.is_visible()
-    assert token_panel.locator(".token-turn-row").first.locator(".token-cell").count() == 7
+    assert token_panel.locator(".token-turn-row").first.locator(".token-cell").count() == 8
+    assert token_panel.locator(".token-turn-row").first.get_by_role("cell").count() == 8
+    assert token_panel.locator('.token-turn-row [data-token-column="cost"]').all_inner_texts() == [
+        "≈$0.000832",
+        "≈$0.000656",
+    ]
     assert token_panel.locator(".token-requests").count() == 0
     assert (
         turn_groups.first.locator(".turn-row").evaluate(
@@ -787,6 +976,7 @@ def test_safe_summary_search_filter_keyboard_and_detail_inspector(
     assert "Input" not in detail_labels
     assert "Output" not in detail_labels
     assert "Metadata" not in detail_labels
+    assert "ESTIMATED COST\n≈$0.000656" in frame.locator("#inspector").inner_text()
 
     search = frame.locator("#search")
     search.fill("failure")
@@ -800,6 +990,40 @@ def test_safe_summary_search_filter_keyboard_and_detail_inspector(
     first.focus()
     first.press("Enter")
     assert frame.locator("#inspector h2").inner_text().startswith("#1")
+
+
+def test_partial_and_unavailable_cost_coverage_are_explicit(page: Page, harness_url: str) -> None:
+    page.goto(f"{harness_url}/en")
+    frame = viewer(page)
+    frame.get_by_text("Safe summary", exact=True).wait_for()
+
+    frame.locator("#sessionSelect").select_option("session-partial-cost")
+    frame.get_by_role("heading", name="Inspect mixed-model pricing").wait_for()
+    token_panel = frame.locator("#tokenDetails")
+    partial_badge = token_panel.locator(".token-badge.partial")
+    expect(partial_badge).to_have_text("Pricing coverage Partial")
+    partial_value = token_panel.locator(
+        '[data-token-metric="cost"] .token-metric-value'
+    ).inner_text()
+    assert partial_value.startswith("≥$")
+    assert partial_value != "—"
+    assert partial_value in frame.locator(".turn-toggle").inner_text()
+    assert "ESTIMATED COST\n—" in frame.locator("#inspector").inner_text()
+    token_panel.locator("details.token-turns summary").click()
+    expect(token_panel.locator('[data-token-column="cost"]').last).to_have_text(partial_value)
+
+    frame.locator("#sessionSelect").select_option("session-unavailable-cost")
+    frame.get_by_role("heading", name="Inspect unavailable pricing").wait_for()
+    token_panel = frame.locator("#tokenDetails")
+    expect(token_panel.locator(".token-badge.unavailable")).to_have_text(
+        "Pricing coverage Unavailable"
+    )
+    expect(token_panel.locator('[data-token-metric="cost"] .token-metric-value')).to_have_text("—")
+    expect(
+        frame.locator(".stat").filter(has_text="Estimated cost").locator(".stat-value")
+    ).to_have_text("—")
+    assert "Estimated cost —" in frame.locator(".turn-toggle").inner_text()
+    assert "ESTIMATED COST\n—" in frame.locator("#inspector").inner_text()
 
 
 def test_full_details_refresh_and_task_switch_safety(page: Page, harness_url: str) -> None:
@@ -830,6 +1054,11 @@ def test_full_details_refresh_and_task_switch_safety(page: Page, harness_url: st
     expect(frame.locator("#pipVideo")).to_have_attribute("data-active", "true")
     payload = json.loads(frame.locator("#pipCanvas").get_attribute("data-payload") or "{}")
     assert payload["detailLevel"] == "summary"
+    assert payload["costs"] == {
+        "total": "≈$0.001488",
+        "turn": "≈$0.000656",
+        "record": "≈$0.000656",
+    }
     assert [limit["remainingPercent"] for limit in payload["rateLimits"]] == [68.5, 44]
     assert "uv run pytest" not in json.dumps(payload)
     assert frame.get_by_text("Full details", exact=True).is_visible()
@@ -865,6 +1094,9 @@ def test_live_pip_refreshes_index_and_tokens_then_stops(page: Page, harness_url:
     )
     expect(frame.locator("#pipCanvas")).to_have_attribute("data-cursor", "T2 / S4 / #9")
     expect(frame.locator("#pipCanvas")).to_have_attribute("data-tokens", "640,128,384,128,40")
+    expect(frame.locator("#pipCanvas")).to_have_attribute("data-total-cost", "≈$0.001488")
+    expect(frame.locator("#pipCanvas")).to_have_attribute("data-turn-cost", "≈$0.000656")
+    expect(frame.locator("#pipCanvas")).to_have_attribute("data-record-cost", "≈$0.000656")
     expect(frame.locator("#pipCanvas")).to_have_attribute(
         "data-quota",
         "primary:68.5:2026-08-14T02:00:00Z|secondary:44:2026-08-21T00:00:00Z",
@@ -879,6 +1111,9 @@ def test_live_pip_refreshes_index_and_tokens_then_stops(page: Page, harness_url:
     )
     expect(frame.locator("#pipCanvas")).to_have_attribute("data-cursor", "T3 / S1 / #10")
     expect(frame.locator("#pipCanvas")).to_have_attribute("data-tokens", "704,144,416,144,44")
+    expect(frame.locator("#pipCanvas")).to_have_attribute("data-total-cost", "≈$0.001672")
+    expect(frame.locator("#pipCanvas")).to_have_attribute("data-turn-cost", "≈$0.000184")
+    expect(frame.locator("#pipCanvas")).to_have_attribute("data-record-cost", "≈$0.000184")
     expect(frame.locator("#pipCanvas")).to_have_attribute(
         "data-quota",
         "primary:68:2026-08-14T02:00:00Z|secondary:44:2026-08-21T00:00:00Z",
@@ -943,6 +1178,8 @@ def test_codex_host_uses_full_height_frozen_totals_and_scrolling_live_output(
     expect(dock).to_have_attribute("data-detail-level", "summary")
     expect(dock).to_have_attribute("data-cursor", "T2 / S4 / #9")
     expect(dock).to_have_attribute("data-tokens", "640,128,384,128,40")
+    expect(dock).to_have_attribute("data-total-cost", "≈$0.001488")
+    expect(dock).to_have_attribute("data-turn-cost", "≈$0.000656")
     expect(dock).to_have_attribute(
         "data-quota",
         "primary:68.5:2026-08-14T02:00:00Z|secondary:44:2026-08-21T00:00:00Z",
@@ -966,6 +1203,11 @@ def test_codex_host_uses_full_height_frozen_totals_and_scrolling_live_output(
         }"""
     )
     assert frame.locator(".dock-total-value").inner_text() == "640"
+    assert frame.locator("#dockTotalCost").inner_text() == "≈$0.001488"
+    assert "not a Codex subscription bill" in (
+        frame.locator("#dockTotalCostMetric").get_attribute("title") or ""
+    )
+    assert frame.locator("#dockCurrentTurnCost").inner_text() == "≈$0.000656"
     assert frame.locator("#pipVideo").count() == 0
     assert frame.get_by_role("alert").count() == 0
     assert frame.locator("body").evaluate("body => body.classList.contains('dock-mode')")
@@ -985,12 +1227,17 @@ def test_codex_host_uses_full_height_frozen_totals_and_scrolling_live_output(
     )
     assert record_stream.evaluate("element => getComputedStyle(element).overflowY") == "auto"
     assert frame.locator(".dock-record").count() == 9
+    turn_summaries = frame.locator(".dock-turn-summary")
+    assert turn_summaries.count() == 2
+    assert turn_summaries.first.get_attribute("data-turn-cost") == "≈$0.000832"
+    assert turn_summaries.last.get_attribute("data-turn-cost") == "≈$0.000656"
     expect(frame.locator('.dock-record[data-index="8"] .dock-record-state')).to_have_text(
         "complete · —"
     )
     latest_record = frame.locator(".dock-record.latest")
     expect(latest_record).to_have_attribute("data-index", "9")
     expect(latest_record).to_have_attribute("data-record-tokens", "248,64,128,56,16")
+    expect(latest_record).to_have_attribute("data-record-cost", "≈$0.000656")
     whale_miner = latest_record.locator(".dock-whale-miner")
     expect(whale_miner).to_have_attribute("data-record-id", "record-2-9")
     expect(whale_miner).to_have_attribute("data-mining", "false")
@@ -1017,13 +1264,19 @@ def test_codex_host_uses_full_height_frozen_totals_and_scrolling_live_output(
           .startsWith('url("data:image/png;base64,')"""
     )
     usage_rows = latest_record.locator(".dock-usage-row")
-    assert usage_rows.count() == 3
+    assert usage_rows.count() == 4
     assert usage_rows.locator(".dock-usage-name").all_inner_texts() == [
         "TOTAL TOKENS",
+        "ESTIMATED COST",
         "INPUT",
         "OUTPUT",
     ]
-    assert usage_rows.locator(".dock-usage-value").all_inner_texts() == ["248", "192", "56"]
+    assert usage_rows.locator(".dock-usage-value").all_inner_texts() == [
+        "248",
+        "≈$0.000656",
+        "192",
+        "56",
+    ]
     input_row = latest_record.locator('[data-token-group="input"]')
     assert input_row.locator(".dock-usage-part-label").all_inner_texts() == [
         "Uncached input",
@@ -1073,12 +1326,18 @@ def test_codex_host_uses_full_height_frozen_totals_and_scrolling_live_output(
     expect(dock).to_have_attribute("data-latest", "Live update arrived", timeout=6_000)
     expect(dock).to_have_attribute("data-cursor", "T3 / S1 / #10")
     expect(dock).to_have_attribute("data-tokens", "704,144,416,144,44")
+    expect(dock).to_have_attribute("data-total-cost", "≈$0.001672")
+    expect(dock).to_have_attribute("data-turn-cost", "≈$0.000184")
     expect(dock).to_have_attribute(
         "data-quota",
         "primary:68:2026-08-14T02:00:00Z|secondary:44:2026-08-21T00:00:00Z",
     )
     expect(dock).to_have_attribute("data-record-count", "10")
     expect(frame.locator(".dock-total-value")).to_have_text("704")
+    expect(frame.locator("#dockTotalCost")).to_have_text("≈$0.001672")
+    expect(frame.locator("#dockCurrentTurnCost")).to_have_text("≈$0.000184")
+    expect(turn_summaries).to_have_count(3)
+    expect(turn_summaries.last).to_have_attribute("data-turn-cost", "≈$0.000184")
     expect(quota.locator('[data-quota-window="primary"] strong')).to_have_text("68%")
     latest_record = frame.locator(".dock-record.latest")
     expect(latest_record).to_have_attribute("data-index", "10")
@@ -1098,7 +1357,13 @@ def test_codex_host_uses_full_height_frozen_totals_and_scrolling_live_output(
         == "dock-whale-mining-x"
     )
     expect(latest_record).to_have_attribute("data-record-tokens", "64,16,32,16,4")
-    assert latest_record.locator(".dock-usage-value").all_inner_texts() == ["64", "48", "16"]
+    expect(latest_record).to_have_attribute("data-record-cost", "≈$0.000184")
+    assert latest_record.locator(".dock-usage-value").all_inner_texts() == [
+        "64",
+        "≈$0.000184",
+        "48",
+        "16",
+    ]
     assert latest_record.locator(
         '[data-token-group="output"] .dock-usage-part-value'
     ).all_inner_texts() == [
@@ -1542,7 +1807,10 @@ def test_hundred_billion_token_values_are_fully_visible(page: Page, harness_url:
         assert metric.evaluate("element => element.scrollWidth <= element.clientWidth + 1")
         assert "…" not in metric.inner_text()
     assert frame.get_by_text("Cache writes", exact=True).count() == 0
-    assert frame.locator(".token-metric").count() == 6
+    assert frame.locator(".token-metric").count() == 7
+    assert frame.locator('[data-token-metric="cost"] .token-metric-value').inner_text() == (
+        "≈$23,593.27"
+    )
     assert (
         frame.locator('[data-token-metric="total"] .token-metric-value').evaluate(
             "element => getComputedStyle(element).textOverflow"
@@ -1551,7 +1819,9 @@ def test_hundred_billion_token_values_are_fully_visible(page: Page, harness_url:
     )
     frame.locator("details.token-turns summary").click()
     numeric_cells = frame.locator(".token-turn-row .token-cell.numeric")
+    numeric_cells.first.wait_for()
     assert numeric_cells.all_inner_texts() == [
+        "≈$23,593.27",
         "1",
         "119,234,337,188",
         "118,700,200,000",
@@ -1563,11 +1833,33 @@ def test_hundred_billion_token_values_are_fully_visible(page: Page, harness_url:
         "cells => cells.every(cell => cell.scrollWidth <= cell.clientWidth + 1)"
     )
 
+    frame.get_by_role("button", name="Live window").click()
+    expect(frame.locator("#pipCanvas")).to_have_attribute(
+        "data-tokens",
+        "119234337188,3035000000,115665200000,534137188,400000000",
+    )
+    total_draws = frame.locator("#pipCanvas").evaluate(
+        """() => window.__trajectoryCanvasTexts.filter(
+          item => item.text === '119,234,337,188'
+        )"""
+    )
+    assert total_draws
+    font_size = float(total_draws[-1]["font"].split()[1].removesuffix("px"))
+    assert font_size < 28
+    assert not frame.locator("#pipCanvas").evaluate(
+        """() => window.__trajectoryCanvasTexts.some(
+          item => item.text.startsWith('119,234') && item.text.includes('…')
+        )"""
+    )
+    frame.get_by_role("button", name="Close live window").click()
+
 
 def test_timeline_selection_native_wheel_zoom_and_reset(page: Page, harness_url: str) -> None:
     page.goto(f"{harness_url}/en")
     frame = viewer(page)
     timeline = frame.locator("#timeline")
+    expect(timeline).to_have_attribute("role", "group")
+    assert frame.get_by_role("application").count() == 0
     bounds = timeline.bounding_box()
     assert bounds is not None
     page.mouse.move(bounds["x"] + bounds["width"] * 0.15, bounds["y"] + bounds["height"] / 2)
@@ -1602,6 +1894,12 @@ def test_english_desktop_and_chinese_mobile_layout(page: Page, harness_url: str)
     page.goto(f"{harness_url}/zh")
     frame = viewer(page)
     frame.get_by_text("安全摘要", exact=True).wait_for()
+    expect(frame.locator(".integration-title")).to_contain_text("无人值守直停")
+    frame.locator("#cdpToolbarEnabled").check()
+    page.wait_for_function("window.__trajectoryCdpToolbar.enabled === true")
+    expect(frame.locator("#cdpToolbarStatus")).to_have_text(
+        "直停已就绪\uff0cBrowser入口待CDP对端认证后恢复"
+    )
     frame.get_by_role("button", name="加载完整详情").click()
     assert frame.get_by_role("button", name="继续加载").is_visible()
     assert frame.get_by_role("button", name="取消").is_visible()
@@ -1611,6 +1909,12 @@ def test_english_desktop_and_chinese_mobile_layout(page: Page, harness_url: str)
     assert frame.locator(".turn-toggle").first.get_attribute("aria-expanded") == "false"
     assert frame.locator(".turn-toggle").last.get_attribute("aria-expanded") == "true"
     assert "模型 gpt-5" in frame.locator(".turn-toggle").last.inner_text()
+    assert "估算花费" in frame.locator(".turn-toggle").last.inner_text()
+    assert "0.000656" in frame.locator(".turn-toggle").last.inner_text()
+    assert frame.locator('[data-token-metric="cost"] .token-metric-label').inner_text() == (
+        "估算花费"
+    )
+    assert "不是 Codex 订阅账单" in frame.locator(".cost-note").inner_text()
     assert frame.locator("tbody.turn-group").last.locator(
         ".turn-token-label"
     ).all_inner_texts() == ["非缓存输入", "缓存读取", "输出"]

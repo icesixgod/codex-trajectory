@@ -4,6 +4,31 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-24
+
+### Added
+
+- Show standard-API-equivalent USD cost estimates for the complete task, every priced turn, and each Token-usage record, including cache discounts, mixed-model coverage, and explicit unavailable pricing for unknown model IDs; surface all three levels in the live side panel and native PiP.
+
+### Changed
+
+- Advance trajectory responses and the MCP Apps resource to schema version 2 for the new required cost fields while keeping the closed version 1 schema frozen for existing validators.
+- Refresh the GPT-5.6 standard short-context price snapshot to the current Sol promotional rate and the reduced Terra and Luna rates published on 2026-08-24.
+- Read Codex `.jsonl.zst` rollouts, including concatenated frames and decompressed logical lineage offsets; Python 3.10–3.13 use pinned `zstandard==0.25.0`, while Python 3.14 uses its standard library.
+- Restore the token-bearing in-app Browser shortcut on macOS and Windows only after per-connection operating-system TCP ownership, Codex host ancestry, process-creation identity, and platform signing/package checks succeed; unsupported or failed authentication remains fail-closed while app-private direct stop stays available after explicit opt-in.
+
+### Fixed
+
+- Serialize CDP recovery and watcher replacement across MCP processes, preserve later disable/port choices with settings revisions, use safe Windows process handles and the active uv interpreter environment, avoid disabled status probes, and expose only a fixed public error category.
+- Reconcile an already enabled authenticated watcher from a reviewed asynchronous session-start hook on macOS and Windows, reducing the cold-start delay before **View trajectory** appears while retaining MCP recovery as a fallback.
+- Apply aggregate absolute deadlines to CDP discovery, WebSocket traversal, task-state, theme, and stop operations; recheck the opt-in before direct stop; accept the current stale-turn error shape; and avoid full-history bootstraps.
+- Harden rollout discovery and reads with descriptor-checked root containment, file/line/byte/depth/lineage budgets, leading metadata rules for paginated files, dual thread/rollout UUID validation, and decompression-bomb, truncation, trailing-data, symlink, hardlink, and non-regular-file rejection.
+- Accumulate Token counters across resets without double-counting duplicate snapshots, retain late samples on their producing turns, align overview/detail/model-call/cost totals, and reject non-scalar protocol identifiers.
+- Require complete valid price inputs, leave unpublished or fake dated models unpriced, represent unavailable cached-input prices explicitly, and make large Decimal aggregation safe.
+- Enforce strict MCP initialization, stable unknown-resource and invalid-parameter errors, an 8 MiB encoded response limit, observable response cancellation, accurate destructive stop annotations, and a compatible unlisted version 1 resource URI alias.
+- Keep initial CDP status in a retrying state until loaded, prevent stale reads from overwriting a newer user choice, distinguish the withheld Browser shortcut from ready direct stop, restore semantic table/group accessibility, and preserve very large PiP Token values without ellipsis.
+- Validate the frozen version 1 schema hash, version 2 summary/cost/pagination invariants, archive runtime contents and versioned roots, extracted ZIP/TAR smoke tests, cross-platform Python 3.10–3.14 behavior, Windows mypy, and focused package/CDP/MCP coverage floors before release.
+
 ## [0.3.2] - 2026-08-21
 
 ### Fixed
@@ -46,7 +71,7 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 - Remove the injected Browser entry from the previous CDP endpoint when the configured port changes while the watcher is enabled.
 - Pause an active Goal through the App Server before interrupting its turn, and keep automatic quota stops latched across later turns in the same quota cycle as a compatibility fallback; manual Stop still rearms per turn, while quota recovery, window reset, or guard reconfiguration rearms automation.
 - Reject linked, non-regular, multiply linked, and oversized private CDP settings, heartbeat, and watcher-lock files before decoding them.
-- Show unknown record durations as `—` instead of `0 ms` when the log contains only a point timestamp, while preserving genuinely measured zero-duration intervals.
+- Show unknown record durations as `—` instead of `0 ms` when the log contains only a point timestamp, preserve genuinely measured zero-duration intervals, and round positive sub-millisecond durations up to `1 ms`.
 
 ## [0.3.0] - 2026-08-18
 
@@ -117,4 +142,5 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 [0.3.0]: https://github.com/icesixgod/codex-trajectory/compare/v0.2.0...v0.3.0
 [0.3.1]: https://github.com/icesixgod/codex-trajectory/compare/v0.3.0...v0.3.1
 [0.3.2]: https://github.com/icesixgod/codex-trajectory/compare/v0.3.1...v0.3.2
-[Unreleased]: https://github.com/icesixgod/codex-trajectory/compare/v0.3.2...HEAD
+[0.4.0]: https://github.com/icesixgod/codex-trajectory/compare/v0.3.2...v0.4.0
+[Unreleased]: https://github.com/icesixgod/codex-trajectory/compare/v0.4.0...HEAD
