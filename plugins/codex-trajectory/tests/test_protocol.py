@@ -520,6 +520,7 @@ def test_stdio_server_handshake_and_unicode(codex_home: Path) -> None:
         ),
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=True,
     )
     responses = [json.loads(line) for line in process.stdout.splitlines()]

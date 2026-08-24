@@ -116,6 +116,10 @@ def reasoning_summary(summary: Any) -> str:
 
 def display_path(value: Any) -> str | None:
     """Return a local path without exposing the user's absolute home path."""
+
+    def portable(path: Path) -> str:
+        return path.as_posix()
+
     if not isinstance(value, str):
         return None
     try:
@@ -129,13 +133,13 @@ def display_path(value: Any) -> str | None:
         if resolved == home:
             return "~"
         if resolved.is_relative_to(home):
-            return safe_text(str(Path("~") / resolved.relative_to(home)), 500)
+            return safe_text(portable(Path("~") / resolved.relative_to(home)), 500)
         if resolved.is_absolute():
-            return safe_text(str(Path("<absolute>") / resolved.name), 500)
+            return safe_text(portable(Path("<absolute>") / resolved.name), 500)
     except (OSError, RuntimeError, ValueError):
         lexical = Path(value)
         if lexical.is_absolute():
-            return safe_text(str(Path("<absolute>") / lexical.name), 500)
+            return safe_text(portable(Path("<absolute>") / lexical.name), 500)
     return safe_text(value, 500)
 
 

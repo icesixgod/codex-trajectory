@@ -1898,7 +1898,7 @@ def test_english_desktop_and_chinese_mobile_layout(page: Page, harness_url: str)
     frame.locator("#cdpToolbarEnabled").check()
     page.wait_for_function("window.__trajectoryCdpToolbar.enabled === true")
     expect(frame.locator("#cdpToolbarStatus")).to_have_text(
-        "直停已就绪\uff0cBrowser入口待CDP对端认证后恢复"
+        "直停已就绪\uff1b当前系统不支持安全的 Browser 入口"
     )
     frame.get_by_role("button", name="加载完整详情").click()
     assert frame.get_by_role("button", name="继续加载").is_visible()

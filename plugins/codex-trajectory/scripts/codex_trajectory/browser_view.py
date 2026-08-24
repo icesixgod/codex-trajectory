@@ -84,7 +84,7 @@ def injection_source(viewer_url: str) -> str:
   const GLOBAL = "__codexTrajectoryToolbarV1";
   const BUTTON_ID = "codex-trajectory-toolbar-entry";
   const STYLE_ID = "codex-trajectory-toolbar-style";
-  const VERSION = 9;
+  const VERSION = 10;
   const VIEWER_URL = {encoded_url};
   const existing = window[GLOBAL];
   if (existing?.version === VERSION) {{
@@ -97,6 +97,9 @@ def injection_source(viewer_url: str) -> str:
     }};
   }}
   existing?.dispose?.();
+  document.getElementById(BUTTON_ID)?.remove();
+  document.getElementById(STYLE_ID)?.remove();
+  document.getElementById("codex-trajectory-cdp-drawer")?.remove();
 
   const normalize = value => String(value || "").replace(/\s+/g, " ").trim().toLowerCase();
   const visible = element => {{

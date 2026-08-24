@@ -41,7 +41,8 @@ def test_settings_default_round_trip_and_validation(isolated_cdp_home: Path) -> 
     assert cdp_settings.read_settings() == saved
     path = cdp_settings.settings_path()
     assert path.parent == isolated_cdp_home / "codex-trajectory"
-    assert path.stat().st_mode & 0o777 == 0o600
+    if os.name != "nt":
+        assert path.stat().st_mode & 0o777 == 0o600
 
     with pytest.raises(ValueError, match="enabled"):
         cdp_settings.write_settings(1, 9333)  # type: ignore[arg-type]
@@ -433,6 +434,19 @@ def test_runtime_revision_replaces_an_old_same_path_watcher(
     assert cdp_settings.daemon_runtime_id() != old_runtime
 
 
+def test_runtime_identity_does_not_depend_on_the_launcher(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = cdp_settings.daemon_runtime_id()
+    monkeypatch.setattr(
+        cdp_settings,
+        "_watcher_executable",
+        lambda: Path("different-launcher.exe"),
+    )
+
+    assert cdp_settings.daemon_runtime_id() == runtime
+
+
 def test_start_daemon_replaces_verified_outdated_runtime(
     isolated_cdp_home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -595,8 +609,9 @@ def test_pid_probe_and_http_probe_are_bounded(
 ) -> None:
     assert cdp_settings._pid_running(False) is False
     assert cdp_settings._pid_running(-1) is False
-    monkeypatch.setattr(os, "kill", lambda _pid, _signal: None)
-    assert cdp_settings._pid_running(123) is True
+    if os.name != "nt":
+        monkeypatch.setattr(os, "kill", lambda _pid, _signal: None)
+        assert cdp_settings._pid_running(123) is True
 
     class Response:
         def __init__(self, body: bytes, status: int = 200) -> None:

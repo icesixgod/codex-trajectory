@@ -66,7 +66,7 @@ The token-bearing Codex in-app Browser shortcut reports `browserShortcutAvailabl
 
 The app must be launched with a loopback `--remote-debugging-port` before direct stop can connect. Enabling the setting does not change the app executable, relaunch the app, bind a network listener, or expose the selected port. CDP grants broad page control to local processes, so users must keep it on loopback, avoid tunnels, and trust the selected local endpoint. Composer drafts and attachments remain untouched.
 
-The plugin's reviewed asynchronous `SessionStart` hook runs on startup, resume, and clear to discover the authenticated desktop host and reconcile an already opted-in watcher before the MCP server is first needed. The cross-process controller makes this idempotent with MCP recovery and preserves later disable or port changes. The hook neither enables the setting nor sends a trajectory token, and an authentication or launch failure simply leaves the later MCP path to retry.
+The plugin's reviewed asynchronous `SessionStart` hook runs on startup, resume, and clear to discover the authenticated desktop host and restore an already opted-in watcher before the MCP server is first needed. Windows invokes the hook with uv's GUI-subsystem `uvw.exe` launcher and runs the watcher in that session-bound process, avoiding both a console window and dependence on `CREATE_BREAKAWAY_FROM_JOB`; macOS retains the detached watcher controller. The cross-process watcher lock makes the hook idempotent with MCP recovery, and the settings controller preserves later disable or port changes. The hook neither enables the setting nor sends a trajectory token, and an authentication or launch failure simply leaves the later MCP path to retry.
 
 ## Transport limits
 

@@ -516,7 +516,7 @@ def validate_hooks() -> None:
     )
     require(handler.get("type") == "command", "bootstrap hook must be a command")
     require(handler.get("async") is True, "bootstrap hook must not block session startup")
-    require(handler.get("timeout") == 10, "bootstrap hook timeout changed")
+    require(handler.get("timeout") == 86400, "bootstrap hook timeout changed")
     require(
         handler.get("command")
         == 'uv run --script "${PLUGIN_ROOT}/scripts/codex_trajectory_bootstrap.py"',
@@ -524,7 +524,7 @@ def validate_hooks() -> None:
     )
     require(
         handler.get("commandWindows")
-        == 'uv run --script "%PLUGIN_ROOT%\\scripts\\codex_trajectory_bootstrap.py"',
+        == 'uvw run --script "%PLUGIN_ROOT%\\scripts\\codex_trajectory_bootstrap.py"',
         "Windows bootstrap hook command changed",
     )
 

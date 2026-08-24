@@ -660,7 +660,7 @@ def test_paginated_lineage_uses_declared_ordinal_and_byte_prefixes(
         _paginated_line(3, "event_msg", {"type": "task_complete", "turn_id": "root"}),
         _paginated_line(4, "event_msg", {"type": "task_started", "turn_id": "excluded"}),
     ]
-    root_path.write_text("".join(root_lines), encoding="utf-8")
+    root_path.write_bytes("".join(root_lines).encode("utf-8"))
     root_boundary = len("".join(root_lines[:4]).encode())
 
     child_path = directory / f"rollout-2026-08-16T00-01-00-{child_id}.jsonl"
@@ -1014,7 +1014,7 @@ def test_paginated_iteration_rejects_invalid_ordinals_and_boundary_disagreement(
         _paginated_line(0, "session_meta", {"id": source_id, "history_mode": "paginated"}),
         _paginated_line(1, "event_msg", {"type": "turn_started"}),
     ]
-    source.write_text("".join(source_lines), encoding="utf-8")
+    source.write_bytes("".join(source_lines).encode("utf-8"))
     child = directory / f"rollout-child-{child_id}.jsonl"
 
     def write_child(end_ordinal: int) -> None:
@@ -1220,7 +1220,7 @@ def test_paginated_lineage_applies_each_inherited_subagent_boundary(
         _paginated_line(5, "event_msg", {"type": "turn_complete", "turn_id": "source"}),
         _paginated_line(6, "event_msg", {"type": "shutdown_complete"}),
     ]
-    source.write_text("".join(source_lines), encoding="utf-8")
+    source.write_bytes("".join(source_lines).encode("utf-8"))
     child = directory / f"rollout-2026-08-16T00-01-00-{child_id}.jsonl"
     child.write_text(
         _paginated_line(

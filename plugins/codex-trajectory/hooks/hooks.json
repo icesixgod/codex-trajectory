@@ -8,8 +8,8 @@
           {
             "type": "command",
             "command": "uv run --script \"${PLUGIN_ROOT}/scripts/codex_trajectory_bootstrap.py\"",
-            "commandWindows": "uv run --script \"%PLUGIN_ROOT%\\scripts\\codex_trajectory_bootstrap.py\"",
-            "timeout": 10,
+            "commandWindows": "uvw run --script \"%PLUGIN_ROOT%\\scripts\\codex_trajectory_bootstrap.py\"",
+            "timeout": 86400,
             "async": true
           }
         ]

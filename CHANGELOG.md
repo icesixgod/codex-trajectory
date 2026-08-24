@@ -4,6 +4,11 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## [Unreleased]
 
+### Fixed
+
+- Run the Windows session-start watcher through uv's windowless `uvw.exe` launcher and keep it in the reviewed asynchronous hook process, preventing a console flash and avoiding watcher loss when the Codex Windows Job Object does not permit detached children to break away.
+- Keep watcher runtime identity stable across the hook and MCP launch environments, replace stale toolbar markup deterministically, and make the Windows runtime and browser acceptance checks portable.
+
 ## [0.4.0] - 2026-08-24
 
 ### Added

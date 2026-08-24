@@ -23,7 +23,7 @@ from .json_support import strict_json_loads
 
 SETTINGS_VERSION = 1
 BROWSER_SHORTCUT_AVAILABLE = browser_shortcut_supported()
-DAEMON_RUNTIME_REVISION = 3
+DAEMON_RUNTIME_REVISION = 4
 DEFAULT_CDP_PORT = 9222
 MIN_CDP_PORT = 1024
 MAX_CDP_PORT = 65535
@@ -88,11 +88,10 @@ def _windowless_watcher_executable(executable: Path) -> Path:
 
 
 def daemon_runtime_id() -> str:
-    """Identify the installed watcher runtime without exposing its local path."""
-    identity = (
-        f"{DAEMON_RUNTIME_REVISION}\0"
-        f"{_watcher_executable().resolve()}\0{_daemon_script().resolve()}"
-    ).encode("utf-8", errors="surrogateescape")
+    """Identify plugin watcher code independently from its launch environment."""
+    identity = (f"{DAEMON_RUNTIME_REVISION}\0{_daemon_script().resolve()}").encode(
+        "utf-8", errors="surrogateescape"
+    )
     return hashlib.sha256(identity).hexdigest()
 
 
