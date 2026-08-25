@@ -671,7 +671,7 @@ def test_recent_sessions_load_after_the_initial_trajectory(page: Page, harness_u
 
     page.wait_for_function("window.__trajectoryToolNames.includes('list_codex_sessions')")
 
-    expect(frame.locator("#sessionSelect option")).to_have_count(7)
+    expect(frame.locator("#sessionSelect option")).to_have_count(9)
     assert (
         page.evaluate(
             "window.__trajectoryToolNames.filter(name => name === 'list_codex_sessions').length"
