@@ -73,7 +73,11 @@ def declared_mcp_command(plugin: Path = PLUGIN) -> tuple[list[str], Path]:
             launcher.relative_to(plugin_root)
         except ValueError as error:
             raise RuntimeError("Packaged MCP launcher escapes the plugin root.") from error
-        executable = shutil.which(str(launcher))
+        # Python 3.10 returns the extensionless Unix shim before consulting PATHEXT.
+        resolved_launcher = (
+            launcher.with_suffix(".exe") if os.name == "nt" and not launcher.suffix else launcher
+        )
+        executable = shutil.which(str(resolved_launcher))
     else:
         executable = shutil.which(command)
     if executable is None:

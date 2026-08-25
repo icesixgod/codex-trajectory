@@ -107,7 +107,10 @@ def test_mcp_smoke_resolves_the_packaged_command(
         smoke_mcp.shutil,
         "which",
         lambda command: (
-            str(launcher) if command == str(scripts / "codex_trajectory_launcher") else None
+            str(launcher)
+            if command
+            == str(launcher if os.name == "nt" else scripts / "codex_trajectory_launcher")
+            else None
         ),
     )
 
