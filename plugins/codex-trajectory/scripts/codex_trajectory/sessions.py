@@ -17,6 +17,11 @@ JsonEntry = tuple[int, dict[str, Any]]
 MAX_DIAGNOSTICS = 100
 MAX_JSONL_LINE_BYTES = 16 * 1024 * 1024
 MAX_LINEAGE_SEGMENTS = 1_024
+_SEARCH_LINE_MARKERS = (
+    b'"turn_context"',
+    b'"user_message"',
+    b'"item_completed"',
+)
 _UUID_PATTERN = re.compile(
     r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
     r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
@@ -400,6 +405,97 @@ def iter_session_jsonl(
             expected_last = segment.end_ordinal_exclusive - 1
             if last_ordinal != expected_last:
                 raise ValueError("Paginated history boundary does not end at the declared ordinal.")
+
+
+def _iter_search_lines(
+    path: Path,
+    *,
+    end_byte_offset: int | None = None,
+) -> Iterator[tuple[int, bytes]]:
+    """Yield bounded complete lines that may contain searchable session metadata."""
+    if end_byte_offset is not None:
+        if isinstance(end_byte_offset, bool) or end_byte_offset < 0:
+            raise ValueError("Invalid paginated history byte boundary.")
+        if end_byte_offset > path.stat().st_size:
+            raise ValueError("Paginated history byte boundary is past the source rollout.")
+    with path.open("rb") as handle:
+        line_number = 0
+        while True:
+            line_start = handle.tell()
+            if end_byte_offset is not None and line_start >= end_byte_offset:
+                break
+            encoded_line = handle.readline(MAX_JSONL_LINE_BYTES + 1)
+            if not encoded_line:
+                break
+            line_number += 1
+            if len(encoded_line) > MAX_JSONL_LINE_BYTES:
+                while encoded_line and not encoded_line.endswith(b"\n"):
+                    if end_byte_offset is not None and handle.tell() >= end_byte_offset:
+                        break
+                    encoded_line = handle.readline(MAX_JSONL_LINE_BYTES + 1)
+                if end_byte_offset is not None and handle.tell() > end_byte_offset:
+                    raise ValueError("Paginated history byte boundary splits a JSONL record.")
+                continue
+            line_end = handle.tell()
+            if end_byte_offset is not None and line_end > end_byte_offset:
+                raise ValueError("Paginated history byte boundary splits a JSONL record.")
+            if not encoded_line.endswith(b"\n"):
+                if end_byte_offset is not None and line_end == end_byte_offset:
+                    raise ValueError(
+                        "Paginated history byte boundary omits the terminating newline."
+                    )
+                continue
+            if any(marker in encoded_line for marker in _SEARCH_LINE_MARKERS):
+                yield line_number, encoded_line
+
+
+def _decode_search_entry(encoded_line: bytes) -> dict[str, Any] | None:
+    try:
+        value = strict_json_loads(encoded_line.decode("utf-8"))
+    except (RecursionError, UnicodeDecodeError, ValueError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def iter_session_search_jsonl(path: Path) -> Iterator[JsonEntry]:
+    """Yield only records needed to build a lightweight searchable session index."""
+    segments = rollout_lineage(path)
+    if len(segments) == 1 and segments[0].start_ordinal == 0:
+        for line_number, encoded_line in _iter_search_lines(path):
+            entry = _decode_search_entry(encoded_line)
+            if entry is not None:
+                yield line_number, entry
+        return
+
+    for segment in segments:
+        segment_metadata = first_session_metadata(segment.path)
+        subagent_start = segment_metadata.get("subagent_history_start_ordinal")
+        if subagent_start is not None and (
+            isinstance(subagent_start, bool)
+            or not isinstance(subagent_start, int)
+            or subagent_start <= 0
+        ):
+            raise ValueError("Paginated subagent history has an invalid ordinal boundary.")
+        for line_number, encoded_line in _iter_search_lines(
+            segment.path,
+            end_byte_offset=segment.end_byte_offset,
+        ):
+            entry = _decode_search_entry(encoded_line)
+            if entry is None:
+                continue
+            ordinal = entry.get("ordinal")
+            if isinstance(ordinal, bool) or not isinstance(ordinal, int) or ordinal < 0:
+                continue
+            if ordinal < segment.start_ordinal:
+                continue
+            if subagent_start is not None and ordinal < subagent_start:
+                continue
+            if (
+                segment.end_ordinal_exclusive is not None
+                and ordinal >= segment.end_ordinal_exclusive
+            ):
+                continue
+            yield line_number, entry
 
 
 def session_signature(path: Path) -> tuple[tuple[str, int, int, int], ...]:

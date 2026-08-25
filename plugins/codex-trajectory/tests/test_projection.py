@@ -30,6 +30,7 @@ from codex_trajectory.projection import (
     parse_timestamp,
     resolve_session,
     session_overview,
+    session_search_fields,
     trajectory_result,
 )
 from conftest import rollout_events, write_rollout
@@ -583,7 +584,7 @@ def test_resolve_exact_prefix_archived_and_ambiguous(codex_home: Path) -> None:
         resolve_session(r"..\session-alpha", True)
 
 
-def test_resolve_exact_identifier_stops_scanning(
+def test_resolve_exact_identifier_avoids_full_overview_parsing(
     codex_home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     calls = 0
@@ -596,7 +597,77 @@ def test_resolve_exact_identifier_stops_scanning(
     monkeypatch.setattr("codex_trajectory.projection.session_overview", counted_overview)
 
     assert resolve_session("session-alpha", False).name == "rollout-alpha.jsonl"
-    assert calls == 1
+    assert calls == 0
+
+
+def test_historical_query_filters_before_full_overview_parsing(
+    codex_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target_events = rollout_events("historical-target")
+    target_events[2]["payload"]["message"] = "Exact historical title"
+    target = write_rollout(
+        codex_home / "sessions" / "rollout-historical-target.jsonl",
+        target_events,
+    )
+    os.utime(target, ns=(1, 1))
+    for index in range(4):
+        path = write_rollout(
+            codex_home / "sessions" / f"rollout-unrelated-{index}.jsonl",
+            rollout_events(f"unrelated-{index}"),
+        )
+        os.utime(path, ns=(index + 2, index + 2))
+
+    parsed: list[Path] = []
+    original = session_overview
+
+    def counted_overview(path: Path) -> dict[str, object]:
+        parsed.append(path)
+        return original(path)
+
+    monkeypatch.setattr("codex_trajectory.projection.session_overview", counted_overview)
+
+    result = list_session_overviews(
+        limit=1,
+        query="Exact historical title",
+        include_archived=False,
+    )
+
+    assert [session["id"] for session in result] == ["historical-target"]
+    assert parsed == [target]
+
+    parsed.clear()
+    assert (
+        list_session_overviews(
+            limit=1,
+            query="title that does not exist",
+            include_archived=False,
+        )
+        == []
+    )
+    assert parsed == []
+
+
+def test_historical_identifier_resolution_does_not_build_unrelated_overviews(
+    codex_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = write_rollout(
+        codex_home / "sessions" / "rollout-historical-id.jsonl",
+        rollout_events("historical-id"),
+    )
+    os.utime(target, ns=(1, 1))
+    for index in range(4):
+        path = write_rollout(
+            codex_home / "sessions" / f"rollout-newer-{index}.jsonl",
+            rollout_events(f"newer-{index}"),
+        )
+        os.utime(path, ns=(index + 2, index + 2))
+
+    def unexpected_overview(_path: Path) -> dict[str, object]:
+        raise AssertionError("historical ID resolution must use lightweight metadata")
+
+    monkeypatch.setattr("codex_trajectory.projection.session_overview", unexpected_overview)
+
+    assert resolve_session("historical-id", False) == target
 
 
 def test_session_overview_cache_invalidates_after_append(tmp_path: Path) -> None:
@@ -1113,6 +1184,24 @@ def _paginated_rollout(path: Path, items: list[dict[str, object]]) -> Path:
         ]
     )
     return write_rollout(path, lines)
+
+
+def test_paginated_search_fields_match_full_overview(tmp_path: Path) -> None:
+    path = _paginated_rollout(
+        tmp_path / "rollout-12345678-1234-4234-8234-123456789abc.jsonl",
+        [
+            {
+                "type": "UserMessage",
+                "id": "search-user",
+                "content": [{"type": "Text", "text": "Paginated indexed title"}],
+            }
+        ],
+    )
+
+    fields = session_search_fields(path)
+    overview = session_overview(path)
+
+    assert fields == {key: overview[key] for key in ("id", "title", "cwd", "model")}
 
 
 def test_paginated_turn_item_protocol_matrix_has_no_raw_response_duplicates(tmp_path: Path) -> None:
@@ -2389,11 +2478,22 @@ def test_opaque_call_ids_stay_distinct_and_visible_record_ids_are_unique(
     assert overview["toolCalls"] == result["stats"]["toolCalls"] == 2
 
 
-def test_public_schema_accepts_full_trajectory_with_recent_sessions(codex_home: Path) -> None:
+def test_public_schema_accepts_full_trajectory_without_eager_recent_sessions(
+    codex_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
     Draft202012Validator.check_schema(schema)
+
+    def unexpected_listing(*_args: object, **_kwargs: object) -> list[dict[str, object]]:
+        raise AssertionError("trajectory responses must not eagerly list recent sessions")
+
+    monkeypatch.setattr(
+        "codex_trajectory.projection.list_session_overviews",
+        unexpected_listing,
+    )
     result = trajectory_result(
         {"sessionId": "session-alpha", "detailLevel": "full"}, with_ui=False
     )["structuredContent"]
 
+    assert "recentSessions" not in result
     TRAJECTORY_VALIDATOR.validate(result)

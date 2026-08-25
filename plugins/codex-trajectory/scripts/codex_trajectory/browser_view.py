@@ -20,6 +20,7 @@ MAX_ASSET_BYTES = 2 * 1024 * 1024
 MAX_REQUEST_BYTES = 64 * 1024
 ALLOWED_TOOL_NAMES = frozenset(
     {
+        "list_codex_sessions",
         "get_codex_trajectory",
         "get_codex_trajectory_update",
         "get_codex_toolbar_injection_status",

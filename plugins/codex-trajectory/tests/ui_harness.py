@@ -541,6 +541,7 @@ function trajectory(
       {{...record, input: null, output: null, metadata: {{}}}}
     ));
   }}
+  delete copy.recentSessions;
   return copy;
 }}
 function notify(value) {{
@@ -575,7 +576,10 @@ window.addEventListener("message", event => {{
     return;
   }}
   let result;
-  if (name === "get_codex_toolbar_injection_status") {{
+  if (name === "list_codex_sessions") {{
+    const sessions = structuredClone(trajectories["session-alpha"].recentSessions || []);
+    result = {{structuredContent: {{sessions, count: sessions.length}}}};
+  }} else if (name === "get_codex_toolbar_injection_status") {{
     result = {{structuredContent: structuredClone(window.__trajectoryCdpToolbar)}};
   }} else if (name === "set_codex_toolbar_injection") {{
     window.__trajectoryCdpToolbar = {{

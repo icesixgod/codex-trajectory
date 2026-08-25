@@ -146,6 +146,18 @@ def test_browser_server_serves_full_viewer_bridge_and_head() -> None:
             )
         ]
 
+        status, payload = post_tool(
+            server,
+            "list_codex_sessions",
+            {"limit": 20, "includeArchived": True},
+        )
+        assert status == 200
+        assert payload["structuredContent"]["name"] == "list_codex_sessions"
+        assert requested[-1] == (
+            "list_codex_sessions",
+            {"limit": 20, "includeArchived": True},
+        )
+
         request = Request(server.url, method="HEAD")
         with urlopen(request, timeout=2) as response:
             assert response.status == 200
