@@ -265,7 +265,21 @@ def test_loopback_browser_view_renders_the_full_trajectory_ui(page: Page) -> Non
             ),
         }
         assert stop_requests == []
-        frame.get_by_role("button", name="Refresh").click()
+        frame.get_by_role("button", name="Refresh").evaluate(
+            """button => new Promise(resolve => {
+              const app = document.getElementById("app");
+              let started = false;
+              const observer = new MutationObserver(() => {
+                started ||= app.getAttribute("aria-busy") === "true";
+                if (started && app.getAttribute("aria-busy") === "false") {
+                  observer.disconnect();
+                  resolve();
+                }
+              });
+              observer.observe(app, {attributes: true, attributeFilter: ["aria-busy"]});
+              button.click();
+            })"""
+        )
         expect(frame.get_by_text("Safe summary", exact=True)).to_be_visible()
         names = [name for name, _arguments in requested]
         assert names.count("get_codex_trajectory") >= 2
@@ -606,6 +620,22 @@ def test_viewer_can_enable_and_disable_cdp_toolbar_setting(page: Page, harness_u
     toggle.uncheck()
     page.wait_for_function("window.__trajectoryCdpToolbar.enabled === false")
     expect(toggle).not_to_be_checked()
+
+
+def test_recent_sessions_load_after_the_initial_trajectory(page: Page, harness_url: str) -> None:
+    page.goto(f"{harness_url}/en")
+    frame = viewer(page)
+    frame.get_by_text("Safe summary", exact=True).wait_for()
+
+    page.wait_for_function("window.__trajectoryToolNames.includes('list_codex_sessions')")
+
+    expect(frame.locator("#sessionSelect option")).to_have_count(7)
+    assert (
+        page.evaluate(
+            "window.__trajectoryToolNames.filter(name => name === 'list_codex_sessions').length"
+        )
+        == 1
+    )
 
 
 def test_safe_summary_search_filter_keyboard_and_detail_inspector(

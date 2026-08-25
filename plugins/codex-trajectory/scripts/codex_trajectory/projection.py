@@ -38,10 +38,12 @@ from .privacy import (
     shorten,
     source_kind,
 )
+from .session_index import SessionSearchIndex
 from .sessions import (
     first_session_metadata,
     is_archived_session,
     iter_session_jsonl,
+    iter_session_search_jsonl,
     rollout_id_from_path,
     session_files,
     session_signature,
@@ -220,6 +222,62 @@ def item_type(value: Any) -> str:
             normalized.append("_")
         normalized.append(character.casefold())
     return "".join(normalized).replace("-", "_")
+
+
+def session_search_fields(path: Path) -> dict[str, Any]:
+    """Build searchable metadata while decoding only metadata-bearing JSONL records."""
+    metadata = first_session_metadata(path)
+    paginated = str(metadata.get("history_mode") or "legacy").casefold() == "paginated"
+    first_user = ""
+    model: str | None = None
+    for _, entry in iter_session_search_jsonl(path):
+        payload = entry.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        entry_type = entry.get("type")
+        payload_type = payload.get("type")
+        if entry_type == "turn_context":
+            model = safe_text(payload.get("model"), 200) or model
+        elif (
+            not paginated
+            and entry_type == "event_msg"
+            and payload_type == "user_message"
+            and not first_user
+        ):
+            message = payload.get("message")
+            first_user = message if isinstance(message, str) else ""
+        elif entry_type == "event_msg" and payload_type == "item_completed":
+            item = payload.get("item")
+            if (
+                isinstance(item, dict)
+                and item_type(item.get("type")) == "user_message"
+                and not first_user
+            ):
+                first_user = content_text(item.get("content"))
+    return {
+        "id": metadata_identity(metadata, path),
+        "title": shorten(first_user or "Untitled Codex task", 100),
+        "cwd": display_path(metadata.get("cwd")),
+        "model": model,
+    }
+
+
+def indexed_session_search_fields(
+    index: SessionSearchIndex,
+    path: Path,
+) -> dict[str, Any]:
+    """Return signature-validated fields, refreshing the lightweight index on misses."""
+    signature = session_signature(path)
+    fields = index.lookup(path, signature)
+    if fields is None:
+        fields = session_search_fields(path)
+        index.store(path, signature, fields)
+    return fields
+
+
+def search_haystack(value: dict[str, Any]) -> str:
+    """Normalize the public session-search fields for substring matching."""
+    return " ".join(str(value.get(key) or "") for key in ("id", "title", "cwd", "model"))
 
 
 def session_overview(path: Path) -> dict[str, Any]:
@@ -443,23 +501,43 @@ def list_session_overviews(
     needle = query.casefold().strip()
     result: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
-    for path in session_files(include_archived):
-        try:
-            overview = session_overview(path)
-        except (OSError, RuntimeError, ValueError):
-            continue
-        overview_id = str(overview["id"])
-        if overview_id in seen_ids:
-            continue
-        seen_ids.add(overview_id)
-        haystack = " ".join(
-            str(overview.get(key) or "") for key in ("id", "title", "cwd", "model")
-        ).casefold()
-        if needle and needle not in haystack:
-            continue
-        result.append(overview)
-        if len(result) >= limit:
-            break
+    index = SessionSearchIndex()
+    try:
+        for path in session_files(include_archived):
+            if needle:
+                try:
+                    fields = indexed_session_search_fields(index, path)
+                except (OSError, RuntimeError, ValueError):
+                    continue
+                overview_id = str(fields["id"])
+                if overview_id in seen_ids:
+                    continue
+                seen_ids.add(overview_id)
+                if needle not in search_haystack(fields).casefold():
+                    continue
+            try:
+                overview = session_overview(path)
+            except (OSError, RuntimeError, ValueError):
+                continue
+            overview_id = str(overview["id"])
+            if not needle:
+                if overview_id in seen_ids:
+                    continue
+                seen_ids.add(overview_id)
+                try:
+                    signature = session_signature(path)
+                    index.store(
+                        path,
+                        signature,
+                        {key: overview.get(key) for key in ("id", "title", "cwd", "model")},
+                    )
+                except (OSError, RuntimeError, ValueError):
+                    pass
+            result.append(overview)
+            if len(result) >= limit:
+                break
+    finally:
+        index.flush()
     return result
 
 
@@ -478,25 +556,32 @@ def resolve_session(session_id: str | None, include_archived: bool) -> Path:
     if "/" in requested or "\\" in requested:
         raise ValueError("sessionId must be an identifier, not a filesystem path.")
     prefix: dict[str, Path] = {}
-    for path in paths:
-        if path.stem == requested:
-            return path
-        physical_id = rollout_id_from_path(path)
-        if physical_id == requested.casefold():
-            return path
-        try:
-            overview = session_overview(path)
-        except (OSError, RuntimeError, ValueError):
-            continue
-        candidate = str(overview["id"])
-        if candidate == requested:
-            return path
-        if candidate.startswith(requested):
-            prefix.setdefault(f"thread:{candidate}", path)
-        if physical_id is not None and physical_id.startswith(requested.casefold()):
-            prefix.setdefault(f"rollout:{physical_id}", path)
-        if path.stem.startswith(requested):
-            prefix.setdefault(f"file:{path.stem}", path)
+    index: SessionSearchIndex | None = None
+    try:
+        for path in paths:
+            if path.stem == requested:
+                return path
+            physical_id = rollout_id_from_path(path)
+            if physical_id == requested.casefold():
+                return path
+            if index is None:
+                index = SessionSearchIndex()
+            try:
+                fields = indexed_session_search_fields(index, path)
+            except (OSError, RuntimeError, ValueError):
+                continue
+            candidate = str(fields["id"])
+            if candidate == requested:
+                return path
+            if candidate.startswith(requested):
+                prefix.setdefault(f"thread:{candidate}", path)
+            if physical_id is not None and physical_id.startswith(requested.casefold()):
+                prefix.setdefault(f"rollout:{physical_id}", path)
+            if path.stem.startswith(requested):
+                prefix.setdefault(f"file:{path.stem}", path)
+    finally:
+        if index is not None:
+            index.flush()
     if not prefix:
         raise ValueError(f"Codex session {requested!r} was not found.")
     matched_paths = set(prefix.values())
@@ -2043,9 +2128,6 @@ def trajectory_result(arguments: dict[str, Any], with_ui: bool) -> dict[str, Any
     detail_level = normalize_detail_level(arguments.get("detailLevel", "summary"))
     path = resolve_session(session_id, include_archived)
     trajectory = parse_session(path, requested_max, detail_level, before_record)
-    trajectory["recentSessions"] = list_session_overviews(
-        limit=20, include_archived=include_archived
-    )
     stats = trajectory["stats"]
     summary = (
         f"Trajectory for {trajectory['session']['id']}: "

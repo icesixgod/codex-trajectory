@@ -649,6 +649,9 @@
       let viewport = null;
       let drag = null;
       let busy = false;
+      let recentSessions = [];
+      let recentSessionsRequested = false;
+      let recentSessionsBusy = false;
       let fullConfirmationOpen = false;
       let expandedTurns = new Set();
       let ledgerTooltipTarget = null;
@@ -2150,6 +2153,10 @@
 
       function render(next, options = {}) {
         if (!next?.session || !Array.isArray(next.records)) return;
+        if (Array.isArray(next.recentSessions)) {
+          recentSessions = normalizeRecentSessions(next.recentSessions);
+          recentSessionsRequested = true;
+        }
         if (stopTargetSessionId === null) stopTargetSessionId = next.session.id;
         const previousSessionId = data?.session?.id;
         const previousLastTurn = data?.records?.at(-1)?.turn;
@@ -2177,6 +2184,9 @@
           else ledgerWrap.scrollTop = resetToLatest ? ledgerWrap.scrollHeight : previousScrollTop;
         }
         if (isLiveMode() && !liveBusy && liveTimer === null) startLiveLoop();
+        if (!recentSessionsRequested && !isDockMode()) {
+          window.requestAnimationFrame(() => void loadRecentSessions());
+        }
       }
 
       function stat(label, value) {
@@ -2526,10 +2536,43 @@
 
       function populateSessions() {
         const select = document.getElementById("sessionSelect");
-        const recent = data.recentSessions || [];
-        select.innerHTML = recent.map(session => `<option value="${escapeHtml(session.id)}" ${session.id === data.session.id ? "selected" : ""}>${escapeHtml(session.title)} · ${escapeHtml(session.id.slice(0, 8))}</option>`).join("");
-        if (!recent.some(session => session.id === data.session.id)) {
+        if (!select) return;
+        select.innerHTML = recentSessions.map(session => `<option value="${escapeHtml(session.id)}" ${session.id === data.session.id ? "selected" : ""}>${escapeHtml(session.title)} · ${escapeHtml(session.id.slice(0, 8))}</option>`).join("");
+        if (!recentSessions.some(session => session.id === data.session.id)) {
           select.insertAdjacentHTML("afterbegin", `<option value="${escapeHtml(data.session.id)}" selected>${escapeHtml(data.session.title)}</option>`);
+        }
+        select.disabled = busy || recentSessionsBusy;
+      }
+
+      function normalizeRecentSessions(value) {
+        if (!Array.isArray(value)) return [];
+        return value.filter(session => (
+          isPlainObject(session)
+          && typeof session.id === "string"
+          && session.id.length > 0
+          && session.id.length <= 240
+          && typeof session.title === "string"
+          && session.title.length <= 100
+        )).slice(0, 20);
+      }
+
+      async function loadRecentSessions() {
+        if (recentSessionsRequested || recentSessionsBusy || !data?.session) return;
+        recentSessionsRequested = true;
+        recentSessionsBusy = true;
+        populateSessions();
+        try {
+          const result = await callTool("list_codex_sessions", {
+            limit: 20,
+            includeArchived: true,
+          });
+          if (result?.isError || !Array.isArray(result?.structuredContent?.sessions)) return;
+          recentSessions = normalizeRecentSessions(result.structuredContent.sessions);
+        } catch (_error) {
+          return;
+        } finally {
+          recentSessionsBusy = false;
+          populateSessions();
         }
       }
 
