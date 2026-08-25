@@ -142,6 +142,69 @@ stream.close()
     assert process.returncode == 0, stdout + stderr
 
 
+def test_windows_restart_manager_reports_lock_users_portably(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ended: list[int] = []
+
+    class FakeFunction:
+        def __init__(self, function: Any) -> None:
+            self.function = function
+
+        def __call__(self, *args: Any) -> Any:
+            return self.function(*args)
+
+    def start_session(session: Any, _flags: int, _key: Any) -> int:
+        session._obj.value = 77
+        return 0
+
+    def get_list(
+        _session: Any,
+        needed: Any,
+        available: Any,
+        process_array: Any,
+        _reasons: Any,
+    ) -> int:
+        needed._obj.value = 2
+        if process_array is None:
+            return 234
+        process_array[0].process.pid = 1234
+        process_array[1].process.pid = 5678
+        available._obj.value = 2
+        return 0
+
+    restart_manager = SimpleNamespace(
+        RmStartSession=FakeFunction(start_session),
+        RmRegisterResources=FakeFunction(lambda *_args: 0),
+        RmGetList=FakeFunction(get_list),
+        RmEndSession=FakeFunction(lambda session: ended.append(session.value) or 0),
+    )
+    monkeypatch.setattr(cdp_settings, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setitem(
+        vars(cdp_settings.ctypes),
+        "WinDLL",
+        lambda name, *, use_last_error: restart_manager,
+    )
+
+    assert cdp_settings._windows_file_user_pids(tmp_path / "watcher.lock") == {1234, 5678}
+    assert ended == [77]
+
+
+def test_windows_legacy_lock_owner_validation_is_portable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pid = 4321
+    lock = tmp_path / "watcher.lock"
+    lock.write_text(str(pid), encoding="ascii")
+    monkeypatch.setattr(cdp_settings, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(cdp_settings, "lock_path", lambda: lock)
+    monkeypatch.setattr(cdp_settings, "_read_bounded_regular", lambda _path, _maximum: None)
+    monkeypatch.setattr(cdp_settings, "_windows_file_user_pids", lambda _path: {pid})
+
+    assert cdp_settings._lock_owner_pid(pid) == pid
+    assert cdp_settings._lock_owner_pid(pid + 1) is None
+
+
 def test_public_status_uses_fresh_live_heartbeat(
     isolated_cdp_home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -421,6 +484,38 @@ def test_start_daemon_is_idempotent_and_detached(
     monkeypatch.setattr(cdp_settings, "_daemon_script", lambda: missing)
     with pytest.raises(OSError, match="unavailable"):
         cdp_settings.start_daemon()
+
+
+def test_windows_watcher_launch_inherits_pythonpath_and_falls_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[tuple[list[str], dict[str, Any]]] = []
+
+    def fake_popen(command: list[str], **options: Any) -> SimpleNamespace:
+        calls.append((command, options))
+        if len(calls) == 1:
+            raise OSError("job breakaway denied")
+        return SimpleNamespace()
+
+    monkeypatch.setattr(
+        cdp_settings,
+        "os",
+        SimpleNamespace(name="nt", environ={"PYTHONPATH": "inherited"}, pathsep=";"),
+    )
+    monkeypatch.setattr(cdp_settings, "_watcher_pythonpath", lambda: "active")
+    monkeypatch.setattr(cdp_settings.subprocess, "CREATE_NEW_PROCESS_GROUP", 1, raising=False)
+    monkeypatch.setattr(cdp_settings.subprocess, "DETACHED_PROCESS", 2, raising=False)
+    monkeypatch.setattr(cdp_settings.subprocess, "CREATE_NO_WINDOW", 4, raising=False)
+    monkeypatch.setattr(cdp_settings.subprocess, "CREATE_BREAKAWAY_FROM_JOB", 8, raising=False)
+    monkeypatch.setattr(cdp_settings.subprocess, "Popen", fake_popen)
+
+    script = tmp_path / "plugin" / "scripts" / "watcher.py"
+    cdp_settings._start_watcher_process(["pythonw", str(script)], script)
+
+    assert [options["creationflags"] for _command, options in calls] == [15, 7]
+    assert calls[0][1]["env"]["PYTHONPATH"] == "active;inherited"
+    assert calls[0][1]["cwd"] == str(script.parent.parent)
+    assert calls[1][1]["close_fds"] is True
 
 
 def test_windows_watcher_uses_the_base_gui_interpreter(
