@@ -413,7 +413,10 @@ def _windows_file_user_pids(path: Path) -> set[int] | None:
     session = ctypes.c_ulong()
     session_key = ctypes.create_unicode_buffer(33)
     try:
-        restart_manager = ctypes.WinDLL("rstrtmgr", use_last_error=True)
+        dll_factory: Any = vars(ctypes).get("WinDLL")
+        if not callable(dll_factory):
+            return None
+        restart_manager = dll_factory("rstrtmgr", use_last_error=True)
         start = restart_manager.RmStartSession
         start.argtypes = [ctypes.POINTER(ctypes.c_ulong), ctypes.c_ulong, ctypes.c_wchar_p]
         start.restype = ctypes.c_ulong
