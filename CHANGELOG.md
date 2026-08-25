@@ -4,14 +4,7 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## [Unreleased]
 
-### Fixed
-
-- Serve MCP requests before optional watcher recovery, prewarm bounded latest-session projections in the background, cache safe projections by immutable rollout lineage signatures, and use a first-injection fast path so cold starts no longer serialize protocol readiness, full projection work, and auxiliary renderer cleanup. During authenticated runtime upgrades, bind the replacement viewer before stopping the verified old watcher; keep the Windows PID outside the locked byte and use Restart Manager to verify legacy lock ownership during the one-time layout transition. Publish only bounded startup durations and keep bearer-token URLs out of handoff state.
-- Remove the redundant `SessionStart` command hook and launch the MCP through one portable relative entry point: Unix executes `uv` directly, while a reviewed Windows GUI-subsystem shim prefers Astral's stdio-preserving `uvw.exe` and falls back to `uv.exe` with `CREATE_NO_WINDOW`. Start the optional watcher with the base `pythonw.exe` plus the active uv environment's import path instead of a venv redirector that can reopen `python.exe`. Together these prevent Session selection from creating a Windows Terminal/`cmd.exe` tab while preserving watcher recovery and Linux/macOS startup.
-- Select the outer authenticated `OpenAI.Codex` desktop ancestor when packaged `codex.exe` and `ChatGPT.exe` both appear in the Windows process chain, allowing the real parent-owned CDP listener to pass peer authentication; report total shell-target authentication failure through the fixed public error category instead of silently returning disconnected state.
-- Keep watcher runtime identity stable across the hook and MCP launch environments, replace stale toolbar markup deterministically, and make the Windows runtime and browser acceptance checks portable.
-
-## [0.4.0] - 2026-08-24
+## [0.4.0] - 2026-08-26
 
 ### Added
 
@@ -26,8 +19,11 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ### Fixed
 
+- Serve MCP requests before optional watcher recovery, prewarm bounded latest-session projections in the background, cache safe projections by immutable rollout lineage signatures, and use a first-injection fast path so cold starts no longer serialize protocol readiness, full projection work, and auxiliary renderer cleanup. During authenticated runtime upgrades, bind the replacement viewer before stopping the verified old watcher; keep the Windows PID outside the locked byte and use Restart Manager to verify legacy lock ownership during the one-time layout transition. Publish only bounded startup durations and keep bearer-token URLs out of handoff state.
+- Remove the redundant `SessionStart` command hook and launch the MCP through one portable relative entry point: Unix executes `uv` directly, while a reviewed Windows GUI-subsystem shim prefers Astral's stdio-preserving `uvw.exe` and falls back to `uv.exe` with `CREATE_NO_WINDOW`. Start the optional watcher with the base `pythonw.exe` plus the active uv environment's import path instead of a venv redirector that can reopen `python.exe`. Together these prevent Session selection from creating a Windows Terminal/`cmd.exe` tab while preserving watcher recovery and Linux/macOS startup.
+- Select the outer authenticated `OpenAI.Codex` desktop ancestor when packaged `codex.exe` and `ChatGPT.exe` both appear in the Windows process chain, allowing the real parent-owned CDP listener to pass peer authentication; report total shell-target authentication failure through the fixed public error category instead of silently returning disconnected state.
+- Keep watcher runtime identity stable across launch environments, replace stale toolbar markup deterministically, and make the Windows runtime and browser acceptance checks portable.
 - Serialize CDP recovery and watcher replacement across MCP processes, preserve later disable/port choices with settings revisions, use safe Windows process handles and the active uv interpreter environment, avoid disabled status probes, and expose only a fixed public error category.
-- Reconcile an already enabled authenticated watcher from a reviewed asynchronous session-start hook on macOS and Windows, reducing the cold-start delay before **View trajectory** appears while retaining MCP recovery as a fallback.
 - Apply aggregate absolute deadlines to CDP discovery, WebSocket traversal, task-state, theme, and stop operations; recheck the opt-in before direct stop; accept the current stale-turn error shape; and avoid full-history bootstraps.
 - Harden rollout discovery and reads with descriptor-checked root containment, file/line/byte/depth/lineage budgets, leading metadata rules for paginated files, dual thread/rollout UUID validation, and decompression-bomb, truncation, trailing-data, symlink, hardlink, and non-regular-file rejection.
 - Accumulate Token counters across resets without double-counting duplicate snapshots, retain late samples on their producing turns, align overview/detail/model-call/cost totals, and reject non-scalar protocol identifiers.
