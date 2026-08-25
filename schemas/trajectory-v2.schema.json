@@ -1,0 +1,541 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/icesixgod/codex-trajectory/blob/main/schemas/trajectory-v2.schema.json",
+  "title": "Codex Trajectory v2",
+  "description": "Schema for a Codex trajectory payload. Live-update, session-list, and settings envelopes use separate contracts and are not described by this schema.",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "detailLevel",
+    "generatedAt",
+    "session",
+    "pagination",
+    "stats",
+    "turns",
+    "records",
+    "warnings"
+  ],
+  "properties": {
+    "schemaVersion": {"const": 2},
+    "detailLevel": {"enum": ["summary", "full"]},
+    "generatedAt": {"type": "string", "format": "date-time", "maxLength": 40},
+    "session": {"$ref": "#/$defs/session"},
+    "pagination": {"$ref": "#/$defs/pagination"},
+    "stats": {"$ref": "#/$defs/stats"},
+    "turns": {
+      "type": "array",
+      "maxItems": 1000,
+      "items": {"$ref": "#/$defs/turn"}
+    },
+    "records": {
+      "type": "array",
+      "maxItems": 1000,
+      "items": {"$ref": "#/$defs/record"}
+    },
+    "warnings": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {"$ref": "#/$defs/warning"}
+    },
+    "recentSessions": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {"$ref": "#/$defs/sessionOverview"}
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"detailLevel": {"const": "summary"}},
+        "required": ["detailLevel"]
+      },
+      "then": {
+        "properties": {
+          "records": {
+            "items": {
+              "properties": {
+                "input": {"type": "null"},
+                "output": {"type": "null"},
+                "metadata": {"type": "object", "maxProperties": 0}
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "nullableTimestamp": {
+      "oneOf": [
+        {"type": "string", "format": "date-time"},
+        {"type": "null"}
+      ]
+    },
+    "tokenUsage": {
+      "type": "object",
+      "minProperties": 1,
+      "properties": {
+        "input_tokens": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+        "cached_input_tokens": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+        "output_tokens": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+        "reasoning_output_tokens": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+        "total_tokens": {"type": "integer", "minimum": 0, "maximum": 9007199254740991}
+      },
+      "additionalProperties": false
+    },
+    "nullableTokenUsage": {
+      "oneOf": [
+        {"$ref": "#/$defs/tokenUsage"},
+        {"type": "null"}
+      ]
+    },
+    "costEstimate": {
+      "type": "object",
+      "required": [
+        "currency",
+        "estimated",
+        "totalUsd",
+        "uncachedInputUsd",
+        "cachedInputUsd",
+        "outputUsd",
+        "coverage",
+        "pricedModelCalls",
+        "unpricedModelCalls",
+        "pricingUpdatedAt"
+      ],
+      "properties": {
+        "currency": {"const": "USD"},
+        "estimated": {"const": true},
+        "totalUsd": {"type": ["number", "null"], "minimum": 0},
+        "uncachedInputUsd": {"type": ["number", "null"], "minimum": 0},
+        "cachedInputUsd": {"type": ["number", "null"], "minimum": 0},
+        "outputUsd": {"type": ["number", "null"], "minimum": 0},
+        "coverage": {"enum": ["complete", "partial", "unavailable"]},
+        "pricedModelCalls": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "unpricedModelCalls": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "pricingUpdatedAt": {"type": "string", "format": "date", "maxLength": 10}
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "coverage": {"const": "complete"},
+            "totalUsd": {"type": "number"},
+            "uncachedInputUsd": {"type": "number"},
+            "cachedInputUsd": {"type": "number"},
+            "outputUsd": {"type": "number"},
+            "pricedModelCalls": {"minimum": 1},
+            "unpricedModelCalls": {"const": 0}
+          }
+        },
+        {
+          "properties": {
+            "coverage": {"const": "partial"},
+            "totalUsd": {"type": "number"},
+            "uncachedInputUsd": {"type": "number"},
+            "cachedInputUsd": {"type": "number"},
+            "outputUsd": {"type": "number"},
+            "pricedModelCalls": {"minimum": 1},
+            "unpricedModelCalls": {"minimum": 1}
+          }
+        },
+        {
+          "properties": {
+            "coverage": {"const": "unavailable"},
+            "totalUsd": {"type": "null"},
+            "uncachedInputUsd": {"type": "null"},
+            "cachedInputUsd": {"type": "null"},
+            "outputUsd": {"type": "null"},
+            "pricedModelCalls": {"const": 0},
+            "unpricedModelCalls": {"minimum": 1}
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "nullableCostEstimate": {
+      "oneOf": [
+        {"$ref": "#/$defs/costEstimate"},
+        {"type": "null"}
+      ]
+    },
+    "rateLimitWindow": {
+      "type": "object",
+      "required": ["usedPercent", "windowMinutes", "resetsAt"],
+      "properties": {
+        "usedPercent": {"type": "number", "minimum": 0, "maximum": 100},
+        "windowMinutes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "resetsAt": {"$ref": "#/$defs/nullableTimestamp"}
+      },
+      "additionalProperties": false
+    },
+    "rateLimits": {
+      "type": "object",
+      "minProperties": 1,
+      "properties": {
+        "primary": {"$ref": "#/$defs/rateLimitWindow"},
+        "secondary": {"$ref": "#/$defs/rateLimitWindow"}
+      },
+      "additionalProperties": false
+    },
+    "nullableRateLimits": {
+      "oneOf": [
+        {"$ref": "#/$defs/rateLimits"},
+        {"type": "null"}
+      ]
+    },
+    "git": {
+      "type": "object",
+      "minProperties": 1,
+      "properties": {
+        "branch": {"type": "string", "maxLength": 200},
+        "commit_hash": {"type": "string", "pattern": "^[0-9a-fA-F]{4,64}$"}
+      },
+      "additionalProperties": false
+    },
+    "nullableGit": {
+      "oneOf": [
+        {"$ref": "#/$defs/git"},
+        {"type": "null"}
+      ]
+    },
+    "pagination": {
+      "type": "object",
+      "required": [
+        "firstRecord",
+        "lastRecord",
+        "earlierRecords",
+        "laterRecords",
+        "hasEarlier",
+        "hasLater",
+        "nextBeforeRecord"
+      ],
+      "properties": {
+        "firstRecord": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "lastRecord": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "earlierRecords": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "laterRecords": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "hasEarlier": {"type": "boolean"},
+        "hasLater": {"type": "boolean"},
+        "nextBeforeRecord": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      },
+      "additionalProperties": false
+    },
+    "session": {
+      "type": "object",
+      "required": [
+        "id",
+        "title",
+        "cwd",
+        "model",
+        "effort",
+        "originator",
+        "sourceKind",
+        "startedAt",
+        "updatedAt",
+        "archived",
+        "parentThreadId",
+        "agentPath",
+        "git"
+      ],
+      "properties": {
+        "id": {"type": "string", "minLength": 1, "maxLength": 240},
+        "title": {"type": "string", "maxLength": 120},
+        "cwd": {"type": ["string", "null"], "maxLength": 500},
+        "model": {"type": ["string", "null"], "maxLength": 200},
+        "effort": {"type": ["string", "null"], "maxLength": 80},
+        "originator": {"type": ["string", "null"], "maxLength": 120},
+        "sourceKind": {
+          "enum": ["cli", "vscode", "exec", "mcp", "custom", "internal", "subagent", "unknown", null]
+        },
+        "startedAt": {"$ref": "#/$defs/nullableTimestamp"},
+        "updatedAt": {"$ref": "#/$defs/nullableTimestamp"},
+        "archived": {"type": "boolean"},
+        "parentThreadId": {"type": ["string", "null"], "maxLength": 100},
+        "agentPath": {"type": ["string", "null"], "maxLength": 200},
+        "git": {"$ref": "#/$defs/nullableGit"}
+      },
+      "additionalProperties": false
+    },
+    "stats": {
+      "type": "object",
+      "required": [
+        "turns",
+        "records",
+        "visibleRecords",
+        "omittedRecords",
+        "toolCalls",
+        "failedTools",
+        "compactions",
+        "tokens",
+        "cost",
+        "contextWindow",
+        "rateLimits"
+      ],
+      "properties": {
+        "turns": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "visibleTurns": {"type": "integer", "minimum": 0, "maximum": 1000},
+        "omittedTurns": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "records": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "visibleRecords": {"type": "integer", "minimum": 0, "maximum": 1000},
+        "omittedRecords": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "toolCalls": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "failedTools": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "compactions": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "tokens": {"$ref": "#/$defs/nullableTokenUsage"},
+        "cost": {"$ref": "#/$defs/nullableCostEstimate"},
+        "rateLimits": {"$ref": "#/$defs/nullableRateLimits"},
+        "contextWindow": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      },
+      "dependentRequired": {
+        "visibleTurns": ["omittedTurns"],
+        "omittedTurns": ["visibleTurns"]
+      },
+      "additionalProperties": false
+    },
+    "turn": {
+      "type": "object",
+      "required": [
+        "index",
+        "id",
+        "startedAt",
+        "completedAt",
+        "durationMs",
+        "timeToFirstTokenMs",
+        "status",
+        "error",
+        "records",
+        "steps",
+        "modelCalls",
+        "usage",
+        "cost",
+        "model"
+      ],
+      "properties": {
+        "index": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "id": {"type": ["string", "null"], "maxLength": 240},
+        "startedAt": {"$ref": "#/$defs/nullableTimestamp"},
+        "completedAt": {"$ref": "#/$defs/nullableTimestamp"},
+        "durationMs": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "timeToFirstTokenMs": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "status": {"enum": ["running", "complete", "error", "aborted"]},
+        "error": {"type": ["string", "null"], "maxLength": 1000},
+        "records": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "steps": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "modelCalls": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "usage": {"$ref": "#/$defs/nullableTokenUsage"},
+        "cost": {"$ref": "#/$defs/nullableCostEstimate"},
+        "model": {"type": ["string", "null"], "maxLength": 200}
+      },
+      "additionalProperties": false
+    },
+    "record": {
+      "type": "object",
+      "required": [
+        "index",
+        "id",
+        "turn",
+        "step",
+        "kind",
+        "event",
+        "summary",
+        "startedAt",
+        "completedAt",
+        "durationMs",
+        "status",
+        "callId",
+        "input",
+        "output",
+        "error",
+        "usage",
+        "cost",
+        "metadata"
+      ],
+      "properties": {
+        "index": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "id": {"type": "string", "minLength": 1, "maxLength": 240},
+        "turn": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "step": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "kind": {"enum": ["user", "assistant", "reasoning", "tool", "subagent", "compaction"]},
+        "event": {"type": "string", "minLength": 1, "maxLength": 260},
+        "summary": {"type": "string", "maxLength": 220},
+        "startedAt": {"$ref": "#/$defs/nullableTimestamp"},
+        "completedAt": {"$ref": "#/$defs/nullableTimestamp"},
+        "durationMs": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "status": {"enum": ["running", "complete", "error", "aborted"]},
+        "callId": {"type": ["string", "null"], "maxLength": 240},
+        "input": {"type": ["string", "null"], "maxLength": 12100},
+        "output": {"type": ["string", "null"], "maxLength": 12100},
+        "error": {"type": ["string", "null"], "maxLength": 1000},
+        "usage": {"$ref": "#/$defs/nullableTokenUsage"},
+        "cost": {"$ref": "#/$defs/nullableCostEstimate"},
+        "metadata": {"type": "object", "maxProperties": 20}
+      },
+      "additionalProperties": false
+    },
+    "warning": {
+      "type": "object",
+      "required": ["code", "line", "message"],
+      "properties": {
+        "code": {"type": "string", "minLength": 1, "maxLength": 100},
+        "line": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "message": {"type": "string", "minLength": 1, "maxLength": 500}
+      },
+      "additionalProperties": false
+    },
+    "sessionOverview": {
+      "type": "object",
+      "required": [
+        "id",
+        "title",
+        "cwd",
+        "model",
+        "effort",
+        "collaborationMode",
+        "startedAt",
+        "updatedAt",
+        "turns",
+        "toolCalls",
+        "tokens",
+        "archived",
+        "parentThreadId",
+        "agentPath",
+        "git"
+      ],
+      "properties": {
+        "id": {"type": "string", "minLength": 1, "maxLength": 240},
+        "title": {"type": "string", "maxLength": 100},
+        "cwd": {"type": ["string", "null"], "maxLength": 500},
+        "model": {"type": ["string", "null"], "maxLength": 200},
+        "effort": {"type": ["string", "null"], "maxLength": 80},
+        "collaborationMode": {"type": ["string", "null"], "maxLength": 80},
+        "startedAt": {"$ref": "#/$defs/nullableTimestamp"},
+        "updatedAt": {"$ref": "#/$defs/nullableTimestamp"},
+        "turns": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "toolCalls": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "tokens": {"$ref": "#/$defs/nullableTokenUsage"},
+        "archived": {"type": "boolean"},
+        "parentThreadId": {"type": ["string", "null"], "maxLength": 100},
+        "agentPath": {"type": ["string", "null"], "maxLength": 200},
+        "git": {"$ref": "#/$defs/nullableGit"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

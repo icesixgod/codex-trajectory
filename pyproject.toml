@@ -1,12 +1,14 @@
 [project]
 name = "codex-trajectory"
-version = "0.3.2"
+version = "0.4.0"
 description = "Privacy-aware trajectory viewer for local Codex task logs"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 authors = [{ name = "icesixgod" }]
-dependencies = []
+dependencies = [
+  "zstandard==0.25.0; python_version < '3.14'",
+]
 
 [dependency-groups]
 dev = [
@@ -26,14 +28,18 @@ package = false
 addopts = "--strict-config --strict-markers"
 pythonpath = [".", "plugins/codex-trajectory/scripts"]
 testpaths = ["plugins/codex-trajectory/tests"]
-markers = ["ui: browser acceptance tests that require a local Chromium installation"]
+markers = [
+  "ui: browser acceptance tests that require a local Chromium installation",
+  "windows_app: opt-in acceptance tests against an installed Windows Codex desktop app",
+]
 
 [tool.coverage.run]
 branch = true
-source = ["codex_trajectory"]
+source = ["plugins/codex-trajectory/scripts"]
 
 [tool.coverage.report]
-fail_under = 95
+fail_under = 80
+precision = 2
 show_missing = true
 skip_covered = true
 

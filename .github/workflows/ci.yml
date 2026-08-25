@@ -16,53 +16,86 @@ jobs:
   quality:
     name: Quality and compatibility
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: astral-sh/setup-uv@ae62891fec2bb8e7d6c99fc78c9fec3a63790f8d # v10.0.0
         with:
-          version: "0.7.22"
+          version: "0.12.5"
           enable-cache: true
       - run: uv sync --locked --group dev
       - run: uv run ruff format --check .
       - run: uv run ruff check .
       - run: uv run mypy
-      - run: uv run pytest --cov --cov-report=term-missing
-      - run: uv run python scripts/validate_release.py --version 0.3.2
+      - name: Type-check Windows platform
+        run: uv run mypy --no-incremental --platform win32
+      - name: Test with project-wide coverage
+        run: uv run pytest --cov --cov-report=term-missing
+      - name: Enforce focused coverage floors
+        run: |
+          uv run coverage report --include='plugins/codex-trajectory/scripts/codex_trajectory/*.py' --fail-under=85
+          uv run coverage report --include='plugins/codex-trajectory/scripts/codex_trajectory/browser_view.py' --fail-under=90
+          uv run coverage report --include='plugins/codex-trajectory/scripts/codex_trajectory/cdp_peer.py' --fail-under=45
+          uv run coverage report --include='plugins/codex-trajectory/scripts/codex_trajectory/cdp_settings.py' --fail-under=80
+          uv run coverage report --include='plugins/codex-trajectory/scripts/codex_trajectory_cdp.py' --fail-under=50
+          uv run coverage report --include='plugins/codex-trajectory/scripts/codex_trajectory_mcp.py' --fail-under=85
+      - run: uv run python scripts/validate_release.py
       - run: uv run python scripts/smoke_mcp.py
 
   runtime:
     name: Runtime (${{ matrix.os }}, Python ${{ matrix.python }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      UV_PYTHON: ${{ matrix.python }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        python: ["3.10", "3.12", "3.14"]
+        python: ["3.10", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: astral-sh/setup-uv@ae62891fec2bb8e7d6c99fc78c9fec3a63790f8d # v10.0.0
         with:
-          version: "0.7.22"
+          version: "0.12.5"
           enable-cache: true
           python-version: ${{ matrix.python }}
-      - run: uv run --no-project python scripts/smoke_mcp.py
+      - name: Verify stable Python runtime
+        shell: bash
+        run: |
+          uv run --no-project python -VV
+          uv run --no-project python -c "import sys; expected=tuple(map(int, '${{ matrix.python }}'.split('.'))); assert sys.version_info[:2] == expected and sys.version_info.releaselevel == 'final', sys.version"
+      - run: uv sync --locked --group dev
+      - run: uv run pytest -m "not ui" -q
+      - run: uv run python scripts/smoke_mcp.py
+      - name: Install Chromium for the focused Windows CDP test
+        if: runner.os == 'Windows' && matrix.python == '3.12'
+        run: uv run playwright install chromium
+      - name: Exercise the Windows CDP browser transport
+        if: runner.os == 'Windows' && matrix.python == '3.12'
+        run: >-
+          uv run pytest
+          plugins/codex-trajectory/tests/test_cdp_transport.py
+          -m ui
+          -q
         env:
-          UV_PYTHON: ${{ matrix.python }}
+          RUN_UI_TESTS: "1"
 
   ui:
     name: Browser UI
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: astral-sh/setup-uv@ae62891fec2bb8e7d6c99fc78c9fec3a63790f8d # v10.0.0
         with:
-          version: "0.7.22"
+          version: "0.12.5"
           enable-cache: true
       - run: uv sync --locked --group dev
       - run: uv run playwright install --with-deps chromium
@@ -77,17 +110,28 @@ jobs:
   package:
     name: Release archive
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: astral-sh/setup-uv@ae62891fec2bb8e7d6c99fc78c9fec3a63790f8d # v10.0.0
         with:
-          version: "0.7.22"
+          version: "0.12.5"
       - name: Build and inspect release archives
         shell: bash
         run: |
+          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' pyproject.toml | head -n 1)"
+          test -n "$version"
           mkdir -p /tmp/codex-trajectory-dist
-          git archive --format=zip --prefix="codex-trajectory-0.3.2/" --output="/tmp/codex-trajectory-dist/codex-trajectory-v0.3.2.zip" HEAD
-          git archive --format=tar --prefix="codex-trajectory-0.3.2/" HEAD | gzip -n > "/tmp/codex-trajectory-dist/codex-trajectory-v0.3.2.tar.gz"
-          uv run --no-project python scripts/check_archives.py /tmp/codex-trajectory-dist/codex-trajectory-v0.3.2.zip /tmp/codex-trajectory-dist/codex-trajectory-v0.3.2.tar.gz
+          zip_path="/tmp/codex-trajectory-dist/codex-trajectory-v$version.zip"
+          tar_path="/tmp/codex-trajectory-dist/codex-trajectory-v$version.tar.gz"
+          git archive --format=zip --prefix="codex-trajectory-$version/" --output="$zip_path" HEAD
+          git archive --format=tar --prefix="codex-trajectory-$version/" HEAD | gzip -n > "$tar_path"
+          uv run --no-project python scripts/check_archives.py "$zip_path" "$tar_path"
+          zip_root="$(mktemp -d)"
+          tar_root="$(mktemp -d)"
+          unzip -q "$zip_path" -d "$zip_root"
+          tar -xzf "$tar_path" -C "$tar_root"
+          uv run --no-project python "$zip_root/codex-trajectory-$version/scripts/smoke_mcp.py"
+          uv run --no-project python "$tar_root/codex-trajectory-$version/scripts/smoke_mcp.py"

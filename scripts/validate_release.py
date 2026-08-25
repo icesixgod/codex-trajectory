@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import re
@@ -20,6 +21,10 @@ VERSION_PATTERN = re.compile(r"(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)")
 MAX_RELEASE_JSON_BYTES = 1024 * 1024
 MAX_JSON_INTEGER_DIGITS = 256
 MAX_JSON_NESTING_DEPTH = 256
+FROZEN_SCHEMA_SHA256 = {
+    1: "b74e0aa0b75280151cdaf3502a819e0ebf501699e52a83315dda9fddf1ebf458",
+}
+WINDOWS_LAUNCHER_SHA256 = "bf3cf1118ad6d5fd1cf91a671d9ccba6cd3af7dfb7dabeeebd37f6c6442ea67f"
 
 
 def _validate_json_nesting(value: str) -> None:
@@ -361,6 +366,16 @@ def validate_versions(manifest_version: str) -> None:
         r'^__version__\s*=\s*"([^"]+)"',
         "runtime package",
     )
+    lock_version = declared_version(
+        ROOT / "uv.lock",
+        r'^\[\[package\]\]\s*\nname\s*=\s*"codex-trajectory"\s*\nversion\s*=\s*"([^"]+)"',
+        "lockfile project",
+    )
+    issue_template_version = declared_version(
+        ROOT / ".github" / "ISSUE_TEMPLATE" / "bug_report.yml",
+        r"^\s*placeholder:\s*([^\s]+)",
+        "bug-report placeholder",
+    )
     require(
         project_version == manifest_version,
         f"project version {project_version} != manifest version {manifest_version}",
@@ -368,6 +383,15 @@ def validate_versions(manifest_version: str) -> None:
     require(
         package_version == manifest_version,
         f"runtime version {package_version} != manifest version {manifest_version}",
+    )
+    require(
+        lock_version == manifest_version,
+        f"lockfile project version {lock_version} != manifest version {manifest_version}",
+    )
+    require(
+        issue_template_version == manifest_version,
+        "bug-report placeholder version "
+        f"{issue_template_version} != manifest version {manifest_version}",
     )
 
 
@@ -428,7 +452,7 @@ def validate_skill() -> None:
 
 
 def validate_mcp() -> None:
-    """Validate the cross-platform uv script command."""
+    """Validate the portable MCP launcher and its windowless Windows binary."""
     config = load_json(PLUGIN / ".mcp.json")
     require(
         set(config) == {"mcpServers"},
@@ -445,39 +469,142 @@ def validate_mcp() -> None:
         set(server) == {"command", "args", "cwd", "env_vars"},
         "unexpected MCP server field",
     )
-    require(server.get("command") == "uv", "MCP runtime must be uv")
+    require(
+        server.get("command") == "./scripts/codex_trajectory_launcher",
+        "MCP runtime must use the portable relative launcher",
+    )
     require(
         server.get("args") == ["run", "--script", "./scripts/codex_trajectory_mcp.py"],
         "MCP uv command changed",
     )
     require(server.get("cwd") == ".", "MCP cwd must be the plugin root")
     require(server.get("env_vars") == ["CODEX_HOME"], "MCP environment allowlist changed")
+    launcher_root = PLUGIN / "scripts" / "codex_trajectory_launcher"
+    require(
+        launcher_root.read_bytes() == b'#!/bin/sh\nset -eu\n\nexec uv "$@"\n',
+        "Unix MCP launcher must directly exec uv",
+    )
+    source = launcher_root.with_suffix(".c").read_text(encoding="utf-8")
+    require(
+        "CREATE_NO_WINDOW" in source
+        and "STARTF_USESTDHANDLES" in source
+        and "CreateProcessW" in source
+        and "ShellExecute" not in source,
+        "Windows MCP launcher source lost its no-window stdio contract",
+    )
+    executable = launcher_root.with_suffix(".exe")
+    require(
+        hashlib.sha256(executable.read_bytes()).hexdigest() == WINDOWS_LAUNCHER_SHA256,
+        "Windows MCP launcher binary changed without review",
+    )
+    with executable.open("rb") as stream:
+        dos_header = stream.read(64)
+        require(
+            len(dos_header) == 64 and dos_header[:2] == b"MZ",
+            "Windows MCP launcher is not a PE executable",
+        )
+        pe_offset = struct.unpack_from("<I", dos_header, 60)[0]
+        stream.seek(pe_offset)
+        pe_header = stream.read(24)
+        require(
+            len(pe_header) == 24 and pe_header[:4] == b"PE\0\0",
+            "Windows MCP launcher PE header is invalid",
+        )
+        optional_header_size = struct.unpack_from("<H", pe_header, 20)[0]
+        optional_header = stream.read(optional_header_size)
+    require(
+        len(optional_header) >= 70 and struct.unpack_from("<H", optional_header, 68)[0] == 2,
+        "Windows MCP launcher must use the GUI subsystem",
+    )
+
+
+def validate_watcher_startup() -> None:
+    """Keep watcher recovery on MCP startup without a command-shell hook."""
+    require(
+        not (PLUGIN / "hooks" / "hooks.json").exists(),
+        "plugin must not bundle a command hook that opens a Windows terminal",
+    )
+    require(
+        not (PLUGIN / "scripts" / "codex_trajectory_bootstrap.py").exists(),
+        "obsolete command-hook bootstrap must not be packaged",
+    )
+    mcp_source = (PLUGIN / "scripts" / "codex_trajectory_mcp.py").read_text(encoding="utf-8")
+    require(
+        "reconcile_daemon()" in mcp_source,
+        "MCP startup must restore the opted-in watcher",
+    )
 
 
 def validate_schema() -> None:
-    """Validate the complete versioned trajectory schema."""
-    schema = load_json(ROOT / "schemas" / "trajectory-v1.schema.json")
-    Draft202012Validator.check_schema(schema)
-    require(
-        schema.get("$schema") == "https://json-schema.org/draft/2020-12/schema",
-        "unexpected JSON Schema draft",
-    )
-    properties = schema.get("properties")
-    require(isinstance(properties, dict), "schema properties are missing")
-    properties = cast(dict[str, Any], properties)
-    schema_version = properties.get("schemaVersion")
-    require(
-        isinstance(schema_version, dict) and schema_version.get("const") == 1,
-        "schemaVersion must be 1",
-    )
-    require(schema.get("additionalProperties") is False, "schema root must be closed")
-    definitions = schema.get("$defs")
-    require(isinstance(definitions, dict), "schema definitions are missing")
-    definitions = cast(dict[str, Any], definitions)
-    require(
-        {"session", "stats", "turn", "record", "warning", "sessionOverview"} <= definitions.keys(),
-        "schema definitions are incomplete",
-    )
+    """Validate every published trajectory schema without mutating older contracts."""
+    for version, expected_digest in FROZEN_SCHEMA_SHA256.items():
+        path = ROOT / "schemas" / f"trajectory-v{version}.schema.json"
+        actual_digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        require(
+            actual_digest == expected_digest,
+            f"published schema version {version} must remain byte-for-byte unchanged",
+        )
+    for expected_version in (1, 2):
+        schema = load_json(ROOT / "schemas" / f"trajectory-v{expected_version}.schema.json")
+        Draft202012Validator.check_schema(schema)
+        require(
+            schema.get("$id")
+            == (
+                "https://github.com/icesixgod/codex-trajectory/blob/main/"
+                f"schemas/trajectory-v{expected_version}.schema.json"
+            ),
+            f"schema version {expected_version} has an unexpected ID",
+        )
+        require(
+            schema.get("$schema") == "https://json-schema.org/draft/2020-12/schema",
+            f"unexpected JSON Schema draft in version {expected_version}",
+        )
+        require(
+            schema.get("title") == f"Codex Trajectory v{expected_version}",
+            f"schema version {expected_version} has an unexpected title",
+        )
+        properties = schema.get("properties")
+        require(isinstance(properties, dict), "schema properties are missing")
+        properties = cast(dict[str, Any], properties)
+        schema_version = properties.get("schemaVersion")
+        require(
+            isinstance(schema_version, dict) and schema_version.get("const") == expected_version,
+            f"schemaVersion must be {expected_version}",
+        )
+        require(schema.get("additionalProperties") is False, "schema root must be closed")
+        definitions = schema.get("$defs")
+        require(isinstance(definitions, dict), "schema definitions are missing")
+        definitions = cast(dict[str, Any], definitions)
+        require(
+            {"session", "stats", "turn", "record", "warning", "sessionOverview"}
+            <= definitions.keys(),
+            "schema definitions are incomplete",
+        )
+        cost_owners = ("stats", "turn", "record")
+        if expected_version == 1:
+            require(
+                "costEstimate" not in definitions
+                and all(
+                    isinstance(definitions.get(owner), dict)
+                    and "cost" not in definitions[owner].get("properties", {})
+                    for owner in cost_owners
+                ),
+                "schema version 1 must remain free of version 2 cost fields",
+            )
+        else:
+            require(
+                {"costEstimate", "nullableCostEstimate"} <= definitions.keys(),
+                "schema version 2 cost definitions are incomplete",
+            )
+            require(
+                all(
+                    isinstance(definitions.get(owner), dict)
+                    and "cost" in definitions[owner].get("properties", {})
+                    and "cost" in definitions[owner].get("required", [])
+                    for owner in cost_owners
+                ),
+                "schema version 2 cost fields must be required",
+            )
 
 
 def validate_attribution() -> None:
@@ -579,6 +706,7 @@ def main() -> None:
     validate_marketplace()
     validate_skill()
     validate_mcp()
+    validate_watcher_startup()
     validate_schema()
     validate_attribution()
     validate_repository_contents()

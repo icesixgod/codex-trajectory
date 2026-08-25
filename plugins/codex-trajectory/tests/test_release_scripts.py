@@ -2,15 +2,27 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
+import json
+import os
+import shutil
+import struct
+import subprocess
 import tarfile
 import zipfile
 from pathlib import Path
 
 import pytest
 
-from scripts import validate_release
-from scripts.check_archives import REQUIRED, inspect_tar, inspect_zip, relative_member
+from scripts import smoke_mcp, validate_release
+from scripts.check_archives import (
+    REQUIRED,
+    archive_version,
+    inspect_tar,
+    inspect_zip,
+    relative_member,
+)
 from scripts.validate_release import MAX_JSON_NESTING_DEPTH, MAX_RELEASE_JSON_BYTES, load_json
 
 
@@ -22,7 +34,11 @@ def release_files(value: bytes = b"release-data") -> dict[str, bytes]:
 def write_zip(path: Path, files: dict[str, bytes], root: str = "codex-trajectory-0.2.0") -> Path:
     with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for name, value in files.items():
-            archive.writestr(f"{root}/{name}", value)
+            info = zipfile.ZipInfo(f"{root}/{name}")
+            info.create_system = 3
+            mode = 0o100755 if name.endswith("/codex_trajectory_launcher") else 0o100644
+            info.external_attr = mode << 16
+            archive.writestr(info, value, compress_type=zipfile.ZIP_DEFLATED)
     return path
 
 
@@ -31,7 +47,7 @@ def write_tar(path: Path, files: dict[str, bytes], root: str = "codex-trajectory
         for name, value in files.items():
             info = tarfile.TarInfo(f"{root}/{name}")
             info.size = len(value)
-            info.mode = 0o644
+            info.mode = 0o755 if name.endswith("/codex_trajectory_launcher") else 0o644
             archive.addfile(info, io.BytesIO(value))
     return path
 
@@ -49,6 +65,147 @@ def test_release_archives_compare_file_bytes_and_modes(tmp_path: Path) -> None:
     changed["README.md"] = b"different"
     _, changed_members = inspect_tar(str(write_tar(tmp_path / "changed.tar.gz", changed)))
     assert zip_members != changed_members
+
+
+def test_release_archive_requires_an_executable_unix_launcher(tmp_path: Path) -> None:
+    archive_path = tmp_path / "non-executable-launcher.zip"
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        for name, value in release_files().items():
+            info = zipfile.ZipInfo(f"codex-trajectory-0.2.0/{name}")
+            info.create_system = 3
+            info.external_attr = 0o100644 << 16
+            archive.writestr(info, value)
+
+    with pytest.raises(ValueError, match="launcher is not executable"):
+        inspect_zip(str(archive_path))
+
+
+def test_mcp_smoke_resolves_the_packaged_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plugin = tmp_path / "plugin"
+    plugin.mkdir()
+    scripts = plugin / "scripts"
+    scripts.mkdir()
+    launcher = scripts / "codex_trajectory_launcher.exe"
+    launcher.write_bytes(b"launcher")
+    (plugin / ".mcp.json").write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "codex-trajectory": {
+                        "command": "./scripts/codex_trajectory_launcher",
+                        "args": ["run", "--script", "./scripts/server.py"],
+                        "cwd": ".",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        smoke_mcp.shutil,
+        "which",
+        lambda command: (
+            str(launcher)
+            if command
+            == str(launcher if os.name == "nt" else scripts / "codex_trajectory_launcher")
+            else None
+        ),
+    )
+
+    command, cwd = smoke_mcp.declared_mcp_command(plugin)
+
+    assert command == [str(launcher), "run", "--script", "./scripts/server.py"]
+    assert cwd == plugin.resolve()
+
+
+def test_mcp_smoke_rejects_an_unavailable_launcher_or_escaping_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plugin = tmp_path / "plugin"
+    plugin.mkdir()
+    config = {
+        "mcpServers": {
+            "codex-trajectory": {
+                "command": "missing-launcher",
+                "args": [],
+                "cwd": ".",
+            }
+        }
+    }
+    path = plugin / ".mcp.json"
+    path.write_text(json.dumps(config), encoding="utf-8")
+    monkeypatch.setattr(smoke_mcp.shutil, "which", lambda _command: None)
+    with pytest.raises(RuntimeError, match="unavailable"):
+        smoke_mcp.declared_mcp_command(plugin)
+
+    config["mcpServers"]["codex-trajectory"]["cwd"] = ".."
+    path.write_text(json.dumps(config), encoding="utf-8")
+    monkeypatch.setattr(smoke_mcp.shutil, "which", lambda _command: str(tmp_path / "uvw"))
+    with pytest.raises(RuntimeError, match="escapes"):
+        smoke_mcp.declared_mcp_command(plugin)
+
+    config["mcpServers"]["codex-trajectory"]["cwd"] = "."
+    config["mcpServers"]["codex-trajectory"]["command"] = "../outside-launcher"
+    path.write_text(json.dumps(config), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="launcher escapes"):
+        smoke_mcp.declared_mcp_command(plugin)
+
+
+def test_windows_mcp_launcher_uses_the_gui_pe_subsystem(tmp_path: Path) -> None:
+    launcher = tmp_path / "uvw.exe"
+    value = bytearray(128 + 24 + 70)
+    value[:2] = b"MZ"
+    struct.pack_into("<I", value, 60, 128)
+    value[128:132] = b"PE\0\0"
+    struct.pack_into("<H", value, 128 + 20, 70)
+    struct.pack_into("<H", value, 128 + 24, 0x20B)
+    struct.pack_into("<H", value, 128 + 24 + 68, 2)
+    launcher.write_bytes(value)
+
+    assert smoke_mcp.windows_pe_subsystem(launcher) == 2
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows launcher integration")
+def test_windows_mcp_launcher_falls_back_to_no_window_uv(tmp_path: Path) -> None:
+    uv = shutil.which("uv")
+    assert uv is not None
+    isolated_uv = tmp_path / "uv.exe"
+    shutil.copyfile(uv, isolated_uv)
+    launcher = (validate_release.PLUGIN / "scripts" / "codex_trajectory_launcher.exe").resolve()
+    environment = os.environ.copy()
+    environment["PATH"] = str(tmp_path)
+
+    completed = subprocess.run(  # nosec B603
+        [launcher, "--version"],
+        env=environment,
+        text=True,
+        encoding="utf-8",
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+
+    assert completed.returncode == 0
+    assert completed.stdout.startswith("uv ")
+
+
+@pytest.mark.parametrize(
+    "runtime_module",
+    [
+        "plugins/codex-trajectory/scripts/codex_trajectory/browser_view.py",
+        "plugins/codex-trajectory/scripts/codex_trajectory/pricing.py",
+    ],
+)
+def test_release_archive_rejects_missing_runtime_module(
+    tmp_path: Path, runtime_module: str
+) -> None:
+    files = release_files()
+    del files[runtime_module]
+
+    with pytest.raises(ValueError, match="required release member is missing"):
+        inspect_zip(str(write_zip(tmp_path / "missing-runtime.zip", files)))
 
 
 @pytest.mark.parametrize(
@@ -123,6 +280,19 @@ def test_release_archive_rejects_case_inconsistent_directories(tmp_path: Path) -
 def test_release_archive_requires_a_canonical_versioned_root(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="top-level directory"):
         inspect_zip(str(write_zip(tmp_path / "unsafe-root.zip", release_files(), root=".git")))
+
+
+def test_release_archive_filename_requires_an_exact_version() -> None:
+    assert archive_version("dist/codex-trajectory-v0.3.2.tar.gz") == "0.3.2"
+    assert archive_version("codex-trajectory-v10.20.30.zip") == "10.20.30"
+    for name in (
+        "release.zip",
+        "codex-trajectory-0.3.2.zip",
+        "codex-trajectory-v01.2.3.zip",
+        "codex-trajectory-v0.3.2.zip.backup",
+    ):
+        with pytest.raises(ValueError, match="filename"):
+            archive_version(name)
 
 
 def test_release_archive_rejects_file_directory_prefix_collisions(tmp_path: Path) -> None:
@@ -240,3 +410,49 @@ def test_versioned_release_rejects_nonempty_unreleased_section(
         encoding="utf-8",
     )
     validate_release.validate_release_notes("0.3.1")
+
+
+def test_release_versions_include_lockfile_and_issue_template(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = tmp_path / "plugins" / "codex-trajectory"
+    package = plugin / "scripts" / "codex_trajectory"
+    issue_template = tmp_path / ".github" / "ISSUE_TEMPLATE"
+    package.mkdir(parents=True)
+    issue_template.mkdir(parents=True)
+    (tmp_path / "pyproject.toml").write_text('version = "0.4.0"\n', encoding="utf-8")
+    (package / "__init__.py").write_text('__version__ = "0.4.0"\n', encoding="utf-8")
+    (tmp_path / "uv.lock").write_text(
+        '[[package]]\nname = "codex-trajectory"\nversion = "0.4.0"\n',
+        encoding="utf-8",
+    )
+    bug_report = issue_template / "bug_report.yml"
+    bug_report.write_text("      placeholder: 0.4.0\n", encoding="utf-8")
+    monkeypatch.setattr(validate_release, "ROOT", tmp_path)
+    monkeypatch.setattr(validate_release, "PLUGIN", plugin)
+
+    validate_release.validate_versions("0.4.0")
+
+    bug_report.write_text("      placeholder: 0.3.2\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="bug-report placeholder version"):
+        validate_release.validate_versions("0.4.0")
+
+
+def test_published_v1_schema_is_byte_for_byte_frozen(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = validate_release.ROOT / "schemas" / "trajectory-v1.schema.json"
+    schema = tmp_path / "schemas" / "trajectory-v1.schema.json"
+    schema.parent.mkdir(parents=True)
+    schema.write_bytes(source.read_bytes())
+    monkeypatch.setattr(validate_release, "ROOT", tmp_path)
+
+    assert (
+        hashlib.sha256(schema.read_bytes()).hexdigest() == validate_release.FROZEN_SCHEMA_SHA256[1]
+    )
+
+    schema.write_bytes(schema.read_bytes() + b"\n")
+    with pytest.raises(ValueError, match="byte-for-byte unchanged"):
+        validate_release.validate_schema()

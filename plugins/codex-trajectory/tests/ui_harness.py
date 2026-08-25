@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+from codex_trajectory.pricing import estimate_usage_cost, merge_cost_estimates
+
 ASSET_DIRECTORY = Path(__file__).parents[1] / "assets"
 
 
@@ -38,6 +40,7 @@ def _record(
     input_detail: str | None = None,
     output_detail: str | None = None,
     usage_detail: dict[str, int] | None = None,
+    model: str | None = "gpt-5",
 ) -> dict[str, Any]:
     """Build one stable demo record."""
     base_ms = 1_786_665_601_000
@@ -70,6 +73,7 @@ def _record(
         "output": output_detail,
         "error": "Expected command failure" if status == "error" else None,
         "usage": usage,
+        "cost": estimate_usage_cost(model, usage) if usage is not None else None,
         "metadata": {"protocolType": "function_call"} if kind == "tool" else {},
     }
 
@@ -91,6 +95,16 @@ def _aggregate_usage(items: list[dict[str, int]]) -> dict[str, int] | None:
     for item in items:
         for key, value in item.items():
             result[key] = result.get(key, 0) + value
+    return result
+
+
+def _aggregate_cost(records: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Combine the fixture records' per-model estimates using production pricing logic."""
+    result: dict[str, Any] | None = None
+    for record in records:
+        cost = record.get("cost")
+        if isinstance(cost, dict):
+            result = merge_cost_estimates(result, cost)
     return result
 
 
@@ -240,6 +254,63 @@ def demo_trajectories() -> dict[str, dict[str, Any]]:
             },
         ),
     ]
+    partial_cost_records = [
+        _record(1, 1, "user", "User message", "Inspect mixed-model pricing", 0),
+        _record(
+            2,
+            1,
+            "assistant",
+            "Assistant message",
+            "Published model response",
+            500,
+            300,
+            usage_detail={
+                "input_tokens": 100,
+                "cached_input_tokens": 80,
+                "output_tokens": 20,
+                "reasoning_output_tokens": 4,
+                "total_tokens": 120,
+            },
+            model="gpt-5",
+        ),
+        _record(
+            3,
+            1,
+            "assistant",
+            "Assistant message",
+            "Private model response",
+            900,
+            300,
+            usage_detail={
+                "input_tokens": 50,
+                "cached_input_tokens": 10,
+                "output_tokens": 10,
+                "reasoning_output_tokens": 2,
+                "total_tokens": 60,
+            },
+            model="private-model",
+        ),
+    ]
+    unavailable_cost_records = [
+        _record(1, 1, "user", "User message", "Inspect unavailable pricing", 0),
+        _record(
+            2,
+            1,
+            "assistant",
+            "Assistant message",
+            "Unpublished model response",
+            500,
+            300,
+            usage_detail={
+                "input_tokens": 80,
+                "cached_input_tokens": 20,
+                "output_tokens": 16,
+                "reasoning_output_tokens": 4,
+                "total_tokens": 96,
+            },
+            model="private-model",
+        ),
+    ]
     hostile_records = [
         _record(
             1,
@@ -292,6 +363,18 @@ def demo_trajectories() -> dict[str, dict[str, Any]]:
             "model": "gpt-5",
         },
         {
+            "id": "session-partial-cost",
+            "title": "Inspect mixed-model pricing",
+            "cwd": "~/work/partial-cost-task",
+            "model": "mixed-models",
+        },
+        {
+            "id": "session-unavailable-cost",
+            "title": "Inspect unavailable pricing",
+            "cwd": "~/work/unavailable-cost-task",
+            "model": "private-model",
+        },
+        {
             "id": "session-xss",
             "title": hostile,
             "cwd": hostile,
@@ -300,11 +383,13 @@ def demo_trajectories() -> dict[str, dict[str, Any]]:
     ]
     return {
         "session-alpha": _trajectory(sessions[0], sessions, first_records, 2),
-        "session-beta": _trajectory(sessions[1], sessions, second_records, 1),
+        "session-beta": _trajectory(sessions[1], sessions, second_records, 1, timed=False),
         "session-large": _trajectory(sessions[3], sessions, large_records, 100),
         "session-paged": _trajectory(sessions[4], sessions, paged_records, 241),
         "session-big-tokens": _trajectory(sessions[5], sessions, big_token_records, 1),
-        "session-xss": _trajectory(sessions[6], sessions, hostile_records, 1),
+        "session-partial-cost": _trajectory(sessions[6], sessions, partial_cost_records, 1),
+        "session-unavailable-cost": _trajectory(sessions[7], sessions, unavailable_cost_records, 1),
+        "session-xss": _trajectory(sessions[8], sessions, hostile_records, 1),
     }
 
 
@@ -313,6 +398,8 @@ def _trajectory(
     recent_sessions: list[dict[str, Any]],
     records: list[dict[str, Any]],
     turn_count: int,
+    *,
+    timed: bool = True,
 ) -> dict[str, Any]:
     """Build one complete UI payload."""
     turns = []
@@ -325,8 +412,8 @@ def _trajectory(
                 "id": f"turn-{index}",
                 "startedAt": members[0]["startedAt"],
                 "completedAt": members[-1]["completedAt"],
-                "durationMs": 2_900 if index == 1 else 2_750,
-                "timeToFirstTokenMs": 300,
+                "durationMs": (2_900 if index == 1 else 2_750) if timed else None,
+                "timeToFirstTokenMs": 300 if timed else None,
                 "status": "complete",
                 "error": None,
                 "records": len(members),
@@ -334,12 +421,13 @@ def _trajectory(
                 "model": session["model"],
                 "modelCalls": len(usage_items),
                 "usage": _aggregate_usage(usage_items),
+                "cost": _aggregate_cost(members),
             }
         )
     tool_records = [record for record in records if record["kind"] == "tool"]
     usage_items = [record["usage"] for record in records if record["usage"] is not None]
     return {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "detailLevel": "full",
         "session": session,
         "recentSessions": recent_sessions,
@@ -364,6 +452,7 @@ def _trajectory(
             "failedTools": sum(record["status"] == "error" for record in tool_records),
             "compactions": sum(record["kind"] == "compaction" for record in records),
             "tokens": _aggregate_usage(usage_items),
+            "cost": _aggregate_cost(records),
             "contextWindow": 200_000,
             "rateLimits": {
                 "primary": {
@@ -386,6 +475,11 @@ def wrapper_html(
     *,
     host_display: bool = False,
     native_pip_unavailable: bool = False,
+    dead_watcher: bool = False,
+    browser_shortcut_available: bool = False,
+    cdp_recovery_delay_ms: int = 0,
+    cdp_status_failures: int = 0,
+    cdp_injected: bool | None = None,
 ) -> str:
     """Create a parent page that emulates the Codex app-resource bridge."""
     payload = json.dumps(demo_trajectories(), ensure_ascii=False).replace("</", "<\\/")
@@ -405,7 +499,6 @@ def wrapper_html(
       id="viewer"
       title="Codex Trajectory"
       sandbox="allow-scripts"
-      src="{trajectory_path}"
     ></iframe>
 <script>
 const trajectories = {payload};
@@ -418,15 +511,19 @@ window.__trajectoryFollowUpFailures = 0;
 window.__trajectoryDirectStops = [];
 window.__trajectoryDirectStopFailures = 0;
 window.__trajectoryWidgetStates = [];
+window.__trajectoryCdpRecoveryDelayMs = {cdp_recovery_delay_ms};
+window.__trajectoryCdpStatusFailures = {cdp_status_failures};
+window.__trajectoryCdpStatusDelayMs = 0;
 window.__trajectoryCdpToolbar = {{
   schemaVersion: 1,
-  enabled: {str(host_display).lower()},
+  enabled: {str(host_display or dead_watcher).lower()},
   port: 9222,
   cdpAvailable: true,
+  browserShortcutAvailable: {str(browser_shortcut_available).lower()},
   daemonRunning: {str(host_display).lower()},
   connected: {str(host_display).lower()},
-  injected: {str(host_display).lower()},
-  viewerServing: {str(host_display).lower()},
+  injected: {str(host_display if cdp_injected is None else cdp_injected).lower()},
+  viewerServing: {str(host_display if cdp_injected is None else cdp_injected).lower()},
   lastError: null,
 }};
 let liveVersion = 1;
@@ -459,6 +556,18 @@ window.__advanceTrajectoryLive = () => {{
       reasoning_output_tokens: 4,
       total_tokens: 64,
     }};
+    const cost = {{
+      currency: "USD",
+      estimated: true,
+      totalUsd: 0.000184,
+      uncachedInputUsd: 0.00002,
+      cachedInputUsd: 0.000004,
+      outputUsd: 0.00016,
+      coverage: "complete",
+      pricedModelCalls: 1,
+      unpricedModelCalls: 0,
+      pricingUpdatedAt: "2026-08-24",
+    }};
     source.records.push({{
       ...structuredClone(source.records.at(-1)),
       index: 10,
@@ -471,6 +580,7 @@ window.__advanceTrajectoryLive = () => {{
       status: "running",
       callId: null,
       usage,
+      cost,
       input: null,
       output: null,
       metadata: {{}},
@@ -489,6 +599,7 @@ window.__advanceTrajectoryLive = () => {{
       model: source.session.model,
       modelCalls: 1,
       usage,
+      cost,
     }});
     source.stats.turns = 3;
     source.stats.records = 10;
@@ -499,6 +610,14 @@ window.__advanceTrajectoryLive = () => {{
       output_tokens: 144,
       reasoning_output_tokens: 44,
       total_tokens: 704,
+    }};
+    source.stats.cost = {{
+      ...source.stats.cost,
+      totalUsd: 0.001672,
+      uncachedInputUsd: 0.00018,
+      cachedInputUsd: 0.000052,
+      outputUsd: 0.00144,
+      pricedModelCalls: 3,
     }};
     source.stats.rateLimits.primary.usedPercent = 32;
   }}
@@ -551,6 +670,7 @@ function notify(value) {{
   );
 }}
 viewer.addEventListener("load", () => notify(trajectory()));
+viewer.src = {json.dumps(trajectory_path)};
 window.addEventListener("message", event => {{
   if (event.source !== viewer.contentWindow) return;
   if (event.data?.method === "trajectory/follow-up") {{
@@ -580,18 +700,35 @@ window.addEventListener("message", event => {{
     const sessions = structuredClone(trajectories["session-alpha"].recentSessions || []);
     result = {{structuredContent: {{sessions, count: sessions.length}}}};
   }} else if (name === "get_codex_toolbar_injection_status") {{
-    result = {{structuredContent: structuredClone(window.__trajectoryCdpToolbar)}};
+    if (window.__trajectoryCdpStatusFailures > 0) {{
+      window.__trajectoryCdpStatusFailures -= 1;
+      result = {{
+        isError: true,
+        content: [{{type: "text", text: "Temporary CDP status failure"}}],
+      }};
+    }} else {{
+      result = {{structuredContent: structuredClone(window.__trajectoryCdpToolbar)}};
+    }}
   }} else if (name === "set_codex_toolbar_injection") {{
-    window.__trajectoryCdpToolbar = {{
-      ...window.__trajectoryCdpToolbar,
-      enabled: args.enabled === true,
-      port: Number.isInteger(args.port) ? args.port : 9222,
-      daemonRunning: args.enabled === true,
-      connected: args.enabled === true,
-      injected: args.enabled === true,
-      viewerServing: args.enabled === true,
-      lastError: null,
-    }};
+    const reconcileMatches = args.reconcileOnly !== true || (
+      args.enabled === true
+      && window.__trajectoryCdpToolbar.enabled === true
+      && window.__trajectoryCdpToolbar.port === args.port
+    );
+    if (reconcileMatches) {{
+      const browserShortcutAvailable =
+        window.__trajectoryCdpToolbar.browserShortcutAvailable === true;
+      window.__trajectoryCdpToolbar = {{
+        ...window.__trajectoryCdpToolbar,
+        enabled: args.reconcileOnly === true || args.enabled === true,
+        port: Number.isInteger(args.port) ? args.port : 9222,
+        daemonRunning: args.enabled === true && browserShortcutAvailable,
+        connected: args.enabled === true && browserShortcutAvailable,
+        injected: args.enabled === true && browserShortcutAvailable,
+        viewerServing: args.enabled === true && browserShortcutAvailable,
+        lastError: null,
+      }};
+    }}
     result = {{structuredContent: structuredClone(window.__trajectoryCdpToolbar)}};
   }} else if (name === "request_codex_task_stop") {{
     window.__trajectoryDirectStops.push(structuredClone(args));
@@ -604,7 +741,7 @@ window.addEventListener("message", event => {{
   }} else if (name === "get_codex_trajectory_update") {{
     const revision = currentLiveRevision();
     const unchanged = args.revision === revision;
-    const update = {{schemaVersion: 1, unchanged, revision}};
+    const update = {{schemaVersion: 2, unchanged, revision}};
     if (!unchanged) {{
       update.trajectory = trajectory(args.sessionId, "summary", 50, null);
       delete update.trajectory.recentSessions;
@@ -620,7 +757,16 @@ window.addEventListener("message", event => {{
       )
     }};
   }}
-  viewer.contentWindow.postMessage({{jsonrpc:"2.0",id:event.data.id,result}}, "*");
+  const respond = () => viewer.contentWindow.postMessage(
+    {{jsonrpc:"2.0",id:event.data.id,result}}, "*"
+  );
+  const delay = name === "get_codex_toolbar_injection_status"
+    ? window.__trajectoryCdpStatusDelayMs
+    : name === "set_codex_toolbar_injection" && args.reconcileOnly === true
+      ? window.__trajectoryCdpRecoveryDelayMs
+      : 0;
+  if (delay > 0) setTimeout(respond, delay);
+  else respond();
 }});
 </script></body></html>"""
 
@@ -645,6 +791,46 @@ class HarnessHandler(BaseHTTPRequestHandler):
         if route == "/en-pip-unavailable":
             self._send(
                 wrapper_html("en", native_pip_unavailable=True),
+                "text/html; charset=utf-8",
+            )
+            return
+        if route == "/en-dead-watcher":
+            self._send(
+                wrapper_html("en", dead_watcher=True, cdp_recovery_delay_ms=500),
+                "text/html; charset=utf-8",
+            )
+            return
+        if route == "/en-browser-shortcut":
+            self._send(
+                wrapper_html("en", browser_shortcut_available=True),
+                "text/html; charset=utf-8",
+            )
+            return
+        if route == "/en-dead-watcher-browser":
+            self._send(
+                wrapper_html(
+                    "en",
+                    dead_watcher=True,
+                    browser_shortcut_available=True,
+                    cdp_recovery_delay_ms=500,
+                ),
+                "text/html; charset=utf-8",
+            )
+            return
+        if route == "/en-cdp-status-retry":
+            self._send(
+                wrapper_html("en", host_display=True, cdp_status_failures=1),
+                "text/html; charset=utf-8",
+            )
+            return
+        if route == "/en-cdp-status-race":
+            self._send(
+                wrapper_html(
+                    "en",
+                    host_display=True,
+                    browser_shortcut_available=True,
+                    cdp_injected=False,
+                ),
                 "text/html; charset=utf-8",
             )
             return

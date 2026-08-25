@@ -85,10 +85,15 @@ def get_task_state(
 def test_injection_source_builds_user_clicked_browser_link() -> None:
     source = injection_source("http://127.0.0.1:43123/private-token/")
 
-    assert "const VERSION = 7" in source
+    assert "const VERSION = 10" in source
+    assert "document.getElementById(BUTTON_ID)?.remove()" in source
+    assert "document.getElementById(STYLE_ID)?.remove()" in source
     assert 'link.target = "_blank"' in source
     assert "sessionId" in source
     assert "data-above-composer-conversation-id" in source
+    assert "inVisibleDocumentTree" in source
+    assert "selectedIds.size > 1" in source
+    assert "return onlySessionId(surfaceIds)" in source
     assert "client-new-thread:" in source
     assert 'searchParams.set("lang"' in source
     assert "openDrawer" not in source

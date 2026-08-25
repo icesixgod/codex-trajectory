@@ -47,7 +47,8 @@ def test_search_index_persists_only_bounded_metadata(
     assert "secret-tool-input" not in raw
     assert "secret-tool-output" not in raw
     assert "opaque-secret-reasoning" not in raw
-    assert stat.S_IMODE(index_path.stat().st_mode) == 0o600
+    if os.name != "nt":
+        assert stat.S_IMODE(index_path.stat().st_mode) == 0o600
     assert path.exists()
     assert SessionSearchIndex().lookup(path, session_signature(path)) == session_search_fields(path)
 
@@ -96,7 +97,12 @@ def test_search_index_ignores_invalid_and_linked_state(
     index_path.unlink()
     outside = tmp_path / "outside-index.json"
     outside.write_text("do not replace", encoding="utf-8")
-    index_path.symlink_to(outside)
+    try:
+        index_path.symlink_to(outside)
+    except OSError as error:
+        if os.name == "nt" and error.winerror == 1314:
+            pytest.skip("Windows symlink privilege is unavailable")
+        raise
     linked = SessionSearchIndex()
     linked.store(path, signature, fields)
     linked.flush()

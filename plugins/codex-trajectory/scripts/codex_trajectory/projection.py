@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import threading
 from base64 import b64encode
 from collections import OrderedDict, deque
 from copy import deepcopy
@@ -24,7 +25,11 @@ from .cdp_settings import (
 from .cdp_settings import (
     public_status as cdp_toolbar_status,
 )
+from .cdp_settings import (
+    recover_daemon as recover_cdp_toolbar,
+)
 from .json_support import strict_json_loads
+from .pricing import estimate_usage_cost, merge_cost_estimates
 from .privacy import (
     DetailLevel,
     bounded,
@@ -51,7 +56,8 @@ from .sessions import (
 
 SERVER_NAME = "codex-trajectory"
 SERVER_VERSION = __version__
-UI_URI = "ui://codex-trajectory/trajectory-v1.html"
+TRAJECTORY_SCHEMA_VERSION = 2
+UI_URI = "ui://codex-trajectory/trajectory-v2.html"
 DEFAULT_MAX_RECORDS = 500
 LIVE_MAX_RECORDS = 50
 MIN_RECORDS = 50
@@ -59,11 +65,24 @@ MAX_RECORDS = 1_000
 MAX_TURNS = 1_000
 MAX_WARNINGS = 100
 MAX_OVERVIEW_CACHE = 256
+MAX_TRAJECTORY_CACHE = 16
 MAX_TRACKED_CALLS = 4_096
 MAX_SAFE_INTEGER = 2**53 - 1
 _SESSION_OVERVIEW_CACHE: OrderedDict[
     Path, tuple[tuple[tuple[str, int, int, int], ...], dict[str, Any]]
 ] = OrderedDict()
+_SESSION_OVERVIEW_CACHE_LOCK = threading.Lock()
+_TRAJECTORY_CACHE: OrderedDict[
+    tuple[
+        Path,
+        tuple[tuple[str, int, int, int], ...],
+        int,
+        DetailLevel,
+        int | None,
+    ],
+    dict[str, Any],
+] = OrderedDict()
+_TRAJECTORY_CACHE_LOCK = threading.Lock()
 
 
 def parse_timestamp(value: Any) -> int | None:
@@ -151,7 +170,10 @@ def duration_milliseconds(value: Any) -> int | None:
         milliseconds = seconds_number * 1000 + nanos_number / 1_000_000
         if not math.isfinite(milliseconds) or milliseconds > MAX_SAFE_INTEGER:
             return None
-        return round(milliseconds)
+        # Millisecond precision cannot represent a positive sub-millisecond
+        # duration exactly. Keep it distinguishable from a genuinely measured
+        # zero instead of rounding it down to the misleading ``0 ms``.
+        return max(1, round(milliseconds)) if milliseconds > 0 else 0
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     try:
@@ -163,7 +185,7 @@ def duration_milliseconds(value: Any) -> int | None:
     milliseconds = number * 1000
     if not math.isfinite(milliseconds) or milliseconds > MAX_SAFE_INTEGER:
         return None
-    return round(milliseconds)
+    return max(1, round(milliseconds)) if milliseconds > 0 else 0
 
 
 def elapsed_milliseconds(started_at: int | None, completed_at: int | None) -> int | None:
@@ -283,12 +305,12 @@ def search_haystack(value: dict[str, Any]) -> str:
 def session_overview(path: Path) -> dict[str, Any]:
     """Build a compact session summary without returning transcript bodies."""
     signature = session_signature(path)
-    cached = _SESSION_OVERVIEW_CACHE.get(path)
-    if cached is not None and cached[0] == signature:
-        _SESSION_OVERVIEW_CACHE.move_to_end(path)
-        return deepcopy(cached[1])
+    with _SESSION_OVERVIEW_CACHE_LOCK:
+        cached = _SESSION_OVERVIEW_CACHE.get(path)
+        if cached is not None and cached[0] == signature:
+            _SESSION_OVERVIEW_CACHE.move_to_end(path)
+            return deepcopy(cached[1])
 
-    stat = path.stat()
     metadata = first_session_metadata(path)
     paginated = str(metadata.get("history_mode") or "legacy").casefold() == "paginated"
     first_user = ""
@@ -303,6 +325,8 @@ def session_overview(path: Path) -> dict[str, Any]:
     overview_active_turn = False
     overview_turn_id: str | None = None
     latest_usage: dict[str, int | float] | None = None
+    accounted_usage: dict[str, int | float] | None = None
+    previous_total_usage: dict[str, int | float] = {}
 
     def count_tool_call(raw_id: Any) -> None:
         """Count a logical call once when legacy start and terminal records coexist."""
@@ -434,11 +458,16 @@ def session_overview(path: Path) -> dict[str, Any]:
         elif entry_type == "event_msg" and payload_type == "token_count":
             info = payload.get("info")
             if isinstance(info, dict):
-                usage = info.get("total_token_usage")
-                if isinstance(usage, dict):
-                    safe_usage = numeric_token_usage(usage)
-                    if safe_usage:
-                        latest_usage = {**(latest_usage or {}), **safe_usage}
+                (
+                    previous_total_usage,
+                    total_usage,
+                    last_usage,
+                    usage_changed,
+                ) = token_usage_snapshot(info, previous_total_usage)
+                if total_usage is not None:
+                    latest_usage = total_usage
+                if usage_changed and last_usage:
+                    accounted_usage = merge_token_usage(accounted_usage, last_usage)
         elif not paginated and (
             (
                 entry_type == "response_item"
@@ -467,7 +496,8 @@ def session_overview(path: Path) -> dict[str, Any]:
             )
         ):
             count_tool_call(payload.get("call_id") or payload.get("id"))
-    updated_ms = round(stat.st_mtime * 1000)
+    # Reuse the descriptor-derived signature instead of reopening the path by name.
+    updated_ms = (signature[-1][1] + 500_000) // 1_000_000
     overview = {
         "id": metadata_identity(metadata, path),
         "title": shorten(first_user or "Untitled Codex task", 100),
@@ -479,16 +509,20 @@ def session_overview(path: Path) -> dict[str, Any]:
         "updatedAt": iso_timestamp(last_time if last_time is not None else updated_ms),
         "turns": turns,
         "toolCalls": tool_calls,
-        "tokens": latest_usage,
+        "tokens": accounted_usage if accounted_usage is not None else latest_usage,
         "archived": is_archived_session(path),
         "parentThreadId": safe_text(metadata.get("parent_thread_id"), 100),
         "agentPath": safe_text(metadata.get("agent_path"), 200),
         "git": safe_git(metadata.get("git")),
     }
-    _SESSION_OVERVIEW_CACHE[path] = (signature, overview)
-    _SESSION_OVERVIEW_CACHE.move_to_end(path)
-    while len(_SESSION_OVERVIEW_CACHE) > MAX_OVERVIEW_CACHE:
-        _SESSION_OVERVIEW_CACHE.popitem(last=False)
+    # The source can append while an overview is being projected. Do not cache
+    # a mixed snapshot under a signature that no longer describes the lineage.
+    if session_signature(path) == signature:
+        with _SESSION_OVERVIEW_CACHE_LOCK:
+            _SESSION_OVERVIEW_CACHE[path] = (signature, overview)
+            _SESSION_OVERVIEW_CACHE.move_to_end(path)
+            while len(_SESSION_OVERVIEW_CACHE) > MAX_OVERVIEW_CACHE:
+                _SESSION_OVERVIEW_CACHE.popitem(last=False)
     return deepcopy(overview)
 
 
@@ -644,6 +678,36 @@ def numeric_token_usage(value: Any) -> dict[str, int | float]:
     }
 
 
+def token_usage_snapshot(
+    info: dict[str, Any], previous_total_usage: dict[str, int | float]
+) -> tuple[
+    dict[str, int | float],
+    dict[str, int | float] | None,
+    dict[str, int | float],
+    bool,
+]:
+    """Normalize one token event and report whether it represents a new model call."""
+    usage_changed = "total_token_usage" not in info
+    current_total_usage: dict[str, int | float] | None = None
+    usage = info.get("total_token_usage")
+    if isinstance(usage, dict):
+        usage_update = numeric_token_usage(usage)
+        if usage_update:
+            current_total_usage = {**previous_total_usage, **usage_update}
+            counter_names = current_total_usage.keys() | previous_total_usage.keys()
+            usage_changed = any(
+                current_total_usage.get(name, 0) != previous_total_usage.get(name, 0)
+                for name in counter_names
+            )
+            previous_total_usage = current_total_usage
+    return (
+        previous_total_usage,
+        current_total_usage,
+        numeric_token_usage(info.get("last_token_usage")),
+        usage_changed,
+    )
+
+
 def safe_rate_limits(value: Any) -> dict[str, dict[str, Any]] | None:
     """Project the bounded Codex rate-limit windows used by the live viewer."""
     if not isinstance(value, dict):
@@ -701,6 +765,8 @@ def parse_session(
     paginated = str(metadata.get("history_mode") or "legacy").casefold() == "paginated"
     context: dict[str, Any] = {}
     latest_usage: dict[str, int | float] | None = None
+    accounted_usage: dict[str, int | float] | None = None
+    session_cost: dict[str, Any] | None = None
     latest_rate_limits: dict[str, dict[str, Any]] | None = None
     previous_total_usage: dict[str, int | float] = {}
     context_window: int | None = None
@@ -709,6 +775,7 @@ def parse_session(
     active_turn = False
     after_tool_result = False
     last_model_record: dict[str, Any] | None = None
+    last_model_turn: dict[str, Any] | None = None
     first_user = ""
     first_time = parse_timestamp(metadata.get("timestamp"))
     last_time: int | None = None
@@ -741,6 +808,7 @@ def parse_session(
                     "steps": 0,
                     "modelCalls": 0,
                     "usage": None,
+                    "cost": None,
                     "model": turn_model if isinstance(turn_model, str) else None,
                 }
             )
@@ -764,10 +832,10 @@ def parse_session(
         *,
         timestamp: int | None,
         kind: str,
-        event: str,
-        summary: str,
+        event: Any,
+        summary: Any,
         step: int | None = None,
-        record_id: str | None = None,
+        record_id: Any = None,
         input_detail: str | None = None,
         output_detail: str | None = None,
         status: str = "complete",
@@ -781,6 +849,8 @@ def parse_session(
         record_id = protocol_identifier(record_id, f"record-{all_record_count}") or (
             f"record-{all_record_count}"
         )
+        event_text = safe_text(event, 260) or "Event"
+        summary_text = safe_text(summary) or event_text
         if record_id in visible_record_ids:
             salt = 0
             while record_id in visible_record_ids:
@@ -810,8 +880,8 @@ def parse_session(
             "turn": current_turn,
             "step": step,
             "kind": kind,
-            "event": safe_text(event, 260) or "Event",
-            "summary": shorten(summary or event),
+            "event": event_text,
+            "summary": summary_text,
             "startedAt": iso_timestamp(timestamp),
             "completedAt": iso_timestamp(timestamp) if status != "running" else None,
             # A single persisted event timestamp places the record on the timeline but
@@ -824,6 +894,7 @@ def parse_session(
             "output": bounded(output_detail) if include_details and output_detail else None,
             "error": None,
             "usage": None,
+            "cost": None,
             "metadata": (metadata_detail or {}) if include_details else {},
             "_countsAsTool": counts_as_tool,
             "_failedCounted": state["failedCounted"] if state is not None else False,
@@ -955,7 +1026,7 @@ def parse_session(
         metadata_detail: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Create or finish a tool record from an authoritative terminal event."""
-        nonlocal after_tool_result, last_model_record
+        nonlocal after_tool_result, last_model_record, last_model_turn
         call_id = protocol_identifier(call_id)
         record = tracked_calls.get(call_id) if call_id else None
         duration_unavailable = record is None and started_at is None and duration_ms is None
@@ -1029,6 +1100,11 @@ def parse_session(
             record["durationMs"] = None
         if last_model_record is None or last_model_record.get("turn") != current_turn:
             last_model_record = record
+            owner_index = record.get("turn")
+            last_model_turn = next(
+                (turn for turn in reversed(turns) if turn.get("index") == owner_index),
+                None,
+            )
         after_tool_result = True
         return record
 
@@ -1045,7 +1121,7 @@ def parse_session(
     ) -> None:
         """Project the canonical paginated ``TurnItem`` carried by ItemCompleted."""
         nonlocal active_turn, after_tool_result, current_step
-        nonlocal first_user, last_model_record, pending_compaction
+        nonlocal first_user, last_model_record, last_model_turn, pending_compaction
         item = payload.get("item")
         if not isinstance(item, dict):
             add_warning(
@@ -1149,7 +1225,7 @@ def parse_session(
                 kind = "reasoning"
                 label = "Reasoning"
                 phase = None
-            step, _ = model_step(started_at)
+            step, turn = model_step(started_at)
             last_model_record = add_record(
                 timestamp=started_at,
                 kind=kind,
@@ -1160,6 +1236,7 @@ def parse_session(
                 output_detail=text or None,
                 metadata_detail={"phase": phase} if phase else None,
             )
+            last_model_turn = turn
             finish_record_timing(last_model_record, timing_started_at, completed_at)
             return
         if completed_type == "sub_agent_activity":
@@ -1520,20 +1597,14 @@ def parse_session(
                 latest_rate_limits = {**(latest_rate_limits or {}), **rate_limits}
             info = payload.get("info")
             if isinstance(info, dict):
-                usage = info.get("total_token_usage")
-                last_usage = info.get("last_token_usage")
-                usage_changed = "total_token_usage" not in info
-                if isinstance(usage, dict):
-                    usage_update = numeric_token_usage(usage)
-                    if usage_update:
-                        current_total_usage = {**previous_total_usage, **usage_update}
-                        latest_usage = current_total_usage
-                        counter_names = current_total_usage.keys() | previous_total_usage.keys()
-                        usage_changed = any(
-                            current_total_usage.get(name, 0) != previous_total_usage.get(name, 0)
-                            for name in counter_names
-                        )
-                        previous_total_usage = current_total_usage
+                (
+                    previous_total_usage,
+                    total_usage,
+                    safe_last_usage,
+                    usage_changed,
+                ) = token_usage_snapshot(info, previous_total_usage)
+                if total_usage is not None:
+                    latest_usage = total_usage
                 window = info.get("model_context_window")
                 if (
                     not isinstance(window, bool)
@@ -1541,20 +1612,28 @@ def parse_session(
                     and 0 < window <= MAX_SAFE_INTEGER
                 ):
                     context_window = window
-                safe_last_usage = numeric_token_usage(last_usage)
-                if (
-                    usage_changed
-                    and safe_last_usage
-                    and last_model_record is not None
-                    and last_model_record["turn"] == current_turn
-                ):
-                    last_model_record["usage"] = safe_last_usage
-                if safe_last_usage and current_turn > 0 and turns:
-                    if usage_changed:
-                        turn = turns[-1]
-                        turn["usage"] = merge_token_usage(turn.get("usage"), safe_last_usage)
-                        turn["modelCalls"] += 1
+                if usage_changed and safe_last_usage:
+                    accounted_usage = merge_token_usage(accounted_usage, safe_last_usage)
+                    usage_turn: dict[str, Any] | None = last_model_turn
+                    if usage_turn is None and current_turn > 0 and turns:
+                        usage_turn = turns[-1]
+                    if usage_turn is not None:
+                        usage_turn["usage"] = merge_token_usage(
+                            usage_turn.get("usage"), safe_last_usage
+                        )
+                        usage_turn["modelCalls"] += 1
+                        call_cost = estimate_usage_cost(
+                            usage_turn.get("model") or context.get("model"), safe_last_usage
+                        )
+                        if last_model_record is not None and last_model_record.get(
+                            "turn"
+                        ) == usage_turn.get("index"):
+                            last_model_record["usage"] = safe_last_usage
+                            last_model_record["cost"] = call_cost
+                        usage_turn["cost"] = merge_cost_estimates(usage_turn.get("cost"), call_cost)
+                        session_cost = merge_cost_estimates(session_cost, call_cost)
                     last_model_record = None
+                    last_model_turn = None
             continue
         if entry_type == "event_msg" and payload_type == "thread_rolled_back":
             rolled_back_turns = payload.get("num_turns")
@@ -1587,24 +1666,25 @@ def parse_session(
             continue
         if entry_type == "response_item" and payload_type == "reasoning":
             text = reasoning_summary(payload.get("summary"))
-            step, _ = model_step(timestamp)
+            step, turn = model_step(timestamp)
             last_model_record = add_record(
                 timestamp=timestamp,
                 kind="reasoning",
                 event="Reasoning",
                 summary=text or "Encrypted reasoning (summary unavailable)",
                 step=step,
-                record_id=str(payload.get("id") or f"reasoning-{event_number}"),
+                record_id=protocol_identifier(payload.get("id"), f"reasoning-{event_number}"),
                 output_detail=text or None,
                 metadata_detail={"encrypted": bool(payload.get("encrypted_content"))},
             )
+            last_model_turn = turn
             continue
         if entry_type == "response_item" and payload_type == "message":
             role = payload.get("role")
             if role != "assistant":
                 continue
             text = content_text(payload.get("content"))
-            step, _ = model_step(timestamp)
+            step, turn = model_step(timestamp)
             phase = safe_text(payload.get("phase"), 80)
             label = "Assistant" + (f" · {phase}" if phase else "")
             last_model_record = add_record(
@@ -1613,16 +1693,17 @@ def parse_session(
                 event=label,
                 summary=text or label,
                 step=step,
-                record_id=str(payload.get("id") or f"assistant-{event_number}"),
+                record_id=protocol_identifier(payload.get("id"), f"assistant-{event_number}"),
                 output_detail=text or None,
                 metadata_detail={"phase": phase} if phase else None,
             )
+            last_model_turn = turn
             continue
         if entry_type == "response_item" and payload_type in {
             "function_call",
             "custom_tool_call",
         }:
-            step, _ = model_step(timestamp)
+            step, turn = model_step(timestamp)
             name = safe_text(payload.get("name"), 160) or "tool"
             namespace = safe_text(payload.get("namespace"), 100)
             if namespace:
@@ -1645,6 +1726,7 @@ def parse_session(
             )
             if last_model_record is None or last_model_record["turn"] != current_turn:
                 last_model_record = tool_record
+                last_model_turn = turn
             continue
         if entry_type == "response_item" and payload_type in {
             "local_shell_call",
@@ -1671,7 +1753,7 @@ def parse_session(
                     metadata_detail={"protocolType": payload_type},
                 )
             else:
-                step, _ = model_step(timestamp)
+                step, turn = model_step(timestamp)
                 tool_record = add_record(
                     timestamp=timestamp,
                     kind="tool",
@@ -1686,6 +1768,7 @@ def parse_session(
                 )
                 if last_model_record is None or last_model_record["turn"] != current_turn:
                     last_model_record = tool_record
+                    last_model_turn = turn
             continue
         if entry_type == "response_item" and payload_type == "tool_search_output":
             call_id = protocol_identifier(payload.get("call_id")) or ""
@@ -1771,7 +1854,7 @@ def parse_session(
                 event="Compaction",
                 summary="Context compacted",
                 step=current_step or None,
-                record_id=str(payload.get("id") or f"compaction-{event_number}"),
+                record_id=protocol_identifier(payload.get("id"), f"compaction-{event_number}"),
             )
             continue
         if entry_type == "response_item" and payload_type in {
@@ -1894,6 +1977,7 @@ def parse_session(
         if not paginated and entry_type == "event_msg" and payload_type == "sub_agent_activity":
             activity = safe_text(payload.get("kind"), 80) or "activity"
             agent_path = safe_text(payload.get("agent_path"), 200) or "subagent"
+            event_id = protocol_identifier(payload.get("event_id"))
             occurred_at = epoch_milliseconds(payload.get("occurred_at_ms"))
             if occurred_at is None:
                 occurred_at = timestamp
@@ -1903,7 +1987,7 @@ def parse_session(
                 event=f"Subagent · {activity}",
                 summary=f"{agent_path} · {activity}",
                 step=current_step or None,
-                record_id=f"subagent-{payload.get('event_id') or event_number}",
+                record_id=f"subagent-{event_id or event_number}",
                 metadata_detail={
                     "agentPath": agent_path,
                     "agentThreadId": safe_text(payload.get("agent_thread_id"), 100),
@@ -1928,7 +2012,7 @@ def parse_session(
                 event="Review mode",
                 summary=label,
                 step=current_step or None,
-                record_id=str(payload.get("item_id") or f"review-{event_number}"),
+                record_id=protocol_identifier(payload.get("item_id"), f"review-{event_number}"),
                 output_detail=json_text(
                     {
                         key: payload[key]
@@ -1975,7 +2059,7 @@ def parse_session(
                 event="Agent message",
                 summary=text or "Inter-agent message",
                 step=current_step or None,
-                record_id=str(payload.get("id") or f"agent-message-{event_number}"),
+                record_id=protocol_identifier(payload.get("id"), f"agent-message-{event_number}"),
                 output_detail=text or None,
                 metadata_detail={
                     "author": safe_text(payload.get("author"), 200),
@@ -1996,7 +2080,9 @@ def parse_session(
                 event="Agent communication",
                 summary=communication_text or "Inter-agent communication",
                 step=current_step or None,
-                record_id=str(payload.get("id") or f"agent-communication-{event_number}"),
+                record_id=protocol_identifier(
+                    payload.get("id"), f"agent-communication-{event_number}"
+                ),
                 output_detail=communication_text or None,
                 metadata_detail={
                     "author": safe_text(payload.get("author"), 200),
@@ -2039,12 +2125,12 @@ def parse_session(
     visible_turns = list(retained_turns.values())
     visible_turn_indices = set(retained_turns)
     for turn in reversed(turns):
+        if len(visible_turns) >= MAX_TURNS:
+            break
         turn_index = turn["index"]
         if turn_index not in visible_turn_indices:
             visible_turns.append(turn)
             visible_turn_indices.add(turn_index)
-            if len(visible_turns) == MAX_TURNS:
-                break
     visible_turns.sort(key=lambda turn: turn["index"])
     git = safe_git(metadata.get("git"))
     model = context.get("model") if isinstance(context.get("model"), str) else None
@@ -2065,7 +2151,7 @@ def parse_session(
         "git": git,
     }
     return {
-        "schemaVersion": 1,
+        "schemaVersion": TRAJECTORY_SCHEMA_VERSION,
         "detailLevel": detail_level,
         "generatedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "session": session,
@@ -2094,7 +2180,8 @@ def parse_session(
             "toolCalls": tool_calls,
             "failedTools": failed_tools,
             "compactions": compactions,
-            "tokens": latest_usage,
+            "tokens": accounted_usage if accounted_usage is not None else latest_usage,
+            "cost": session_cost,
             "contextWindow": context_window,
             "rateLimits": latest_rate_limits,
         },
@@ -2102,6 +2189,40 @@ def parse_session(
         "records": visible_records,
         "warnings": warnings,
     }
+
+
+def cached_trajectory(
+    path: Path,
+    max_records: int = DEFAULT_MAX_RECORDS,
+    detail_level: DetailLevel = "summary",
+    before_record: int | None = None,
+) -> dict[str, Any]:
+    """Return one immutable-signature projection from a small process cache."""
+    normalized_detail = normalize_detail_level(detail_level)
+    limited = max(MIN_RECORDS, min(int(max_records), MAX_RECORDS))
+    signature = session_signature(path)
+    key = (path, signature, limited, normalized_detail, before_record)
+    with _TRAJECTORY_CACHE_LOCK:
+        cached = _TRAJECTORY_CACHE.get(key)
+        if cached is not None:
+            _TRAJECTORY_CACHE.move_to_end(key)
+            return deepcopy(cached)
+
+    trajectory = parse_session(path, limited, normalized_detail, before_record)
+    if session_signature(path) == signature:
+        with _TRAJECTORY_CACHE_LOCK:
+            _TRAJECTORY_CACHE[key] = trajectory
+            _TRAJECTORY_CACHE.move_to_end(key)
+            while len(_TRAJECTORY_CACHE) > MAX_TRAJECTORY_CACHE:
+                _TRAJECTORY_CACHE.popitem(last=False)
+    return deepcopy(trajectory)
+
+
+def prewarm_caches() -> None:
+    """Warm the bounded session and latest-summary caches after MCP startup."""
+    list_session_overviews(limit=20, include_archived=True)
+    path = resolve_session(None, include_archived=True)
+    cached_trajectory(path, DEFAULT_MAX_RECORDS, "summary")
 
 
 def trajectory_result(arguments: dict[str, Any], with_ui: bool) -> dict[str, Any]:
@@ -2127,7 +2248,7 @@ def trajectory_result(arguments: dict[str, Any], with_ui: bool) -> dict[str, Any
             raise ValueError(f"beforeRecord must be between 1 and {MAX_SAFE_INTEGER}.")
     detail_level = normalize_detail_level(arguments.get("detailLevel", "summary"))
     path = resolve_session(session_id, include_archived)
-    trajectory = parse_session(path, requested_max, detail_level, before_record)
+    trajectory = cached_trajectory(path, requested_max, detail_level, before_record)
     stats = trajectory["stats"]
     summary = (
         f"Trajectory for {trajectory['session']['id']}: "
@@ -2175,12 +2296,12 @@ def trajectory_update_result(arguments: dict[str, Any]) -> dict[str, Any]:
     path = resolve_session(session_id, include_archived)
     current_revision = trajectory_revision(path)
     update: dict[str, Any] = {
-        "schemaVersion": 1,
+        "schemaVersion": TRAJECTORY_SCHEMA_VERSION,
         "unchanged": revision == current_revision,
         "revision": current_revision,
     }
     if revision != current_revision:
-        update["trajectory"] = parse_session(path, LIVE_MAX_RECORDS, "summary")
+        update["trajectory"] = cached_trajectory(path, LIVE_MAX_RECORDS, "summary")
     state = "unchanged" if update["unchanged"] else "updated"
     return {
         "structuredContent": update,
@@ -2219,6 +2340,12 @@ def tool_definitions() -> list[dict[str, Any]]:
         "readOnlyHint": False,
         "destructiveHint": False,
         "idempotentHint": True,
+        "openWorldHint": False,
+    }
+    stop_action = {
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
         "openWorldHint": False,
     }
     trajectory_properties = {
@@ -2341,10 +2468,11 @@ def tool_definitions() -> list[dict[str, Any]]:
         },
         {
             "name": "get_codex_toolbar_injection_status",
-            "title": "Read the optional Codex toolbar integration status",
+            "title": "Read the optional Codex direct-stop integration status",
             "description": (
-                "Return app-only status for the loopback CDP toolbar integration without "
-                "exposing local paths."
+                "Return app-only status for the loopback CDP direct-stop integration and "
+                "whether the authenticated Browser shortcut is available, without exposing "
+                "local paths."
             ),
             "inputSchema": {
                 "type": "object",
@@ -2359,17 +2487,18 @@ def tool_definitions() -> list[dict[str, Any]]:
         },
         {
             "name": "set_codex_toolbar_injection",
-            "title": "Configure the optional Codex toolbar integration",
+            "title": "Configure the optional Codex direct-stop integration",
             "description": (
-                "Enable or disable the local loopback CDP injector and persist its port. "
-                "This changes only plugin-owned settings and the current Codex page DOM."
+                "Enable or disable the local loopback CDP direct-stop channel and persist its "
+                "port. This changes only plugin-owned settings and removes obsolete injected "
+                "controls from the current Codex page."
             ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "enabled": {
                         "type": "boolean",
-                        "description": "Show or remove the View trajectory toolbar entry.",
+                        "description": "Enable direct stop and remove obsolete toolbar entries.",
                     },
                     "port": {
                         "type": "integer",
@@ -2378,8 +2507,28 @@ def tool_definitions() -> list[dict[str, Any]]:
                         "default": DEFAULT_CDP_PORT,
                         "description": "Loopback Chrome DevTools Protocol port.",
                     },
+                    "reconcileOnly": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": (
+                            "Restart a missing watcher only if the persisted enabled setting "
+                            "and port still match; never overwrite a newer user choice."
+                        ),
+                    },
                 },
                 "required": ["enabled"],
+                "allOf": [
+                    {
+                        "if": {
+                            "properties": {"reconcileOnly": {"const": True}},
+                            "required": ["reconcileOnly"],
+                        },
+                        "then": {
+                            "properties": {"enabled": {"const": True}},
+                            "required": ["port"],
+                        },
+                    }
+                ],
                 "additionalProperties": False,
             },
             "annotations": local_change,
@@ -2413,7 +2562,7 @@ def tool_definitions() -> list[dict[str, Any]]:
                 "required": ["sessionId", "source", "threshold", "language"],
                 "additionalProperties": False,
             },
-            "annotations": local_change,
+            "annotations": stop_action,
             "_meta": {
                 "ui": {"visibility": ["app"]},
                 "openai/visibility": "private",
@@ -2460,25 +2609,36 @@ def call_tool(name: str, arguments: Any) -> dict[str, Any]:
             reject_unknown_arguments(args, set())
             return {
                 "structuredContent": cdp_toolbar_status(),
-                "content": [{"type": "text", "text": "Read local CDP toolbar status."}],
+                "content": [{"type": "text", "text": "Read local CDP direct-stop status."}],
             }
         if name == "set_codex_toolbar_injection":
-            reject_unknown_arguments(args, {"enabled", "port"})
+            reject_unknown_arguments(args, {"enabled", "port", "reconcileOnly"})
             enabled = args.get("enabled")
             if not isinstance(enabled, bool):
                 raise ValueError("enabled must be a boolean.")
             port = args.get("port", DEFAULT_CDP_PORT)
             if isinstance(port, bool) or not isinstance(port, int):
                 raise ValueError("port must be an integer.")
+            reconcile_only = args.get("reconcileOnly", False)
+            if not isinstance(reconcile_only, bool):
+                raise ValueError("reconcileOnly must be a boolean.")
+            if reconcile_only and (enabled is not True or "port" not in args):
+                raise ValueError(
+                    "reconcileOnly requires enabled=true and an explicit expected port."
+                )
             try:
-                status = configure_cdp_toolbar(enabled, port)
+                status = (
+                    recover_cdp_toolbar(port)
+                    if reconcile_only
+                    else configure_cdp_toolbar(enabled, port)
+                )
             except OSError:
                 return {
                     "isError": True,
                     "content": [
                         {
                             "type": "text",
-                            "text": "Could not update the private CDP toolbar setting.",
+                            "text": "Could not update the private CDP direct-stop setting.",
                         }
                     ],
                 }
@@ -2487,9 +2647,15 @@ def call_tool(name: str, arguments: Any) -> dict[str, Any]:
                 "content": [
                     {
                         "type": "text",
-                        "text": "Enabled local CDP toolbar integration."
-                        if enabled
-                        else "Disabled local CDP toolbar integration.",
+                        "text": (
+                            "Reconciled local CDP direct-stop integration."
+                            if reconcile_only
+                            else (
+                                "Enabled local CDP direct-stop integration."
+                                if enabled
+                                else "Disabled local CDP direct-stop integration."
+                            )
+                        ),
                     }
                 ],
             }
@@ -2545,7 +2711,7 @@ def call_tool(name: str, arguments: Any) -> dict[str, Any]:
                 or (result.get("stale") is True and "error" not in result)
             ):
                 raise OSError("Invalid direct stop result.")
-            return {
+            response: dict[str, Any] = {
                 "structuredContent": result,
                 "content": [
                     {
@@ -2558,6 +2724,9 @@ def call_tool(name: str, arguments: Any) -> dict[str, Any]:
                     }
                 ],
             }
+            if not result["sent"] and result.get("idle") is not True:
+                response["isError"] = True
+            return response
         raise ValueError(f"Unknown tool {name!r}.")
     except OSError:
         return {

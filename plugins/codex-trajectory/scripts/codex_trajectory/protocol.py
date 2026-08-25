@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import math
+import queue
 import sys
+import threading
 from contextlib import suppress
 from typing import Any
 
@@ -20,7 +22,11 @@ from .projection import (
 
 SUPPORTED_PROTOCOL_VERSION = "2025-06-18"
 MAX_RPC_LINE_BYTES = 8 * 1024 * 1024
+MAX_RPC_RESPONSE_BYTES = 8 * 1024 * 1024
 MAX_RPC_IDENTIFIER_LENGTH = 256
+LEGACY_UI_URI = "ui://codex-trajectory/trajectory-v1.html"
+
+_Inbound = tuple[str, Any]
 
 
 class JsonRpcError(ValueError):
@@ -31,13 +37,85 @@ class JsonRpcError(ValueError):
         self.code = code
 
 
+class _ResponseTooLarge(Exception):
+    """An outbound JSON-RPC message exceeded the fixed wire budget."""
+
+
+class _CancellationState:
+    """Thread-safe cancellation markers shared by the reader and dispatcher."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._outstanding_ids: set[Any] = set()
+        self._cancelled_ids: set[Any] = set()
+
+    def register(self, request_id: Any) -> None:
+        with self._lock:
+            self._outstanding_ids.add(request_id)
+
+    def cancel(self, request_id: Any) -> None:
+        with self._lock:
+            if request_id in self._outstanding_ids:
+                self._cancelled_ids.add(request_id)
+
+    def consume(self, request_id: Any) -> bool:
+        with self._lock:
+            if request_id not in self._cancelled_ids:
+                return False
+            self._cancelled_ids.remove(request_id)
+            return True
+
+    def finish(self, request_id: Any) -> None:
+        with self._lock:
+            self._outstanding_ids.discard(request_id)
+            self._cancelled_ids.discard(request_id)
+
+
+def _validate_initialize_params(values: dict[str, Any]) -> str:
+    requested = values.get("protocolVersion")
+    if not isinstance(requested, str):
+        raise JsonRpcError(-32602, "Initialize protocolVersion must be a string.")
+
+    capabilities = values.get("capabilities")
+    if not isinstance(capabilities, dict):
+        raise JsonRpcError(-32602, "Initialize capabilities must be an object.")
+    for capability_name in ("experimental", "roots", "sampling", "elicitation"):
+        if capability_name in capabilities and not isinstance(capabilities[capability_name], dict):
+            raise JsonRpcError(
+                -32602,
+                f"Initialize capability {capability_name} must be an object.",
+            )
+    roots = capabilities.get("roots")
+    if (
+        isinstance(roots, dict)
+        and "listChanged" in roots
+        and not isinstance(roots["listChanged"], bool)
+    ):
+        raise JsonRpcError(-32602, "Initialize roots.listChanged must be a boolean.")
+
+    client_info = values.get("clientInfo")
+    if not isinstance(client_info, dict):
+        raise JsonRpcError(-32602, "Initialize clientInfo must be an object.")
+    for field in ("name", "version"):
+        value = client_info.get(field)
+        if not isinstance(value, str):
+            raise JsonRpcError(
+                -32602,
+                f"Initialize clientInfo.{field} must be a string.",
+            )
+    title = client_info.get("title")
+    if title is not None and not isinstance(title, str):
+        raise JsonRpcError(-32602, "Initialize clientInfo.title must be a string.")
+    return requested
+
+
 def handle(method: str, params: Any) -> dict[str, Any]:
     """Handle one MCP JSON-RPC request."""
     if params is not None and not isinstance(params, dict):
         raise JsonRpcError(-32602, "Request parameters must be an object.")
     values = params if isinstance(params, dict) else {}
     if method == "initialize":
-        requested = values.get("protocolVersion")
+        requested = _validate_initialize_params(values)
         protocol = (
             requested if requested == SUPPORTED_PROTOCOL_VERSION else SUPPORTED_PROTOCOL_VERSION
         )
@@ -72,12 +150,15 @@ def handle(method: str, params: Any) -> dict[str, Any]:
             ]
         }
     if method == "resources/read":
-        if values.get("uri") != UI_URI:
-            raise JsonRpcError(-32602, "Unknown resource URI.")
+        resource_uri = values.get("uri")
+        if not isinstance(resource_uri, str):
+            raise JsonRpcError(-32602, "Resource URI must be a string.")
+        if resource_uri not in {UI_URI, LEGACY_UI_URI}:
+            raise JsonRpcError(-32002, "Resource not found.")
         return {
             "contents": [
                 {
-                    "uri": UI_URI,
+                    "uri": resource_uri,
                     "mimeType": "text/html;profile=mcp-app",
                     "text": ui_html(),
                     "_meta": {"ui": {"prefersBorder": True}},
@@ -88,20 +169,30 @@ def handle(method: str, params: Any) -> dict[str, Any]:
         return {"resourceTemplates": []}
     if method == "prompts/list":
         return {"prompts": []}
-    if method == "logging/setLevel":
-        return {}
     raise JsonRpcError(-32601, "Method not found.")
 
 
 def send(message: dict[str, Any]) -> None:
     """Write one newline-delimited JSON-RPC message."""
-    serialized = json.dumps(message, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
-    try:
-        encoded = (serialized + "\n").encode("utf-8")
-    except UnicodeEncodeError:
-        encoded = (
-            json.dumps(message, ensure_ascii=True, allow_nan=False, separators=(",", ":")) + "\n"
-        ).encode("ascii")
+    encoder = json.JSONEncoder(ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+    encoded = bytearray()
+    payload_budget = MAX_RPC_RESPONSE_BYTES - 1
+    if payload_budget < 0:
+        raise _ResponseTooLarge
+    for chunk in encoder.iterencode(message):
+        remaining = payload_budget - len(encoded)
+        # UTF-8 uses at least one byte per code point. Reject an oversized chunk before
+        # allocating a second, equally large bytes object.
+        if len(chunk) > remaining:
+            raise _ResponseTooLarge
+        for start in range(0, len(chunk), 64 * 1024):
+            chunk_bytes = chunk[start : start + 64 * 1024].encode(
+                "utf-8", errors="backslashreplace"
+            )
+            if len(chunk_bytes) > payload_budget - len(encoded):
+                raise _ResponseTooLarge
+            encoded.extend(chunk_bytes)
+    encoded.append(0x0A)
     try:
         sys.stdout.buffer.write(encoded)
         sys.stdout.buffer.flush()
@@ -111,6 +202,14 @@ def send(message: dict[str, Any]) -> None:
 
 def _send_error(request_id: Any, code: int, message: str) -> None:
     send({"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}})
+
+
+def _send_bounded_error(request_id: Any, code: int, message: str) -> None:
+    try:
+        _send_error(request_id, code, message)
+    except (_ResponseTooLarge, TypeError, ValueError, RecursionError):
+        # A pathological request id must not make the error itself exceed the wire budget.
+        _send_error(None, -32603, "Internal server error.")
 
 
 def _valid_request_id(value: Any) -> bool:
@@ -131,24 +230,90 @@ def _valid_request_id(value: Any) -> bool:
         return False
 
 
+def _cancelled_request_id(message: Any) -> tuple[bool, Any]:
+    """Return a validated cancellation target from an MCP notification."""
+    if (
+        not isinstance(message, dict)
+        or message.get("jsonrpc") != "2.0"
+        or "id" in message
+        or message.get("method") != "notifications/cancelled"
+    ):
+        return False, None
+    params = message.get("params")
+    if not isinstance(params, dict):
+        return False, None
+    request_id = params.get("requestId")
+    if not _valid_request_id(request_id):
+        return False, None
+    reason = params.get("reason")
+    if reason is not None and not isinstance(reason, str):
+        return False, None
+    return True, request_id
+
+
+def _read_inbound() -> _Inbound | None:
+    encoded_line = sys.stdin.buffer.readline(MAX_RPC_LINE_BYTES + 1)
+    if not encoded_line:
+        return None
+    if len(encoded_line) > MAX_RPC_LINE_BYTES:
+        while encoded_line and not encoded_line.endswith(b"\n"):
+            encoded_line = sys.stdin.buffer.readline(MAX_RPC_LINE_BYTES + 1)
+        return "error", (-32700, "Parse error.")
+    try:
+        return "message", strict_json_loads(encoded_line.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError, RecursionError):
+        return "error", (-32700, "Parse error.")
+
+
+def _read_loop(inbox: queue.Queue[_Inbound | None], cancellations: _CancellationState) -> None:
+    try:
+        while True:
+            inbound = _read_inbound()
+            if inbound is None:
+                break
+            if inbound[0] == "message":
+                message = inbound[1]
+                is_cancellation, request_id = _cancelled_request_id(message)
+                if is_cancellation:
+                    cancellations.cancel(request_id)
+                    continue
+                if (
+                    isinstance(message, dict)
+                    and "id" in message
+                    and _valid_request_id(message.get("id"))
+                ):
+                    cancellations.register(message["id"])
+            inbox.put(inbound)
+    except Exception:
+        pass
+    finally:
+        inbox.put(None)
+
+
 def main() -> None:
     """Run the stdio MCP loop."""
+    # One queued message bounds read-ahead memory while still allowing the reader to
+    # observe a cancellation notification during a long-running request.
+    inbox: queue.Queue[_Inbound | None] = queue.Queue(maxsize=1)
+    cancellations = _CancellationState()
+    reader = threading.Thread(
+        target=_read_loop,
+        args=(inbox, cancellations),
+        name="codex-trajectory-mcp-reader",
+        daemon=True,
+    )
+    reader.start()
     while True:
-        encoded_line = sys.stdin.buffer.readline(MAX_RPC_LINE_BYTES + 1)
-        if not encoded_line:
+        inbound = inbox.get()
+        if inbound is None:
             break
-        if len(encoded_line) > MAX_RPC_LINE_BYTES:
-            while encoded_line and not encoded_line.endswith(b"\n"):
-                encoded_line = sys.stdin.buffer.readline(MAX_RPC_LINE_BYTES + 1)
-            _send_error(None, -32700, "Parse error.")
+        if inbound[0] == "error":
+            code, message = inbound[1]
+            _send_bounded_error(None, code, message)
             continue
-        try:
-            message = strict_json_loads(encoded_line.decode("utf-8"))
-        except (UnicodeDecodeError, ValueError, RecursionError):
-            _send_error(None, -32700, "Parse error.")
-            continue
+        message = inbound[1]
         if not isinstance(message, dict):
-            _send_error(None, -32600, "Invalid Request.")
+            _send_bounded_error(None, -32600, "Invalid Request.")
             continue
         has_request_id = "id" in message
         request_id = message.get("id")
@@ -162,22 +327,56 @@ def main() -> None:
             or len(method) > MAX_RPC_IDENTIFIER_LENGTH
         ):
             response_id = request_id if has_request_id and valid_id else None
-            _send_error(response_id, -32600, "Invalid Request.")
+            _send_bounded_error(response_id, -32600, "Invalid Request.")
+            if has_request_id and valid_id:
+                cancellations.finish(request_id)
             continue
         if not has_request_id:
             # JSON-RPC notifications never receive an error response and must not stop the server.
             with suppress(Exception):
                 handle(method, message.get("params"))
             continue
+        if cancellations.consume(request_id):
+            cancellations.finish(request_id)
+            continue
         try:
-            result = handle(method, message.get("params"))
-            send({"jsonrpc": "2.0", "id": request_id, "result": result})
-        except JsonRpcError as error:
-            _send_error(request_id, error.code, str(error))
-        except ValueError as error:
-            _send_error(request_id, -32602, str(error))
-        except Exception:  # Never expose local paths or implementation details on the wire.
-            _send_error(request_id, -32603, "Internal server error.")
+            try:
+                result = handle(method, message.get("params"))
+                response = {"jsonrpc": "2.0", "id": request_id, "result": result}
+            except JsonRpcError as error:
+                response = {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "error": {"code": error.code, "message": str(error)},
+                }
+            except ValueError:
+                response = {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "error": {"code": -32602, "message": "Invalid params."},
+                }
+            except Exception:  # Never expose local paths or implementation details on the wire.
+                response = {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "error": {"code": -32603, "message": "Internal server error."},
+                }
+            if cancellations.consume(request_id):
+                continue
+            try:
+                send(response)
+            except _ResponseTooLarge:
+                if not cancellations.consume(request_id):
+                    _send_bounded_error(
+                        request_id,
+                        -32603,
+                        "Response exceeds the server size limit.",
+                    )
+            except (TypeError, ValueError, RecursionError):
+                _send_bounded_error(request_id, -32603, "Internal server error.")
+        finally:
+            cancellations.finish(request_id)
+    reader.join()
 
 
 __all__ = ["handle", "main"]

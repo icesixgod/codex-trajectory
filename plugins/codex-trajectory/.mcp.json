@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "codex-trajectory": {
-      "command": "uv",
+      "command": "./scripts/codex_trajectory_launcher",
       "args": [
         "run",
         "--script",

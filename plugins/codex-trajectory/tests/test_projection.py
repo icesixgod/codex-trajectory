@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 
 import pytest
+from codex_trajectory import projection
 from codex_trajectory.json_support import MAX_JSON_NESTING_DEPTH, strict_json_loads
 from codex_trajectory.privacy import (
     bounded,
@@ -19,6 +20,8 @@ from codex_trajectory.privacy import (
     source_kind,
 )
 from codex_trajectory.projection import (
+    cached_trajectory,
+    call_tool,
     duration_milliseconds,
     epoch_milliseconds,
     iso_timestamp,
@@ -31,12 +34,13 @@ from codex_trajectory.projection import (
     resolve_session,
     session_overview,
     session_search_fields,
+    tool_definitions,
     trajectory_result,
 )
 from conftest import rollout_events, write_rollout
 from jsonschema import Draft202012Validator, FormatChecker
 
-SCHEMA_PATH = Path(__file__).parents[3] / "schemas" / "trajectory-v1.schema.json"
+SCHEMA_PATH = Path(__file__).parents[3] / "schemas" / "trajectory-v2.schema.json"
 TRAJECTORY_VALIDATOR = Draft202012Validator(
     json.loads(SCHEMA_PATH.read_text(encoding="utf-8")),
     format_checker=FormatChecker(),
@@ -48,7 +52,7 @@ def test_summary_projects_turns_tools_usage_and_privacy(tmp_path: Path) -> None:
     result = parse_session(path)
     serialized = json.dumps(result)
 
-    assert result["schemaVersion"] == 1
+    assert result["schemaVersion"] == 2
     assert result["detailLevel"] == "summary"
     assert result["stats"] == {
         "turns": 2,
@@ -59,6 +63,18 @@ def test_summary_projects_turns_tools_usage_and_privacy(tmp_path: Path) -> None:
         "failedTools": 1,
         "compactions": 1,
         "tokens": {"input_tokens": 100, "output_tokens": 10, "total_tokens": 110},
+        "cost": {
+            "currency": "USD",
+            "estimated": True,
+            "totalUsd": None,
+            "uncachedInputUsd": None,
+            "cachedInputUsd": None,
+            "outputUsd": None,
+            "coverage": "unavailable",
+            "pricedModelCalls": 0,
+            "unpricedModelCalls": 1,
+            "pricingUpdatedAt": "2026-08-24",
+        },
         "contextWindow": 100000,
         "rateLimits": {
             "primary": {
@@ -82,13 +98,17 @@ def test_summary_projects_turns_tools_usage_and_privacy(tmp_path: Path) -> None:
         "output_tokens": 10,
         "total_tokens": 110,
     }
+    assert result["turns"][0]["cost"] == result["stats"]["cost"]
     assert result["turns"][1]["status"] == "aborted"
     assert result["turns"][1]["error"] == "Turn was aborted."
     assert result["turns"][1]["model"] == "gpt-test"
     assert result["turns"][1]["modelCalls"] == 0
     assert result["turns"][1]["usage"] is None
+    assert result["turns"][1]["cost"] is None
     assistant = next(record for record in result["records"] if record["id"] == "message-1")
     assert assistant["usage"] == result["turns"][0]["usage"]
+    assert assistant["cost"] == result["turns"][0]["cost"]
+    assert all(record["cost"] is None for record in result["records"] if record["usage"] is None)
     reasoning = next(record for record in result["records"] if record["id"] == "reason-1")
     tool = next(record for record in result["records"] if record["callId"] == "call-1")
     assert reasoning["durationMs"] is None
@@ -128,6 +148,99 @@ def test_turns_capture_model_changes(tmp_path: Path) -> None:
 
     assert [turn["model"] for turn in result["turns"]] == ["gpt-test", "gpt-test-next"]
     assert result["session"]["model"] == "gpt-test-next"
+
+
+def test_cost_estimates_follow_each_turn_model_and_roll_up_to_the_session(tmp_path: Path) -> None:
+    events: list[dict[str, object]] = [
+        {
+            "timestamp": "2026-08-14T00:00:00Z",
+            "type": "turn_context",
+            "payload": {"model": "gpt-5"},
+        },
+        {
+            "timestamp": "2026-08-14T00:00:01Z",
+            "type": "event_msg",
+            "payload": {"type": "task_started", "turn_id": "turn-one"},
+        },
+        {
+            "timestamp": "2026-08-14T00:00:02Z",
+            "type": "response_item",
+            "payload": {"type": "message", "role": "assistant", "content": []},
+        },
+        {
+            "timestamp": "2026-08-14T00:00:03Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "token_count",
+                "info": {
+                    "total_token_usage": {"input_tokens": 100, "output_tokens": 10},
+                    "last_token_usage": {"input_tokens": 100, "output_tokens": 10},
+                },
+            },
+        },
+        {
+            "timestamp": "2026-08-14T00:00:04Z",
+            "type": "event_msg",
+            "payload": {"type": "task_complete", "turn_id": "turn-one"},
+        },
+        {
+            "timestamp": "2026-08-14T00:00:05Z",
+            "type": "turn_context",
+            "payload": {"model": "gpt-5-mini"},
+        },
+        {
+            "timestamp": "2026-08-14T00:00:06Z",
+            "type": "event_msg",
+            "payload": {"type": "task_started", "turn_id": "turn-two"},
+        },
+        {
+            "timestamp": "2026-08-14T00:00:07Z",
+            "type": "response_item",
+            "payload": {"type": "message", "role": "assistant", "content": []},
+        },
+        {
+            "timestamp": "2026-08-14T00:00:08Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "token_count",
+                "info": {
+                    "total_token_usage": {"input_tokens": 200, "output_tokens": 20},
+                    "last_token_usage": {
+                        "input_tokens": 100,
+                        "cached_input_tokens": 50,
+                        "output_tokens": 10,
+                    },
+                },
+            },
+        },
+    ]
+
+    result = parse_session(write_rollout(tmp_path / "priced-turns.jsonl", events))
+
+    assert result["turns"][0]["cost"]["totalUsd"] == 0.000225
+    assert result["turns"][1]["cost"]["totalUsd"] == 0.00003375
+    assert result["stats"]["cost"] == {
+        "currency": "USD",
+        "estimated": True,
+        "totalUsd": 0.00025875,
+        "uncachedInputUsd": 0.0001375,
+        "cachedInputUsd": 0.00000125,
+        "outputUsd": 0.00012,
+        "coverage": "complete",
+        "pricedModelCalls": 2,
+        "unpricedModelCalls": 0,
+        "pricingUpdatedAt": "2026-08-24",
+    }
+    priced_records = [record for record in result["records"] if record["cost"] is not None]
+    assert [record["cost"]["totalUsd"] for record in priced_records] == [
+        0.000225,
+        0.00003375,
+    ]
+    assert [record["cost"] for record in priced_records] == [
+        result["turns"][0]["cost"],
+        result["turns"][1]["cost"],
+    ]
+    TRAJECTORY_VALIDATOR.validate(result)
 
 
 def test_tool_only_model_response_receives_usage(tmp_path: Path) -> None:
@@ -268,6 +381,230 @@ def test_token_usage_without_cumulative_snapshot_keeps_legacy_behavior(tmp_path:
 
     assert result["turns"][0]["modelCalls"] == 1
     assert result["turns"][0]["usage"] == {"input_tokens": 7, "output_tokens": 2}
+    assert result["stats"]["tokens"] == {"input_tokens": 7, "output_tokens": 2}
+
+
+def test_token_counter_reset_accumulates_usage_and_preserves_pending_record(
+    tmp_path: Path,
+) -> None:
+    events: list[dict[str, object]] = [
+        {
+            "timestamp": 0,
+            "type": "session_meta",
+            "payload": {"id": "reset-token-counter"},
+        },
+        {
+            "timestamp": 0,
+            "type": "turn_context",
+            "payload": {"model": "gpt-5"},
+        },
+        {
+            "timestamp": 1,
+            "type": "event_msg",
+            "payload": {"type": "turn_started", "turn_id": "one"},
+        },
+    ]
+    snapshots = (
+        ("one-a", 100, 100),
+        ("one-b", 250, 150),
+    )
+    timestamp = 2
+    for record_id, total, last in snapshots:
+        events.extend(
+            [
+                {
+                    "timestamp": timestamp,
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "id": record_id,
+                        "role": "assistant",
+                        "content": [],
+                    },
+                },
+                {
+                    "timestamp": timestamp + 1,
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "token_count",
+                        "info": {
+                            "total_token_usage": {
+                                "input_tokens": total,
+                                "output_tokens": 0,
+                            },
+                            "last_token_usage": {
+                                "input_tokens": last,
+                                "output_tokens": 0,
+                            },
+                        },
+                    },
+                },
+            ]
+        )
+        timestamp += 2
+    events.extend(
+        [
+            {
+                "timestamp": 6,
+                "type": "event_msg",
+                "payload": {"type": "turn_complete", "turn_id": "one"},
+            },
+            {
+                "timestamp": 7,
+                "type": "event_msg",
+                "payload": {"type": "turn_started", "turn_id": "two"},
+            },
+            {
+                "timestamp": 8,
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "id": "two-a",
+                    "role": "assistant",
+                    "content": [],
+                },
+            },
+            {
+                "timestamp": 9,
+                "type": "event_msg",
+                "payload": {
+                    "type": "token_count",
+                    "info": {
+                        "total_token_usage": {"input_tokens": 250, "output_tokens": 0},
+                        "last_token_usage": {"input_tokens": 150, "output_tokens": 0},
+                    },
+                },
+            },
+            {
+                "timestamp": 10,
+                "type": "event_msg",
+                "payload": {
+                    "type": "token_count",
+                    "info": {
+                        "total_token_usage": {"input_tokens": 40, "output_tokens": 0},
+                        "last_token_usage": {"input_tokens": 40, "output_tokens": 0},
+                    },
+                },
+            },
+            {
+                "timestamp": 11,
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "id": "two-b",
+                    "role": "assistant",
+                    "content": [],
+                },
+            },
+            {
+                "timestamp": 12,
+                "type": "event_msg",
+                "payload": {
+                    "type": "token_count",
+                    "info": {
+                        "total_token_usage": {"input_tokens": 90, "output_tokens": 0},
+                        "last_token_usage": {"input_tokens": 50, "output_tokens": 0},
+                    },
+                },
+            },
+        ]
+    )
+    path = write_rollout(tmp_path / "reset-token-counter.jsonl", events)
+
+    result = parse_session(path)
+    records = {record["id"]: record for record in result["records"]}
+
+    assert result["stats"]["tokens"] == {"input_tokens": 340, "output_tokens": 0}
+    assert session_overview(path)["tokens"] == result["stats"]["tokens"]
+    assert [turn["usage"] for turn in result["turns"]] == [
+        {"input_tokens": 250, "output_tokens": 0},
+        {"input_tokens": 90, "output_tokens": 0},
+    ]
+    assert [turn["modelCalls"] for turn in result["turns"]] == [2, 2]
+    assert [records[record_id]["usage"] for record_id in ("one-a", "one-b", "two-a", "two-b")] == [
+        {"input_tokens": 100, "output_tokens": 0},
+        {"input_tokens": 150, "output_tokens": 0},
+        {"input_tokens": 40, "output_tokens": 0},
+        {"input_tokens": 50, "output_tokens": 0},
+    ]
+    assert result["stats"]["cost"]["pricedModelCalls"] == 4
+    assert result["stats"]["cost"]["totalUsd"] == pytest.approx(
+        sum(turn["cost"]["totalUsd"] for turn in result["turns"])
+    )
+
+
+def test_late_token_snapshot_stays_with_its_model_turn(tmp_path: Path) -> None:
+    events: list[dict[str, object]] = [
+        {"timestamp": 0, "type": "turn_context", "payload": {"model": "gpt-5"}},
+        {
+            "timestamp": 1,
+            "type": "event_msg",
+            "payload": {"type": "turn_started", "turn_id": "one"},
+        },
+        {
+            "timestamp": 2,
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "id": "late-owner",
+                "role": "assistant",
+                "content": [],
+            },
+        },
+        {
+            "timestamp": 3,
+            "type": "event_msg",
+            "payload": {"type": "turn_complete", "turn_id": "one"},
+        },
+        {
+            "timestamp": 4,
+            "type": "event_msg",
+            "payload": {"type": "turn_started", "turn_id": "two"},
+        },
+        {
+            "timestamp": 5,
+            "type": "event_msg",
+            "payload": {
+                "type": "token_count",
+                "info": {
+                    "total_token_usage": {"input_tokens": 20},
+                    "last_token_usage": {"input_tokens": 20},
+                },
+            },
+        },
+        {
+            "timestamp": 6,
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "id": "current-owner",
+                "role": "assistant",
+                "content": [],
+            },
+        },
+        {
+            "timestamp": 7,
+            "type": "event_msg",
+            "payload": {
+                "type": "token_count",
+                "info": {
+                    "total_token_usage": {"input_tokens": 30},
+                    "last_token_usage": {"input_tokens": 10},
+                },
+            },
+        },
+    ]
+
+    result = parse_session(write_rollout(tmp_path / "late-token.jsonl", events))
+    records = {record["id"]: record for record in result["records"]}
+
+    assert [turn["usage"] for turn in result["turns"]] == [
+        {"input_tokens": 20},
+        {"input_tokens": 10},
+    ]
+    assert records["late-owner"]["usage"] == {"input_tokens": 20}
+    assert records["current-owner"]["usage"] == {"input_tokens": 10}
+    assert result["stats"]["tokens"] == {"input_tokens": 30}
 
 
 def test_rate_limits_merge_valid_windows_and_ignore_malformed_updates(tmp_path: Path) -> None:
@@ -429,6 +766,7 @@ def test_record_pages_are_adjacent_stable_and_keep_aggregate_stats(tmp_path: Pat
         "failedTools",
         "compactions",
         "tokens",
+        "cost",
         "contextWindow",
     ):
         assert newest["stats"][key] == middle["stats"][key] == oldest["stats"][key]
@@ -689,6 +1027,90 @@ def test_session_overview_cache_invalidates_after_append(tmp_path: Path) -> None
 
     assert cached == first
     assert refreshed["turns"] == first["turns"] + 1
+
+
+def test_trajectory_cache_reuses_immutable_signature_and_returns_a_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = write_rollout(tmp_path / "trajectory-cache.jsonl")
+    real_parse = projection.parse_session
+    calls = 0
+
+    def counted_parse(*args: object, **kwargs: object) -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        return real_parse(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(projection, "parse_session", counted_parse)
+    first = cached_trajectory(path)
+    first["session"]["id"] = "mutated"
+    second = cached_trajectory(path)
+
+    assert calls == 1
+    assert second["session"]["id"] == "session-alpha"
+
+
+def test_trajectory_cache_invalidates_after_append(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = write_rollout(tmp_path / "trajectory-cache-append.jsonl")
+    real_parse = projection.parse_session
+    calls = 0
+
+    def counted_parse(*args: object, **kwargs: object) -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        return real_parse(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(projection, "parse_session", counted_parse)
+    first = cached_trajectory(path)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                {
+                    "timestamp": "2026-08-14T00:00:12Z",
+                    "type": "event_msg",
+                    "payload": {"type": "task_started"},
+                }
+            )
+            + "\n"
+        )
+    refreshed = cached_trajectory(path)
+
+    assert calls == 2
+    assert refreshed["stats"]["turns"] == first["stats"]["turns"] + 1
+
+
+def test_prewarm_populates_overviews_then_latest_summary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    path = tmp_path / "latest.jsonl"
+    calls: list[tuple[object, ...]] = []
+    monkeypatch.setattr(
+        projection,
+        "list_session_overviews",
+        lambda **kwargs: calls.append(("list", kwargs)) or [],
+    )
+    monkeypatch.setattr(
+        projection,
+        "resolve_session",
+        lambda session_id, include_archived: (
+            calls.append(("resolve", session_id, include_archived)) or path
+        ),
+    )
+    monkeypatch.setattr(
+        projection,
+        "cached_trajectory",
+        lambda *args: calls.append(("trajectory", *args)) or {},
+    )
+
+    projection.prewarm_caches()
+
+    assert calls == [
+        ("list", {"limit": 20, "include_archived": True}),
+        ("resolve", None, True),
+        ("trajectory", path, projection.DEFAULT_MAX_RECORDS, "summary"),
+    ]
 
 
 @pytest.mark.parametrize(
@@ -985,6 +1407,78 @@ def test_first_metadata_owns_identity_and_structured_metadata_stays_private(tmp_
     assert "ancestor-project" not in serialized
 
 
+def test_structured_record_ids_and_summaries_fail_closed(tmp_path: Path) -> None:
+    secret = "structured-record-secret"
+    structured = {"private": secret}
+    events: list[dict[str, object]] = [
+        {
+            "timestamp": 1,
+            "type": "event_msg",
+            "payload": {"type": "turn_started", "turn_id": "turn"},
+        },
+        {
+            "timestamp": 2,
+            "type": "response_item",
+            "payload": {"type": "reasoning", "id": structured, "summary": structured},
+        },
+        {
+            "timestamp": 3,
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "id": structured,
+                "role": "assistant",
+                "content": structured,
+            },
+        },
+        {
+            "timestamp": 4,
+            "type": "response_item",
+            "payload": {"type": "compaction", "id": structured},
+        },
+        {
+            "timestamp": 5,
+            "type": "event_msg",
+            "payload": {"type": "entered_review_mode", "item_id": structured},
+        },
+        {
+            "timestamp": 6,
+            "type": "event_msg",
+            "payload": {
+                "type": "sub_agent_activity",
+                "event_id": structured,
+                "kind": structured,
+                "agent_path": structured,
+            },
+        },
+        {
+            "timestamp": 7,
+            "type": "response_item",
+            "payload": {"type": "agent_message", "id": structured, "content": structured},
+        },
+        {
+            "timestamp": 8,
+            "type": "inter_agent_communication",
+            "payload": {"id": structured, "content": structured},
+        },
+    ]
+
+    result = parse_session(write_rollout(tmp_path / "structured-records.jsonl", events))
+    serialized = json.dumps(result)
+
+    assert {record["id"] for record in result["records"]} == {
+        "reasoning-2",
+        "assistant-3",
+        "compaction-4",
+        "review-5",
+        "subagent-6",
+        "agent-message-7",
+        "agent-communication-8",
+    }
+    assert all(isinstance(record["summary"], str) for record in result["records"])
+    assert secret not in serialized
+
+
 def test_turn_complete_error_is_a_failed_turn_without_summary_leak(tmp_path: Path) -> None:
     secret = "credential=do-not-return"
     events: list[dict[str, object]] = [
@@ -1037,6 +1531,10 @@ def test_malformed_attachment_fields_and_nonfinite_timestamps_are_rejected(tmp_p
     assert parse_timestamp(float("inf")) is None
     assert epoch_milliseconds(True) is None
     assert duration_milliseconds({"secs": 1, "nanos": 250_000_000}) == 1250
+    assert duration_milliseconds({"secs": 0, "nanos": 1}) == 1
+    assert duration_milliseconds({"secs": 0, "nanos": 0}) == 0
+    assert duration_milliseconds(0.000_001) == 1
+    assert duration_milliseconds(0) == 0
     assert duration_milliseconds(10_000) == 10_000_000
     assert duration_milliseconds({"secs": -1, "nanos": 0}) is None
     assert iso_timestamp(10**30) is None
@@ -2234,6 +2732,87 @@ def test_projection_bounds_turns_and_retains_constant_space_failure_aggregate(
     assert result["stats"]["failedTools"] == 1105
     assert len(result["records"]) == 50
     assert all(not any(key.startswith("_") for key in record) for record in result["records"])
+
+
+def test_visible_turns_never_exceed_the_protocol_limit(tmp_path: Path) -> None:
+    events: list[dict[str, object]] = [
+        {
+            "timestamp": 0,
+            "type": "session_meta",
+            "payload": {"id": "max-visible-turns"},
+        }
+    ]
+    for index in range(1005):
+        events.append(
+            {
+                "timestamp": index * 3,
+                "type": "event_msg",
+                "payload": {"type": "turn_started", "turn_id": f"turn-{index}"},
+            }
+        )
+        if index < 1000:
+            events.append(
+                {
+                    "timestamp": index * 3 + 1,
+                    "type": "event_msg",
+                    "payload": {"type": "user_message", "message": f"request {index}"},
+                }
+            )
+        events.append(
+            {
+                "timestamp": index * 3 + 2,
+                "type": "event_msg",
+                "payload": {"type": "turn_complete", "turn_id": f"turn-{index}"},
+            }
+        )
+
+    result = parse_session(
+        write_rollout(tmp_path / "max-visible-turns.jsonl", events), max_records=1000
+    )
+    visible_turn_indices = {turn["index"] for turn in result["turns"]}
+
+    assert result["stats"]["visibleTurns"] == len(result["turns"]) == 1000
+    assert result["stats"]["omittedTurns"] == 5
+    assert all(record["turn"] in visible_turn_indices for record in result["records"])
+
+
+def test_direct_stop_is_destructive_and_reports_transport_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stop_tool = next(
+        tool for tool in tool_definitions() if tool["name"] == "request_codex_task_stop"
+    )
+    assert stop_tool["annotations"] == {
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    }
+    arguments = {
+        "sessionId": "session-alpha",
+        "source": "manual",
+        "threshold": 10,
+        "language": "en",
+    }
+
+    monkeypatch.setattr(
+        "codex_trajectory.projection.request_direct_task_stop",
+        lambda _arguments: {"sent": False, "error": "Could not stop task."},
+    )
+    failure = call_tool("request_codex_task_stop", arguments)
+    assert failure["isError"] is True
+    assert failure["structuredContent"] == {
+        "sent": False,
+        "error": "Could not stop task.",
+    }
+
+    monkeypatch.setattr(
+        "codex_trajectory.projection.request_direct_task_stop",
+        lambda _arguments: {"sent": False, "idle": True},
+    )
+    idle = call_tool("request_codex_task_stop", arguments)
+    assert "isError" not in idle
+    assert idle["structuredContent"] == {"sent": False, "idle": True}
 
 
 def test_projection_retains_the_turn_referenced_by_an_old_visible_record(

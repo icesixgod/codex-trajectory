@@ -125,7 +125,7 @@
     #sessionSelect { width: min(360px, 38vw); padding: 7px 30px 7px 9px; }
     .stats {
       display: grid;
-      grid-template-columns: repeat(6, minmax(84px, 1fr));
+      grid-template-columns: repeat(7, minmax(84px, 1fr));
       gap: 8px;
       padding: 12px 18px;
       background: var(--panel-2);
@@ -160,6 +160,8 @@
     .token-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
     .token-badges { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
     .token-badge { padding: 3px 7px; border-radius: 999px; color: var(--muted); background: var(--panel-2); font-size: 10px; white-space: nowrap; }
+    .token-badge.partial { color: var(--tool); }
+    .token-badge.unavailable { color: var(--danger); }
     .token-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 7px; }
     .token-metric { min-width: 0; padding: 8px 9px; border: 1px solid var(--line); border-radius: 9px; }
     .token-metric-label { color: var(--muted); font-size: 10px; }
@@ -179,8 +181,9 @@
     .token-legend { display: flex; flex-wrap: wrap; gap: 5px 12px; margin-top: 6px; color: var(--muted); font-size: 10px; }
     .token-legend-item { display: inline-flex; align-items: center; gap: 4px; }
     .token-legend-dot { width: 7px; height: 7px; border-radius: 2px; flex: none; }
+    .cost-note { margin-top: 9px; color: var(--muted); font-size: 10px; }
     .token-table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 9px; scrollbar-gutter: stable; }
-    .token-row { display: grid; grid-template-columns: 74px 82px repeat(5, minmax(160px, 1fr)); min-width: 960px; border-top: 1px solid var(--line); }
+    .token-row { display: grid; grid-template-columns: 74px minmax(138px, 1fr) 82px repeat(5, minmax(150px, 1fr)); min-width: 1100px; border-top: 1px solid var(--line); }
     .token-row:first-child { border-top: 0; }
     .token-cell { min-width: 0; padding: 7px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .token-cell.numeric { overflow: visible; text-align: right; text-overflow: clip; font-size: 11px; font-variant-numeric: tabular-nums; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
@@ -263,6 +266,7 @@
     .turn-copy { min-width: 0; }
     .turn-title { display: block; color: var(--text); font-size: 12px; font-weight: 750; }
     .turn-meta { display: block; margin-top: 1px; overflow: hidden; color: var(--muted); font-size: 10px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+    .turn-cost { margin-left: 5px; color: var(--muted); font-size: 10px; font-weight: 700; }
     .turn-row .turn-token { padding: 6px 8px; vertical-align: middle; text-align: right; }
     .turn-token-label { display: block; overflow: hidden; font-size: 9px; font-weight: 700; letter-spacing: .035em; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
     .turn-token-value { display: block; margin-top: 2px; color: var(--text); font-size: 12px; font-weight: 750; font-variant-numeric: tabular-nums; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
@@ -425,7 +429,7 @@
     .dock-stop-status.sent { color: var(--success); }
     .dock-status {
       display: grid;
-      grid-template-columns: auto minmax(0, 1fr) auto;
+      grid-template-columns: auto minmax(0, 1fr) auto auto;
       align-items: center;
       gap: 7px;
       min-width: 0;
@@ -449,6 +453,7 @@
     .dock-cursor-part { overflow: hidden; text-align: right; text-overflow: ellipsis; }
     .dock-cursor-separator { color: var(--muted); text-align: center; }
     .dock-mode-label { justify-self: end; padding: 2px 6px; border-radius: 999px; color: var(--accent); background: var(--accent-soft); font-size: 9px; font-weight: 700; white-space: nowrap; }
+    .dock-current-turn-cost { justify-self: end; color: var(--accent); font: 750 10px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; white-space: nowrap; }
     .dock-overview {
       margin: 0 12px 12px;
       padding: 10px;
@@ -462,6 +467,8 @@
     .dock-total { display: flex; align-items: end; justify-content: space-between; gap: 10px; padding: 9px 10px; border-radius: 9px; background: color-mix(in srgb, var(--accent-soft) 62%, var(--panel)); }
     .dock-total-value { overflow: hidden; color: var(--accent); font: 800 22px/1.1 ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; letter-spacing: -.035em; text-overflow: ellipsis; white-space: nowrap; }
     .dock-total-label { flex: none; color: var(--muted); font-size: 9px; text-transform: uppercase; }
+    .dock-total-cost { min-width: 0; text-align: right; }
+    .dock-total-cost-value { margin-top: 2px; overflow: hidden; color: var(--text); font: 800 16px/1.15 ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
     .dock-token-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 6px; }
     .dock-token { min-width: 0; padding: 7px 9px; border-radius: 8px; background: color-mix(in srgb, var(--panel) 66%, transparent); }
     .dock-token-label { overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
@@ -471,6 +478,26 @@
     .dock-stream-title { font-size: 11px; font-weight: 750; }
     .dock-stream-meta { color: var(--muted); font-size: 9px; text-align: right; }
     .dock-records { min-height: 0; flex: 1; overflow-x: hidden; overflow-y: auto; padding: 0 11px 12px; scrollbar-gutter: stable; overscroll-behavior: contain; }
+    .dock-turn-summary {
+      position: sticky;
+      z-index: 3;
+      top: 0;
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 8px;
+      margin-top: 7px;
+      padding: 6px 9px;
+      border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--line));
+      border-radius: 8px;
+      color: var(--muted);
+      background: color-mix(in srgb, var(--panel-2) 94%, transparent);
+      box-shadow: 0 3px 9px color-mix(in srgb, var(--bg) 55%, transparent);
+      font-size: 9px;
+    }
+    .dock-turn-index { color: var(--accent); font: 800 10px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .dock-turn-tokens { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .dock-turn-cost { color: var(--text); font: 750 10px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; white-space: nowrap; }
     .dock-record { position: relative; margin-top: 7px; padding: 9px 10px 9px 13px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
     .dock-record::before { position: absolute; top: 10px; bottom: 10px; left: 0; width: 3px; border-radius: 0 3px 3px 0; background: var(--compaction); content: ""; }
     .dock-record.latest { min-height: 82px; overflow: hidden; border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); box-shadow: 0 5px 18px color-mix(in srgb, var(--accent) 10%, transparent); }
@@ -552,6 +579,9 @@
     }
     .dock-usage-name { overflow: hidden; color: var(--muted); font-size: 8px; font-weight: 700; letter-spacing: .035em; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
     .dock-usage-row.total .dock-usage-name { color: var(--accent); }
+    .dock-usage-row.cost { grid-template-columns: minmax(0, 1fr) auto; background: color-mix(in srgb, var(--accent-soft) 42%, var(--panel)); }
+    .dock-usage-row.cost .dock-usage-name,
+    .dock-usage-row.cost .dock-usage-value { color: var(--accent); }
     .dock-usage-value { justify-self: end; color: var(--text); font: 750 10px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; white-space: nowrap; }
     .dock-usage-row.total .dock-usage-value { color: var(--accent); font-size: 11px; font-weight: 800; }
     .dock-usage-parts { display: flex; min-width: 0; justify-content: flex-end; gap: 10px; overflow: hidden; }
@@ -604,7 +634,7 @@
       .dock-stop-button { padding-inline: 6px; }
       .dock-stopbar { flex-wrap: wrap; gap: 4px 7px; }
       .dock-stop-status { flex-basis: 100%; text-align: left; }
-      .dock-status { grid-template-columns: auto minmax(0, 1fr); }
+      .dock-status { grid-template-columns: auto minmax(0, 1fr) auto; }
       .dock-mode-label { display: none; }
       .dock-cursor { justify-self: end; }
       .dock-usage-row:not(.total) { grid-template-columns: minmax(62px, 1fr) auto; gap: 5px 8px; }
@@ -683,6 +713,9 @@
       const STOP_RETRY_BASE_MS = 2_000;
       const STOP_RETRY_MAX_MS = 30_000;
       const BROWSER_TASK_STATE_MAX_AGE_MS = 10_000;
+      const CDP_TOOLBAR_RECOVERY_COOLDOWN_MS = 5_000;
+      const CDP_TOOLBAR_RETRY_BASE_MS = 500;
+      const CDP_TOOLBAR_RETRY_MAX_MS = 8_000;
       const initialWidgetState = isPlainObject(window.openai?.widgetState) ? window.openai.widgetState : {};
       const initialStopGuard = isPlainObject(initialWidgetState.codexTrajectoryStopGuard)
         ? initialWidgetState.codexTrajectoryStopGuard
@@ -702,6 +735,7 @@
         enabled: false,
         port: 9222,
         cdpAvailable: false,
+        browserShortcutAvailable: false,
         daemonRunning: false,
         connected: false,
         injected: false,
@@ -710,6 +744,10 @@
       };
       let cdpToolbarLoaded = false;
       let cdpToolbarBusy = false;
+      let cdpToolbarRecovering = false;
+      let cdpToolbarRecoveryAfter = 0;
+      let cdpToolbarFailureCount = 0;
+      let cdpToolbarStatusEpoch = 0;
       let cdpToolbarTimer = null;
 
       function applyCodexTheme(theme) {
@@ -752,6 +790,8 @@
         cachedInput: "缓存读取", uncachedInput: "非缓存输入", outputTokens: "输出", reasoningTokens: "推理输出", visibleOutput: "可见输出",
         cacheHit: "缓存命中", modelRequests: "模型请求", contextWindow: "上下文窗口", inputBreakdown: "输入构成", outputBreakdown: "输出构成",
         byTurn: "按轮次", calls: "请求数", noTokenData: "此任务没有记录 Token 用量。", expandTurn: "展开轮次", collapseTurn: "折叠轮次", modelLabel: "模型",
+        estimatedCost: "估算花费", costCoverage: "计价覆盖", costComplete: "完整", costPartial: "部分", costUnavailable: "不可用",
+        costNote: "按标准 OpenAI API 文本 Token 单价估算（截至 {date}）；不是 Codex 订阅账单，不含工具调用费及长上下文、服务层级或区域处理等价格调整。",
         livePip: "实时小窗", liveTitle: "实时轨迹", exitPip: "关闭实时小窗", live: "实时刷新", syncing: "正在同步", paused: "已暂停", retrying: "重试中", latestEvent: "最新事件", checked: "最近检查", liveSafe: "安全摘要",
         pipPreparing: "正在准备实时小窗…", pipUnavailable: "当前宿主不支持实时小窗。", pipFailed: "无法打开实时小窗", dockMode: "Codex 右侧栏", inlineLiveMode: "页面内实时视图", returnInline: "返回内联视图",
         taskTotal: "任务总计", liveOutput: "实时输出", latestBelow: "最新在下方", recentRecords: "最近记录", recordTokens: "本条 Token", noRecordTokens: "本条无 Token 增量",
@@ -759,8 +799,9 @@
         stopCurrent: "停止", stopCurrentAria: "直接停止当前任务", stopCurrentTitle: "暂停当前任务的活动 Goal，并直接中断当前回合；保留 worktree 和未提交修改",
         stopSending: "正在直接停止任务…", stopSendingShort: "停止中…", stopRequested: "已直接停止任务", stopRequestedShort: "已停止", stopFailed: "直接停止失败", stopUnsupported: "当前 Codex 宿主不支持直接停止", stopDirectRequired: "无人值守停止需要先启用实验性 CDP，并连接本机调试端口", stopDifferentTask: "停止功能仅适用于打开轨迹时的 Codex 任务", stopAlreadyIdle: "当前任务已停止", stopIdleShort: "已停止",
         autoStop: "自动停止", autoStopThreshold: "剩余额度阈值", autoStopArmed: "已启用", autoStopLatched: "本额度周期已触发", autoStopWaiting: "已启用 · 等待任务运行", autoStopOff: "未启用", autoStopHint: "仅使用本机直停通道；任一额度窗口的剩余比例不高于阈值时，在额度恢复或周期重置前直接停止一次",
-        cdpToolbar: "无人值守直停与内置浏览器入口", cdpExperimental: "实验性 CDP", cdpEnable: "启用直停与“查看轨迹”", cdpPort: "端口", cdpOff: "未启用，不会连接调试端口",
-        cdpInjected: "已就绪；点击后在 Codex 内置浏览器打开", cdpConnecting: "CDP 已连接，正在定位 Codex 输入区", cdpWaiting: "等待本机 CDP 端口", cdpFailed: "CDP 注入失败", cdpSaving: "正在保存设置…",
+        cdpToolbar: "无人值守直停与内置浏览器入口", cdpToolbarDirect: "无人值守直停", cdpExperimental: "实验性 CDP", cdpEnable: "启用直停与“查看轨迹”", cdpEnableDirect: "启用直停", cdpPort: "端口", cdpOff: "未启用，不会连接调试端口",
+        cdpInjected: "已就绪；点击后在 Codex 内置浏览器打开", cdpRecovering: "正在恢复本地监视进程…", cdpConnecting: "本地监视进程已启动，正在连接 Codex", cdpLocating: "CDP 已连接，正在定位 Full access", cdpWaiting: "本地监视进程已启动，等待本机 CDP 端口", cdpFailed: "CDP 集成失败", cdpSaving: "正在保存设置…",
+        cdpDirectReady: "直停已就绪；当前系统不支持安全的 Browser 入口", cdpDirectWaiting: "直停正在等待本机 CDP 端口",
         cdpHelp: "需先完全退出应用，再用仅绑定 127.0.0.1 的调试端口启动：", cdpPrivacy: "调试端口可控制 Codex 页面，默认关闭。直停不会调用模型、发送任务消息或进入“调整方向”队列。",
       } : {
         eyebrow: "Local task trajectory", overview: "Timing overview", hint: "Drag to select · wheel to zoom · right-click to clear",
@@ -776,6 +817,8 @@
         cachedInput: "Cache reads", uncachedInput: "Uncached input", outputTokens: "Output", reasoningTokens: "Reasoning output", visibleOutput: "Visible output",
         cacheHit: "Cache hit", modelRequests: "Model requests", contextWindow: "Context window", inputBreakdown: "Input breakdown", outputBreakdown: "Output breakdown",
         byTurn: "By turn", calls: "Requests", noTokenData: "No token usage was recorded for this task.", expandTurn: "Expand turn", collapseTurn: "Collapse turn", modelLabel: "Model",
+        estimatedCost: "Estimated cost", costCoverage: "Pricing coverage", costComplete: "Complete", costPartial: "Partial", costUnavailable: "Unavailable",
+        costNote: "Estimated from standard OpenAI API text-token rates as of {date}; not a Codex subscription bill. Excludes tool-call fees and long-context, service-tier, or regional pricing adjustments.",
         livePip: "Live window", liveTitle: "Live trajectory", exitPip: "Close live window", live: "Live refresh", syncing: "Syncing", paused: "Paused", retrying: "Retrying", latestEvent: "Latest event", checked: "Last checked", liveSafe: "Safe summary",
         pipPreparing: "Preparing the live window…", pipUnavailable: "This host cannot open a live window.", pipFailed: "Could not open live window", dockMode: "Codex side panel", inlineLiveMode: "In-page live view", returnInline: "Return to inline view",
         taskTotal: "Task total", liveOutput: "Live output", latestBelow: "Newest below", recentRecords: "recent records", recordTokens: "Record tokens", noRecordTokens: "No token delta for this record",
@@ -783,8 +826,9 @@
         stopCurrent: "Stop", stopCurrentAria: "Stop the current task directly", stopCurrentTitle: "Pause the current task's active Goal and interrupt its turn directly while preserving worktrees and uncommitted changes",
         stopSending: "Stopping the task directly…", stopSendingShort: "Stopping…", stopRequested: "Task stopped directly", stopRequestedShort: "Stopped", stopFailed: "Direct stop failed", stopUnsupported: "This Codex host cannot stop the task directly", stopDirectRequired: "Unattended stop requires experimental CDP and a connected local debugging port", stopDifferentTask: "Stop controls apply only to the Codex task that opened this trajectory", stopAlreadyIdle: "The current task is already stopped", stopIdleShort: "Idle",
         autoStop: "Auto stop", autoStopThreshold: "Remaining quota threshold", autoStopArmed: "Armed", autoStopLatched: "Triggered for this quota cycle", autoStopWaiting: "Armed · waiting for the task to run", autoStopOff: "Off", autoStopHint: "Use only the local direct-stop path; stop once when any quota window reaches the threshold, then wait for quota recovery or a window reset before rearming",
-        cdpToolbar: "Unattended stop and in-app Browser shortcut", cdpExperimental: "Experimental CDP", cdpEnable: "Enable direct stop and “View trajectory”", cdpPort: "Port", cdpOff: "Off; no debugging-port connection", cdpInjected: "Ready; opens in the Codex in-app Browser without a message",
-        cdpConnecting: "CDP connected; locating the Codex composer", cdpWaiting: "Waiting for the local CDP port", cdpFailed: "CDP injection failed", cdpSaving: "Saving setting…",
+        cdpToolbar: "Unattended stop and in-app Browser shortcut", cdpToolbarDirect: "Unattended direct stop", cdpExperimental: "Experimental CDP", cdpEnable: "Enable direct stop and “View trajectory”", cdpEnableDirect: "Enable direct stop", cdpPort: "Port", cdpOff: "Off; no debugging-port connection", cdpInjected: "Ready; opens in the Codex in-app Browser without a message",
+        cdpRecovering: "Restarting the local watcher…", cdpConnecting: "Local watcher running; connecting to Codex", cdpLocating: "CDP connected; locating Full access", cdpWaiting: "Local watcher running; waiting for CDP port", cdpFailed: "CDP integration failed", cdpSaving: "Saving setting…",
+        cdpDirectReady: "Direct stop is ready; the safe Browser shortcut is unavailable on this platform", cdpDirectWaiting: "Direct stop is waiting for the local CDP port",
         cdpHelp: "Quit the app completely, then relaunch it with a debugging port bound only to 127.0.0.1:", cdpPrivacy: "The debugging port can control the Codex page and is off by default. Direct stop does not call the model, post a task message, or enter the steering queue.",
       };
 
@@ -848,6 +892,7 @@
           enabled: next.enabled === true,
           port: Number.isInteger(port) && port >= 1024 && port <= 65535 ? port : 9222,
           cdpAvailable: next.cdpAvailable === true,
+          browserShortcutAvailable: next.browserShortcutAvailable === true,
           daemonRunning: next.daemonRunning === true,
           connected: next.connected === true,
           injected: next.injected === true,
@@ -857,12 +902,30 @@
       }
 
       function cdpToolbarStatusText() {
+        if (!cdpToolbarLoaded) {
+          if (cdpToolbarStatus.lastError) {
+            return `${labels.cdpFailed}: ${cdpToolbarStatus.lastError} · ${labels.retrying}`;
+          }
+          return labels.syncing;
+        }
+        if (cdpToolbarRecovering) return labels.cdpRecovering;
         if (cdpToolbarBusy) return labels.cdpSaving;
         if (!cdpToolbarStatus.enabled) return labels.cdpOff;
+        if (!cdpToolbarStatus.browserShortcutAvailable) {
+          return cdpToolbarStatus.cdpAvailable
+            ? labels.cdpDirectReady
+            : `${labels.cdpDirectWaiting} ${cdpToolbarStatus.port}`;
+        }
+        if (cdpToolbarFailureCount && cdpToolbarStatus.lastError) {
+          return `${labels.cdpFailed}: ${cdpToolbarStatus.lastError} · ${labels.retrying}`;
+        }
+        if (!cdpToolbarStatus.daemonRunning && cdpToolbarStatus.lastError) return `${labels.cdpFailed}: ${cdpToolbarStatus.lastError}`;
+        if (!cdpToolbarStatus.daemonRunning) return labels.cdpRecovering;
         if (cdpToolbarStatus.viewerServing && cdpToolbarStatus.injected) return labels.cdpInjected;
         if (cdpToolbarStatus.injected) return labels.cdpInjected;
-        if (cdpToolbarStatus.connected || cdpToolbarStatus.cdpAvailable) return labels.cdpConnecting;
         if (cdpToolbarStatus.lastError) return `${labels.cdpFailed}: ${cdpToolbarStatus.lastError}`;
+        if (cdpToolbarStatus.connected) return labels.cdpLocating;
+        if (cdpToolbarStatus.cdpAvailable) return labels.cdpConnecting;
         return `${labels.cdpWaiting} ${cdpToolbarStatus.port}`;
       }
 
@@ -871,6 +934,18 @@
         const port = document.getElementById("cdpToolbarPort");
         const status = document.getElementById("cdpToolbarStatus");
         const help = document.getElementById("cdpToolbarHelp");
+        const title = document.querySelector(".integration-title > span:first-child");
+        const enableLabel = document.querySelector(".integration-switch > span");
+        if (title) {
+          title.textContent = cdpToolbarStatus.browserShortcutAvailable
+            ? labels.cdpToolbar
+            : labels.cdpToolbarDirect;
+        }
+        if (enableLabel) {
+          enableLabel.textContent = cdpToolbarStatus.browserShortcutAvailable
+            ? labels.cdpEnable
+            : labels.cdpEnableDirect;
+        }
         if (enabled) {
           enabled.checked = cdpToolbarStatus.enabled;
           enabled.disabled = cdpToolbarBusy;
@@ -882,8 +957,21 @@
         if (status) {
           status.textContent = cdpToolbarStatusText();
           status.title = status.textContent;
-          status.classList.toggle("active", cdpToolbarStatus.enabled && cdpToolbarStatus.injected);
-          status.classList.toggle("error", cdpToolbarStatus.enabled && Boolean(cdpToolbarStatus.lastError) && !cdpToolbarStatus.cdpAvailable);
+          status.classList.toggle(
+            "active",
+            cdpToolbarStatus.enabled && (
+              cdpToolbarStatus.browserShortcutAvailable
+                ? cdpToolbarStatus.injected
+                : cdpToolbarStatus.cdpAvailable
+            ),
+          );
+          status.classList.toggle(
+            "error",
+            Boolean(cdpToolbarStatus.lastError)
+              && (!cdpToolbarLoaded || (
+                cdpToolbarStatus.enabled && cdpToolbarStatus.browserShortcutAvailable
+              )),
+          );
         }
         if (help) help.hidden = !cdpToolbarStatus.enabled || cdpToolbarStatus.cdpAvailable;
       }
@@ -891,13 +979,24 @@
       function scheduleCdpToolbarRefresh() {
         window.clearTimeout(cdpToolbarTimer);
         cdpToolbarTimer = null;
-        if (!cdpToolbarStatus.enabled) return;
-        cdpToolbarTimer = window.setTimeout(() => refreshCdpToolbarStatus(true), cdpToolbarStatus.injected ? 5000 : 1500);
+        if (
+          cdpToolbarLoaded
+          && (!cdpToolbarStatus.enabled || !cdpToolbarStatus.browserShortcutAvailable)
+        ) return;
+        const delay = cdpToolbarFailureCount
+          ? Math.min(
+            CDP_TOOLBAR_RETRY_MAX_MS,
+            CDP_TOOLBAR_RETRY_BASE_MS * (2 ** Math.max(0, cdpToolbarFailureCount - 1)),
+          )
+          : cdpToolbarStatus.injected ? 5000 : 1500;
+        cdpToolbarTimer = window.setTimeout(() => refreshCdpToolbarStatus(true), delay);
       }
 
       async function refreshCdpToolbarStatus(background = false) {
         if (cdpToolbarBusy) return;
         if (!background) cdpToolbarBusy = true;
+        const statusEpoch = cdpToolbarStatusEpoch;
+        let statusRead = false;
         updateCdpToolbarControls();
         try {
           const result = await callTool("get_codex_toolbar_injection_status", {});
@@ -905,38 +1004,73 @@
             const message = (result?.content || []).map(item => item?.text).filter(Boolean).join(" ");
             throw new Error(message || labels.cdpFailed);
           }
+          if (statusEpoch !== cdpToolbarStatusEpoch) return;
           cdpToolbarStatus = normalizeCdpToolbarStatus(result.structuredContent);
           cdpToolbarLoaded = true;
+          cdpToolbarFailureCount = 0;
+          statusRead = true;
         } catch (error) {
+          if (statusEpoch !== cdpToolbarStatusEpoch) return;
+          cdpToolbarFailureCount = Math.min(cdpToolbarFailureCount + 1, 8);
           cdpToolbarStatus = { ...cdpToolbarStatus, lastError: String(error?.message || error) };
         } finally {
           if (!background) cdpToolbarBusy = false;
-          updateCdpToolbarControls();
-          if (document.getElementById("liveDock")) {
-            updateStopControls();
-            if (stopGuardEnabled) maybeRequestAutomaticStop(liveData);
+          if (statusEpoch === cdpToolbarStatusEpoch) {
+            updateCdpToolbarControls();
+            if (document.getElementById("liveDock")) {
+              updateStopControls();
+              if (stopGuardEnabled) maybeRequestAutomaticStop(liveData);
+            }
           }
-          scheduleCdpToolbarRefresh();
         }
+        if (statusEpoch !== cdpToolbarStatusEpoch) return;
+        if (statusRead && await maybeRecoverCdpToolbar()) return;
+        scheduleCdpToolbarRefresh();
       }
 
-      async function setCdpToolbarSetting(enabled, port) {
+      async function maybeRecoverCdpToolbar() {
+        if (
+          cdpToolbarBusy
+          || !cdpToolbarStatus.enabled
+          || !cdpToolbarStatus.browserShortcutAvailable
+          || cdpToolbarStatus.daemonRunning
+        ) return false;
+        const now = Date.now();
+        if (now < cdpToolbarRecoveryAfter) return false;
+        cdpToolbarRecoveryAfter = now + CDP_TOOLBAR_RECOVERY_COOLDOWN_MS;
+        await setCdpToolbarSetting(true, cdpToolbarStatus.port, true);
+        return true;
+      }
+
+      async function setCdpToolbarSetting(enabled, port, reconcileOnly = false) {
         if (cdpToolbarBusy) return;
+        cdpToolbarStatusEpoch += 1;
         const previous = cdpToolbarStatus;
         cdpToolbarBusy = true;
+        cdpToolbarRecovering = reconcileOnly;
+        cdpToolbarRecoveryAfter = enabled
+          ? Date.now() + CDP_TOOLBAR_RECOVERY_COOLDOWN_MS
+          : 0;
         cdpToolbarStatus = { ...cdpToolbarStatus, enabled, port, lastError: null };
         updateCdpToolbarControls();
         try {
-          const result = await callTool("set_codex_toolbar_injection", { enabled, port });
+          const result = await callTool("set_codex_toolbar_injection", {
+            enabled,
+            port,
+            ...(reconcileOnly ? { reconcileOnly: true } : {}),
+          });
           if (result?.isError || !result?.structuredContent) {
             const message = (result?.content || []).map(item => item?.text).filter(Boolean).join(" ");
             throw new Error(message || labels.cdpFailed);
           }
           cdpToolbarStatus = normalizeCdpToolbarStatus(result.structuredContent);
+          cdpToolbarLoaded = true;
+          cdpToolbarFailureCount = 0;
         } catch (error) {
           cdpToolbarStatus = { ...previous, lastError: String(error?.message || error) };
         } finally {
           cdpToolbarBusy = false;
+          cdpToolbarRecovering = false;
           updateCdpToolbarControls();
           if (document.getElementById("liveDock")) {
             updateStopControls();
@@ -956,12 +1090,12 @@
             : `codex ${debuggingArgs}`;
         return `<div class="integration-bar">
           <div class="integration-copy">
-            <div class="integration-title"><span>${labels.cdpToolbar}</span><span class="integration-experimental">${labels.cdpExperimental}</span></div>
+            <div class="integration-title"><span>${cdpToolbarStatus.browserShortcutAvailable ? labels.cdpToolbar : labels.cdpToolbarDirect}</span><span class="integration-experimental">${labels.cdpExperimental}</span></div>
             <span class="integration-status" id="cdpToolbarStatus" role="status">${escapeHtml(cdpToolbarStatusText())}</span>
             <div class="integration-help" id="cdpToolbarHelp"${!cdpToolbarStatus.enabled || cdpToolbarStatus.cdpAvailable ? " hidden" : ""}>${labels.cdpHelp} <code>${escapeHtml(launchCommand)}</code><br>${labels.cdpPrivacy}</div>
           </div>
           <div class="integration-controls">
-            <label class="integration-switch"><input id="cdpToolbarEnabled" type="checkbox"${cdpToolbarStatus.enabled ? " checked" : ""}${cdpToolbarBusy ? " disabled" : ""}><span>${labels.cdpEnable}</span></label>
+            <label class="integration-switch"><input id="cdpToolbarEnabled" type="checkbox"${cdpToolbarStatus.enabled ? " checked" : ""}${cdpToolbarBusy ? " disabled" : ""}><span>${cdpToolbarStatus.browserShortcutAvailable ? labels.cdpEnable : labels.cdpEnableDirect}</span></label>
             <label class="integration-port"><span>${labels.cdpPort}</span><input id="cdpToolbarPort" type="number" min="1024" max="65535" step="1" value="${cdpToolbarStatus.port}"${cdpToolbarBusy ? " disabled" : ""}></label>
           </div>
         </div>`;
@@ -1454,6 +1588,18 @@
         return fitted + suffix;
       }
 
+      function fitCanvasValueFont(context, value, maxWidth, maximumSize = 28) {
+        const text = String(value ?? "—");
+        const family = "ui-monospace, SFMono-Regular, Menlo, monospace";
+        context.font = `750 ${maximumSize}px ${family}`;
+        const measured = context.measureText(text).width;
+        const size = measured > maxWidth && measured > 0
+          ? Math.max(8, maximumSize * maxWidth / measured)
+          : maximumSize;
+        context.font = `750 ${size.toFixed(2)}px ${family}`;
+        return text;
+      }
+
       function wrapCanvasText(context, value, maxWidth, maxLines) {
         const characters = Array.from(String(value ?? "—"));
         const lines = [];
@@ -1523,6 +1669,11 @@
         const latest = snapshot.records?.at(-1) || {};
         const stats = snapshot.stats || {};
         const usage = usageView(hasTokenUsage(stats.tokens) ? stats.tokens : {});
+        const currentTurn = (snapshot.turns || []).find(turn => turn.index === latest.turn)
+          || (snapshot.turns || []).at(-1) || {};
+        const totalCost = costText(stats.cost);
+        const turnCost = costText(currentTurn.cost);
+        const recordCost = hasTokenUsage(latest.usage) ? costText(latest.cost) : "—";
         const quota = rateLimitView(stats.rateLimits);
         const status = latest.status || "—";
         const { cursor } = liveCursorState(latest, stats);
@@ -1564,12 +1715,15 @@
         context.fillText(fitCanvasText(context, cursor, 510), 64, 247);
         context.fillStyle = muted;
         context.font = "600 18px -apple-system, BlinkMacSystemFont, sans-serif";
-        context.fillText(fitCanvasText(context, status + " · " + number(stats.records) + " " + labels.records, 510), 64, 282);
+        context.fillText(fitCanvasText(context, status + " · " + turnCost + " · " + number(stats.records) + " " + labels.records, 510), 64, 282);
 
         fillCanvasPanel(context, 40, 330, 560, 180, panel);
         context.fillStyle = accent;
         context.font = "750 16px -apple-system, BlinkMacSystemFont, sans-serif";
         context.fillText(labels.latestEvent.toUpperCase(), 64, 370);
+        context.textAlign = "right";
+        context.fillText(recordCost, 576, 370);
+        context.textAlign = "left";
         context.fillStyle = text;
         context.font = "750 25px -apple-system, BlinkMacSystemFont, sans-serif";
         context.fillText(fitCanvasText(context, latest.event || "—", 510), 64, 410);
@@ -1579,17 +1733,18 @@
           context.fillText(line, 64, 450 + index * 27);
         });
 
-        function drawTokenCard(item, x, y, width, height, emphasized = false) {
+        function drawTokenCard(item, x, y, width, height, emphasized = false, formatter = number) {
           fillCanvasPanel(context, x, y, width, height, emphasized ? panelAlt : panel);
           context.fillStyle = muted;
           context.font = "700 15px -apple-system, BlinkMacSystemFont, sans-serif";
           context.fillText(fitCanvasText(context, item[0].toUpperCase(), width - 40), x + 20, y + 31);
           context.fillStyle = emphasized ? accent : text;
-          context.font = "750 28px ui-monospace, SFMono-Regular, Menlo, monospace";
-          context.fillText(fitCanvasText(context, number(item[1]), width - 40), x + 20, y + 72);
+          const formatted = fitCanvasValueFont(context, formatter(item[1]), width - 40);
+          context.fillText(formatted, x + 20, y + 72, width - 40);
         }
 
-        drawTokenCard(tokenItems[0], 40, 540, 560, 98, true);
+        drawTokenCard(tokenItems[0], 40, 540, 270, 98, true);
+        drawTokenCard([labels.estimatedCost, stats.cost], 330, 540, 270, 98, true, costText);
         drawTokenCard(tokenItems[1], 40, 660, 270, 98);
         drawTokenCard(tokenItems[2], 330, 660, 270, 98);
         drawTokenCard(tokenItems[3], 40, 780, 270, 98);
@@ -1605,6 +1760,9 @@
 
         pipCanvas.dataset.cursor = cursor;
         pipCanvas.dataset.tokens = tokenItems.map(item => String(item[1])).join(",");
+        pipCanvas.dataset.totalCost = totalCost;
+        pipCanvas.dataset.turnCost = turnCost;
+        pipCanvas.dataset.recordCost = recordCost;
         pipCanvas.dataset.latest = latest.summary || "";
         pipCanvas.dataset.detailLevel = "summary";
         pipCanvas.dataset.liveState = stateLabel;
@@ -1619,6 +1777,11 @@
             status,
           },
           tokens: tokenItems.map(item => item[1]),
+          costs: {
+            total: totalCost,
+            turn: turnCost,
+            record: recordCost,
+          },
           rateLimits: quota.items.map(item => ({
             window: item.key,
             remainingPercent: item.remaining,
@@ -1635,6 +1798,8 @@
         const stats = snapshot.stats || {};
         const usage = usageView(hasTokenUsage(stats.tokens) ? stats.tokens : {});
         const cursorState = liveCursorState(latest, stats);
+        const currentTurn = (snapshot.turns || []).find(turn => turn.index === latest.turn)
+          || (snapshot.turns || []).at(-1) || {};
         const quota = rateLimitView(stats.rateLimits);
         return {
           snapshot,
@@ -1644,6 +1809,9 @@
           cursorParts: cursorState,
           stateLabel: liveStateLabel(),
           quota,
+          totalCost: costText(stats.cost),
+          totalCostNote: costNoteText(stats.cost),
+          turnCost: costText(currentTurn.cost),
           tokenItems: [
             [labels.totalTokens, usage.total],
             [labels.uncachedInput, usage.uncached],
@@ -1658,19 +1826,26 @@
         if (!hasTokenUsage(record.usage)) {
           return {
             tokenValues: "",
+            costValue: "",
             markup: `<span class="dock-no-usage">${escapeHtml(labels.noRecordTokens)}</span>`,
           };
         }
         const usage = usageView(record.usage);
+        const costValue = costText(record.cost);
         const tokenValues = [usage.total, usage.uncached, usage.cached, usage.output, usage.reasoning]
           .map(String).join(",");
         const part = (label, value) => `<span class="dock-usage-part"><span class="dock-usage-part-label">${escapeHtml(label)}</span><strong class="dock-usage-part-value">${escapeHtml(number(value))}</strong></span>`;
         return {
           tokenValues,
+          costValue,
           markup: `
             <div class="dock-usage-row total" data-token-group="total">
               <span class="dock-usage-name">${escapeHtml(labels.totalTokens)}</span>
               <strong class="dock-usage-value">${escapeHtml(number(usage.total))}</strong>
+            </div>
+            <div class="dock-usage-row cost" data-token-group="cost">
+              <span class="dock-usage-name">${escapeHtml(labels.estimatedCost)}</span>
+              <strong class="dock-usage-value">${escapeHtml(costValue)}</strong>
             </div>
             <div class="dock-usage-row input" data-token-group="input">
               <span class="dock-usage-name">${escapeHtml(labels.inputTokens)}</span>
@@ -1700,7 +1875,7 @@
           <span class="dock-whale-miner-viewport"><span class="dock-whale-miner-y"><span class="dock-whale-miner-sheet"></span></span></span>
         </span>` : "";
         return `<article class="dock-record${latest ? " latest" : ""}" role="listitem"
-          data-index="${escapeHtml(record.index)}" data-kind="${kind}" data-record-tokens="${escapeHtml(usage.tokenValues)}">
+          data-index="${escapeHtml(record.index)}" data-kind="${kind}" data-record-tokens="${escapeHtml(usage.tokenValues)}" data-record-cost="${escapeHtml(usage.costValue)}">
           ${whaleMiner}
           <div class="dock-record-head"><span class="dock-record-cursor">${escapeHtml(recordCursor)}</span><span class="dock-record-state">${escapeHtml(state)}</span></div>
           <div class="dock-record-event" title="${escapeHtml(record.event || "—")}">${escapeHtml(record.event || "—")}</div>
@@ -1709,8 +1884,27 @@
         </article>`;
       }
 
-      function dockRecordRows(records) {
-        return records.map((record, index) => dockRecordMarkup(record, index === records.length - 1)).join("");
+      function dockTurnSummaryMarkup(turnIndex, turn) {
+        const usage = usageView(hasTokenUsage(turn?.usage) ? turn.usage : {});
+        const turnCost = costText(turn?.cost);
+        return `<div class="dock-turn-summary" role="group" aria-label="${escapeHtml(labels.turn + " " + turnIndex + " · " + labels.estimatedCost + " " + turnCost)}"
+          data-turn="${escapeHtml(turnIndex)}" data-turn-tokens="${escapeHtml(usage.total)}" data-turn-cost="${escapeHtml(turnCost)}">
+          <strong class="dock-turn-index">T${escapeHtml(turnIndex)}</strong>
+          <span class="dock-turn-tokens">${escapeHtml(labels.totalTokens)} ${escapeHtml(number(usage.total))}</span>
+          <span class="dock-turn-cost">${escapeHtml(labels.estimatedCost)} ${escapeHtml(turnCost)}</span>
+        </div>`;
+      }
+
+      function dockRecordRows(records, turns) {
+        const turnMap = new Map((turns || []).map(turn => [turn.index, turn]));
+        let previousTurn = null;
+        return records.map((record, index) => {
+          const turnSummary = record.turn !== previousTurn
+            ? dockTurnSummaryMarkup(record.turn, turnMap.get(record.turn))
+            : "";
+          previousTurn = record.turn;
+          return turnSummary + dockRecordMarkup(record, index === records.length - 1);
+        }).join("");
       }
 
       function setDockText(selector, value) {
@@ -1752,7 +1946,7 @@
       }
 
       function mountDockedShell(view) {
-        const { snapshot, latest, stats, cursor, cursorParts, stateLabel, quota, tokenItems } = view;
+        const { snapshot, latest, stats, cursor, cursorParts, stateLabel, quota, tokenItems, totalCost, totalCostNote, turnCost } = view;
         const tokenValues = tokenItems.map(item => String(item[1])).join(",");
         const tokenCards = tokenItems.slice(1).map((item, index) => `
           <div class="dock-token" data-dock-token="${index + 1}">
@@ -1766,7 +1960,7 @@
           <section class="dock-shell" id="liveDock" role="complementary" aria-label="${escapeHtml(labels.liveTitle)}"
             data-session-id="${escapeHtml(snapshot.session.id)}"
             data-presentation="${escapeHtml(livePresentation)}" data-detail-level="summary" data-cursor="${escapeHtml(cursor)}"
-            data-tokens="${escapeHtml(tokenValues)}" data-quota="${escapeHtml(quota.signature)}" data-latest="${escapeHtml(latest.summary || "")}" data-record-count="${records.length}"
+            data-tokens="${escapeHtml(tokenValues)}" data-total-cost="${escapeHtml(totalCost)}" data-turn-cost="${escapeHtml(turnCost)}" data-quota="${escapeHtml(quota.signature)}" data-latest="${escapeHtml(latest.summary || "")}" data-record-count="${records.length}"
             data-stop-status="${escapeHtml(stopRequestSupported() ? stopRequestStatus : "unsupported")}" data-auto-stop="${String(stopGuardEnabled)}" data-auto-stop-threshold="${stopGuardThreshold}">
             <div class="dock-fixed" id="dockFixedSummary">
               <header class="dock-head">
@@ -1787,17 +1981,18 @@
               <div class="dock-status">
                 <span class="dock-live-state" aria-live="polite"><span class="dock-live-dot${liveError ? " error" : ""}" id="dockLiveDot"></span><span id="dockLiveState">${escapeHtml(stateLabel)}</span></span>
                 <span class="dock-cursor" id="dockCursor" aria-label="${escapeHtml(cursor)}"><span class="dock-cursor-part" id="dockCursorTurn">${escapeHtml(cursorParts.turn)}</span><span class="dock-cursor-separator">/</span><span class="dock-cursor-part" id="dockCursorStep">${escapeHtml(cursorParts.step)}</span><span class="dock-cursor-separator">/</span><span class="dock-cursor-part" id="dockCursorRecord">${escapeHtml(cursorParts.record)}</span></span>
+                <span class="dock-current-turn-cost" id="dockCurrentTurnCost" title="${escapeHtml(labels.estimatedCost)}">${escapeHtml(turnCost)}</span>
                 <span class="dock-mode-label" id="dockModeLabel">${escapeHtml(livePresentation === "inline-live" ? labels.inlineLiveMode : labels.dockMode)}</span>
               </div>
               <section class="dock-overview" aria-label="${escapeHtml(labels.taskTotal)}">
                 <div class="dock-overview-head"><span class="dock-section-label">${escapeHtml(labels.taskTotal)}</span><span class="dock-overview-meta" id="dockOverviewMeta">${escapeHtml(number(stats.turns) + " " + labels.turns + " · " + number(stats.records) + " " + labels.records)}</span></div>
-                <div class="dock-total"><div><div class="dock-total-label">${escapeHtml(tokenItems[0][0])}</div><div class="dock-total-value" id="dockTotalValue">${escapeHtml(number(tokenItems[0][1]))}</div></div><div class="dock-total-label">${escapeHtml(labels.liveSafe)}</div></div>
+                <div class="dock-total"><div><div class="dock-total-label">${escapeHtml(tokenItems[0][0])}</div><div class="dock-total-value" id="dockTotalValue">${escapeHtml(number(tokenItems[0][1]))}</div></div><div class="dock-total-cost" id="dockTotalCostMetric" title="${escapeHtml(totalCostNote)}"><div class="dock-total-label">${escapeHtml(labels.estimatedCost)}</div><div class="dock-total-cost-value" id="dockTotalCost">${escapeHtml(totalCost)}</div></div></div>
                 <div class="dock-token-grid">${tokenCards}</div>
               </section>
             </div>
             <section class="dock-stream" aria-label="${escapeHtml(labels.liveOutput)}">
               <header class="dock-stream-head"><span class="dock-stream-title">${escapeHtml(labels.liveOutput)}</span><span class="dock-stream-meta" id="dockStreamMeta">${escapeHtml(number(records.length) + " " + labels.recentRecords + " · " + labels.latestBelow)}</span></header>
-              <div class="dock-records" id="liveRecordStream" role="list" data-follow-latest="${String(dockFollowLatest)}" data-revision="${escapeHtml(revision)}">${dockRecordRows(records)}</div>
+              <div class="dock-records" id="liveRecordStream" role="list" data-follow-latest="${String(dockFollowLatest)}" data-revision="${escapeHtml(revision)}">${dockRecordRows(records, snapshot.turns)}</div>
             </section>
             <footer class="dock-foot"><span>${escapeHtml(labels.liveSafe)}</span><span id="dockChecked">${escapeHtml(labels.checked + ": " + (liveCheckedAt ? date(liveCheckedAt) : "—"))}</span></footer>
           </section>`;
@@ -1811,7 +2006,7 @@
       }
 
       function patchDockedShell(view) {
-        const { snapshot, latest, stats, cursor, cursorParts, stateLabel, quota, tokenItems } = view;
+        const { snapshot, latest, stats, cursor, cursorParts, stateLabel, quota, tokenItems, totalCost, totalCostNote, turnCost } = view;
         const dock = document.getElementById("liveDock");
         if (!dock || dock.dataset.sessionId !== String(snapshot.session.id)) {
           mountDockedShell(view);
@@ -1823,6 +2018,8 @@
         setDockAttribute(dock, "data-presentation", livePresentation);
         setDockAttribute(dock, "data-cursor", cursor);
         setDockAttribute(dock, "data-tokens", tokenValues);
+        setDockAttribute(dock, "data-total-cost", totalCost);
+        setDockAttribute(dock, "data-turn-cost", turnCost);
         setDockAttribute(dock, "data-quota", quota.signature);
         setDockAttribute(dock, "data-latest", latest.summary || "");
         setDockAttribute(dock, "data-record-count", records.length);
@@ -1836,6 +2033,7 @@
         setDockText("#dockCursorStep", cursorParts.step);
         setDockText("#dockCursorRecord", cursorParts.record);
         setDockAttribute(document.getElementById("dockCursor"), "aria-label", cursor);
+        setDockText("#dockCurrentTurnCost", turnCost);
         setDockText("#dockModeLabel", livePresentation === "inline-live" ? labels.inlineLiveMode : labels.dockMode);
         const quotaElement = document.getElementById("dockQuota");
         if (quotaElement) {
@@ -1849,6 +2047,8 @@
         }
         setDockText("#dockOverviewMeta", number(stats.turns) + " " + labels.turns + " · " + number(stats.records) + " " + labels.records);
         setDockText("#dockTotalValue", number(tokenItems[0][1]));
+        setDockText("#dockTotalCost", totalCost);
+        setDockAttribute(document.getElementById("dockTotalCostMetric"), "title", totalCostNote);
         tokenItems.slice(1).forEach((item, index) => {
           setDockText(`[data-dock-token="${index + 1}"] .dock-token-value`, number(item[1]));
         });
@@ -1864,7 +2064,7 @@
         if (stream.dataset.revision === revision) return;
         dockScrollTop = stream.scrollTop;
         dockFollowLatest = stream.scrollHeight - stream.scrollTop - stream.clientHeight <= 36;
-        stream.innerHTML = dockRecordRows(records);
+        stream.innerHTML = dockRecordRows(records, snapshot.turns);
         stream.dataset.revision = revision;
         stream.dataset.followLatest = String(dockFollowLatest);
         bindDockWhaleMiner(stream);
@@ -2233,9 +2433,51 @@
         return result;
       }
 
+      function turnUsageValue(turn, usageRecords) {
+        if (hasTokenUsage(turn?.usage)) return turn.usage;
+        return aggregateUsage(usageRecords.filter(record => record.turn === turn?.index).map(record => record.usage));
+      }
+
+      function turnRequestCount(turn, usageRecords) {
+        if (Number.isFinite(turn?.modelCalls)) return turn.modelCalls;
+        return usageRecords.filter(record => record.turn === turn?.index).length;
+      }
+
       function percentage(value, total) {
         if (!Number.isFinite(value) || !Number.isFinite(total) || total <= 0) return "—";
         return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(value / total * 100)}%`;
+      }
+
+      function hasCostEstimate(cost) {
+        return cost && typeof cost === "object" && ["complete", "partial", "unavailable"].includes(cost.coverage);
+      }
+
+      function costCoverageLabel(cost) {
+        if (cost?.coverage === "complete") return labels.costComplete;
+        if (cost?.coverage === "partial") return labels.costPartial;
+        return labels.costUnavailable;
+      }
+
+      function usd(value) {
+        if (!Number.isFinite(value)) return "—";
+        const absolute = Math.abs(value);
+        const digits = absolute === 0 || absolute >= 1 ? 2 : absolute >= .01 ? 4 : absolute >= .0001 ? 6 : 8;
+        return new Intl.NumberFormat(undefined, {
+          style: "currency",
+          currency: "USD",
+          minimumFractionDigits: digits,
+          maximumFractionDigits: digits,
+        }).format(value);
+      }
+
+      function costText(cost) {
+        if (!hasCostEstimate(cost) || !Number.isFinite(cost.totalUsd)) return "—";
+        return `${cost.coverage === "partial" ? "≥" : "≈"}${usd(cost.totalUsd)}`;
+      }
+
+      function costNoteText(cost) {
+        const pricingDate = typeof cost?.pricingUpdatedAt === "string" ? cost.pricingUpdatedAt : "—";
+        return labels.costNote.replace("{date}", pricingDate);
       }
 
       function rateLimitWindowLabel(window, key) {
@@ -2296,6 +2538,11 @@
         return `<div class="token-metric" data-token-metric="${escapeHtml(key)}"><div class="token-metric-label">${escapeHtml(label)}</div><div class="token-metric-value ${numberFitClass(formatted)}">${escapeHtml(formatted)}</div></div>`;
       }
 
+      function costMetric(cost) {
+        const formatted = costText(cost);
+        return `<div class="token-metric" data-token-metric="cost"><div class="token-metric-label">${escapeHtml(labels.estimatedCost)}</div><div class="token-metric-value ${numberFitClass(formatted)}">${escapeHtml(formatted)}</div></div>`;
+      }
+
       function tokenSegment(className, label, value, total) {
         if (!Number.isFinite(value) || value <= 0 || !Number.isFinite(total) || total <= 0) return "";
         const width = Math.max(0, Math.min(100, value / total * 100));
@@ -2319,13 +2566,16 @@
           return `<section class="token-panel" id="tokenDetails"><div class="section-title">${labels.tokenDetails}</div><div class="section-note">${labels.noTokenData}</div></section>`;
         }
         const total = usageView(rawTotal);
+        const cost = hasCostEstimate(stats.cost) ? stats.cost : null;
         const modelRequests = turns.reduce((sum, turn) => sum + (Number.isFinite(turn.modelCalls) ? turn.modelCalls : usageRecords.filter(record => record.turn === turn.index).length), 0);
         const contextBadge = Number.isFinite(stats.contextWindow) ? `<span class="token-badge">${labels.contextWindow} ${number(stats.contextWindow)}</span>` : "";
+        const costCoverage = cost ? `<span class="token-badge ${escapeHtml(cost.coverage)}">${labels.costCoverage} ${escapeHtml(costCoverageLabel(cost))}</span>` : "";
         return `<section class="token-panel" id="tokenDetails" aria-labelledby="tokenDetailsTitle">
-          <div class="token-head"><div><div class="section-title" id="tokenDetailsTitle">${labels.tokenDetails}</div><div class="section-note">${labels.tokenDetailsNote}</div></div><div class="token-badges"><span class="token-badge">${labels.cacheHit} ${percentage(total.cached, total.input)}</span><span class="token-badge">${labels.modelRequests} ${number(modelRequests)}</span>${contextBadge}</div></div>
-          <div class="token-metrics">${tokenMetric("total", labels.totalTokens, total.total)}${tokenMetric("input", labels.inputTokens, total.input)}${tokenMetric("cached", labels.cachedInput, total.cached)}${tokenMetric("uncached", labels.uncachedInput, total.uncached)}${tokenMetric("output", labels.outputTokens, total.output)}${tokenMetric("reasoning", labels.reasoningTokens, total.reasoning)}</div>
+          <div class="token-head"><div><div class="section-title" id="tokenDetailsTitle">${labels.tokenDetails}</div><div class="section-note">${labels.tokenDetailsNote}</div></div><div class="token-badges"><span class="token-badge">${labels.cacheHit} ${percentage(total.cached, total.input)}</span><span class="token-badge">${labels.modelRequests} ${number(modelRequests)}</span>${costCoverage}${contextBadge}</div></div>
+          <div class="token-metrics">${tokenMetric("total", labels.totalTokens, total.total)}${tokenMetric("input", labels.inputTokens, total.input)}${tokenMetric("cached", labels.cachedInput, total.cached)}${tokenMetric("uncached", labels.uncachedInput, total.uncached)}${tokenMetric("output", labels.outputTokens, total.output)}${tokenMetric("reasoning", labels.reasoningTokens, total.reasoning)}${costMetric(cost)}</div>
           <div class="token-bars">${tokenBreakdown(labels.inputBreakdown, total.input, [{ className: "token-new", label: labels.uncachedInput, value: total.uncached }, { className: "token-cached", label: labels.cachedInput, value: total.cached }])}${tokenBreakdown(labels.outputBreakdown, total.output, [{ className: "token-visible", label: labels.visibleOutput, value: total.visible }, { className: "token-reasoning", label: labels.reasoningTokens, value: total.reasoning }])}</div>
-          <details class="token-turns"><summary>${labels.byTurn}</summary><div class="token-table-wrap" role="table"><div class="token-row header" role="row"><div class="token-cell">${labels.turn}</div><div class="token-cell numeric">${labels.calls}</div><div class="token-cell numeric">${labels.totalTokens}</div><div class="token-cell numeric">${labels.inputTokens}</div><div class="token-cell numeric">${labels.cacheHit}</div><div class="token-cell numeric">${labels.outputTokens}</div><div class="token-cell numeric">${labels.reasoningTokens}</div></div><div id="tokenTurnRows"></div></div></details>
+          <div class="cost-note">${escapeHtml(costNoteText(cost))}</div>
+          <details class="token-turns"><summary id="tokenTurnsSummary">${labels.byTurn}</summary><div class="token-table-wrap" role="table" aria-labelledby="tokenTurnsSummary"><div role="rowgroup"><div class="token-row header" role="row"><div class="token-cell" role="columnheader">${labels.turn}</div><div class="token-cell numeric" data-token-column="cost" role="columnheader">${labels.estimatedCost}</div><div class="token-cell numeric" role="columnheader">${labels.calls}</div><div class="token-cell numeric" role="columnheader">${labels.totalTokens}</div><div class="token-cell numeric" role="columnheader">${labels.inputTokens}</div><div class="token-cell numeric" role="columnheader">${labels.cacheHit}</div><div class="token-cell numeric" role="columnheader">${labels.outputTokens}</div><div class="token-cell numeric" role="columnheader">${labels.reasoningTokens}</div></div></div><div id="tokenTurnRows" role="rowgroup"></div></div></details>
         </section>`;
       }
 
@@ -2334,11 +2584,11 @@
         if (!container || container.dataset.rendered === "true") return;
         const usageRecords = data.records.filter(record => hasTokenUsage(record.usage));
         container.innerHTML = (data.turns || []).map(turn => {
-          const raw = hasTokenUsage(turn.usage) ? turn.usage : aggregateUsage(usageRecords.filter(record => record.turn === turn.index).map(record => record.usage));
+          const raw = turnUsageValue(turn, usageRecords);
           if (!hasTokenUsage(raw)) return "";
           const usage = usageView(raw);
-          const calls = Number.isFinite(turn.modelCalls) ? turn.modelCalls : usageRecords.filter(record => record.turn === turn.index).length;
-          return `<div class="token-row token-turn-row" data-turn="${turn.index}" role="row"><div class="token-cell">T${turn.index}</div><div class="token-cell numeric">${number(calls)}</div><div class="token-cell numeric">${number(usage.total)}</div><div class="token-cell numeric">${number(usage.input)}</div><div class="token-cell numeric">${percentage(usage.cached, usage.input)}</div><div class="token-cell numeric">${number(usage.output)}</div><div class="token-cell numeric">${number(usage.reasoning)}</div></div>`;
+          const calls = turnRequestCount(turn, usageRecords);
+          return `<div class="token-row token-turn-row" data-turn="${turn.index}" role="row"><div class="token-cell" role="cell">T${turn.index}</div><div class="token-cell numeric" data-token-column="cost" role="cell">${escapeHtml(costText(turn.cost))}</div><div class="token-cell numeric" role="cell">${number(calls)}</div><div class="token-cell numeric" role="cell">${number(usage.total)}</div><div class="token-cell numeric" role="cell">${number(usage.input)}</div><div class="token-cell numeric" role="cell">${percentage(usage.cached, usage.input)}</div><div class="token-cell numeric" role="cell">${number(usage.output)}</div><div class="token-cell numeric" role="cell">${number(usage.reasoning)}</div></div>`;
         }).join("");
         container.dataset.rendered = "true";
       }
@@ -2438,7 +2688,7 @@
           const update = result?.structuredContent;
           if (
             !update
-            || update.schemaVersion !== 1
+            || update.schemaVersion !== 2
             || typeof update.unchanged !== "boolean"
             || !/^[0-9a-f]{64}$/.test(update.revision || "")
           ) throw new Error(labels.loadError);
@@ -2484,6 +2734,7 @@
         const fullDetails = data.detailLevel === "full";
         const totalDuration = turns.reduce((sum, turn) => sum + (Number.isFinite(turn.durationMs) ? turn.durationMs : 0), 0);
         const tokenTotal = hasTokenUsage(stats.tokens) ? usageView(stats.tokens).total : undefined;
+        const totalCost = costText(stats.cost);
         const pipActiveNow = isLiveMode();
         const pipReadyNow = true;
         const pipButtonTitle = pipActiveNow
@@ -2509,12 +2760,12 @@
             ${cdpToolbarIntegration()}
             <div class="stats">
               ${stat(labels.turns, number(stats.turns))}${stat(labels.records, number(stats.records))}${stat(labels.tools, number(stats.toolCalls))}
-              ${stat(labels.failures, number(stats.failedTools))}${stat(labels.tokens, number(tokenTotal))}${stat(labels.duration, duration(totalDuration))}
+              ${stat(labels.failures, number(stats.failedTools))}${stat(labels.tokens, number(tokenTotal))}${stat(labels.estimatedCost, totalCost)}${stat(labels.duration, duration(totalDuration))}
             </div>
             ${tokenDetailsPanel(stats, turns, data.records)}
             <section class="overview">
               <div class="section-head"><div><span class="section-title">${labels.overview}</span> <span class="section-note">${labels.hint}</span></div><button id="resetView" type="button">${labels.reset}</button></div>
-              <div class="timeline-wrap"><div id="timeline" role="application" aria-label="${labels.overview}"><div id="selection"></div></div><div class="ticks"><span id="tickStart"></span><span id="tickMiddle"></span><span id="tickEnd"></span></div></div>
+              <div class="timeline-wrap"><div id="timeline" role="group" aria-label="${labels.overview}"><div id="selection"></div></div><div class="ticks"><span id="tickStart"></span><span id="tickMiddle"></span><span id="tickEnd"></span></div></div>
             </section>
             <div class="toolbar">
               <input id="search" type="search" aria-label="${labels.search}" placeholder="${labels.search}" value="${escapeHtml(search)}">
@@ -2821,7 +3072,7 @@
             if (!range || range.end < selectedRange.start || range.start > selectedRange.end) return false;
           }
           if (!needle) return true;
-          return [record.event, record.summary, record.input, record.output, record.callId, JSON.stringify(record.usage || {})].some(value => String(value || "").toLowerCase().includes(needle));
+          return [record.event, record.summary, record.input, record.output, record.callId, JSON.stringify(record.usage || {}), JSON.stringify(record.cost || {})].some(value => String(value || "").toLowerCase().includes(needle));
         });
       }
 
@@ -2855,11 +3106,12 @@
           const toggleLabel = expanded ? labels.collapseTurn : labels.expandTurn;
           const model = turn.model || data.session.model;
           const modelSummary = model ? ` · <span class="turn-model">${labels.modelLabel} ${escapeHtml(model)}</span>` : "";
+          const turnCostSummary = hasCostEstimate(turn.cost) ? `<span class="turn-cost">· ${escapeHtml(labels.estimatedCost)} ${escapeHtml(costText(turn.cost))}</span>` : "";
           const turnUsage = hasTokenUsage(turn.usage) ? usageView(turn.usage) : null;
           const turnToken = (kind, label, value) => {
             return `<td class="turn-token" data-turn-token-kind="${kind}"><span class="turn-token-label">${label}</span><span class="turn-token-value">${number(value)}</span></td>`;
           };
-          header.innerHTML = `<td class="turn-summary-cell" colspan="5"><button type="button" class="turn-toggle" data-turn="${group.turn}" aria-expanded="${expanded}" title="${escapeHtml(toggleLabel)}"><span class="turn-caret" aria-hidden="true">${expanded ? "▾" : "▸"}</span><span class="turn-copy"><span class="turn-title">${labels.turn} ${group.turn}</span><span class="turn-meta">${escapeHtml(turn.status || "")} · ${number(recordCount)} ${labels.records} · ${duration(turn.durationMs)}${Number.isFinite(turn.timeToFirstTokenMs) ? ` · TTFT ${duration(turn.timeToFirstTokenMs)}` : ""}${modelSummary}</span></span></button></td>${turnToken("uncached", labels.uncachedInput, turnUsage?.uncached)}${turnToken("cached", labels.cachedInput, turnUsage?.cached)}${turnToken("output", labels.outputTokens, turnUsage?.output)}`;
+          header.innerHTML = `<td class="turn-summary-cell" colspan="5"><button type="button" class="turn-toggle" data-turn="${group.turn}" aria-expanded="${expanded}" title="${escapeHtml(toggleLabel)}"><span class="turn-caret" aria-hidden="true">${expanded ? "▾" : "▸"}</span><span class="turn-copy"><span class="turn-title">${labels.turn} ${group.turn}${turnCostSummary}</span><span class="turn-meta">${escapeHtml(turn.status || "")} · ${number(recordCount)} ${labels.records} · ${duration(turn.durationMs)}${Number.isFinite(turn.timeToFirstTokenMs) ? ` · TTFT ${duration(turn.timeToFirstTokenMs)}` : ""}${modelSummary}</span></span></button></td>${turnToken("uncached", labels.uncachedInput, turnUsage?.uncached)}${turnToken("cached", labels.cachedInput, turnUsage?.cached)}${turnToken("output", labels.outputTokens, turnUsage?.output)}`;
           turnGroup.appendChild(header);
           ledger.appendChild(turnGroup);
           if (!expanded) continue;
@@ -2922,6 +3174,7 @@
         const record = data.records.find(item => item.index === selectedIndex);
         if (!record) { inspector.innerHTML = `<div class="empty">${labels.inspect}</div>`; return; }
         const usage = record.usage ? JSON.stringify(record.usage, null, 2) : "";
+        const recordCost = hasTokenUsage(record.usage) ? costText(record.cost) : null;
         const metadata = record.metadata && Object.keys(record.metadata).length ? JSON.stringify(record.metadata, null, 2) : "";
         inspector.innerHTML = `<h2>#${record.index} ${escapeHtml(record.event)}</h2><div class="inspect-meta">T${record.turn}${record.step ? ` / S${record.step}` : ""} · <span class="${record.status === "error" ? "status-error" : record.status === "running" ? "status-running" : ""}">${escapeHtml(record.status)}</span></div>
           <div class="inspect-grid">
@@ -2929,6 +3182,7 @@
             <div class="inspect-item"><span>${labels.callId}</span><strong title="${escapeHtml(record.callId || "")}">${escapeHtml(record.callId || "—")}</strong></div>
             <div class="inspect-item"><span>${labels.started}</span><strong>${escapeHtml(date(record.startedAt))}</strong></div>
             <div class="inspect-item"><span>${labels.completed}</span><strong>${escapeHtml(date(record.completedAt))}</strong></div>
+            ${recordCost ? `<div class="inspect-item"><span>${labels.estimatedCost}</span><strong>${escapeHtml(recordCost)}</strong></div>` : ""}
           </div>
           <div>${escapeHtml(record.summary)}</div>
           ${record.error ? detailSection(labels.status, record.error, true) : ""}
