@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import os
 import socket
+import struct
 import sys
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -166,6 +168,123 @@ def test_windows_tcp_owner_match_is_exact_and_fail_closed(
     )
     with pytest.raises(PeerAuthenticationError, match="ambiguous"):
         cdp_peer._windows_connected_peer_pid(local, peer)
+
+
+def test_windows_process_table_reads_and_closes_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    closed: list[int] = []
+    entries = iter(((300, 200), (200, 100)))
+
+    class FakeFunction:
+        def __init__(self, function: Any) -> None:
+            self.function = function
+
+        def __call__(self, *args: Any) -> Any:
+            return self.function(*args)
+
+    def read_entry(_snapshot: int, entry_pointer: Any) -> int:
+        try:
+            pid, ppid = next(entries)
+        except StopIteration:
+            return 0
+        entry_pointer._obj.th32ProcessID = pid
+        entry_pointer._obj.th32ParentProcessID = ppid
+        return 1
+
+    kernel32 = SimpleNamespace(
+        CreateToolhelp32Snapshot=FakeFunction(lambda _flags, _pid: 123),
+        Process32FirstW=FakeFunction(read_entry),
+        Process32NextW=FakeFunction(read_entry),
+        CloseHandle=FakeFunction(lambda handle: closed.append(handle) or 1),
+    )
+    monkeypatch.setattr(cdp_peer, "_windows_dll", lambda name: kernel32)
+
+    assert cdp_peer._windows_process_table() == {300: 200, 200: 100}
+    assert closed == [123]
+
+
+def test_windows_process_info_reads_image_start_time_and_package(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    closed: list[int] = []
+
+    class FakeFunction:
+        def __init__(self, function: Any) -> None:
+            self.function = function
+
+        def __call__(self, *args: Any) -> Any:
+            return self.function(*args)
+
+    def query_image(_handle: int, _flags: int, buffer: Any, length: Any) -> int:
+        buffer.value = r"C:\Program Files\WindowsApps\OpenAI.Codex\ChatGPT.exe"
+        length._obj.value = len(buffer.value)
+        return 1
+
+    def get_process_times(
+        _handle: int,
+        creation: Any,
+        _exit_time: Any,
+        _kernel: Any,
+        _user: Any,
+    ) -> int:
+        creation._obj.low = 7
+        creation._obj.high = 2
+        return 1
+
+    def get_package_family(_handle: int, length: Any, buffer: Any) -> int:
+        family = "OpenAI.Codex_publisher"
+        if buffer is None:
+            length._obj.value = len(family) + 1
+            return 122
+        buffer.value = family
+        return 0
+
+    kernel32 = SimpleNamespace(
+        OpenProcess=FakeFunction(lambda _access, _inherit, _pid: 456),
+        QueryFullProcessImageNameW=FakeFunction(query_image),
+        GetProcessTimes=FakeFunction(get_process_times),
+        GetPackageFamilyName=FakeFunction(get_package_family),
+        CloseHandle=FakeFunction(lambda handle: closed.append(handle) or 1),
+    )
+    monkeypatch.setattr(cdp_peer, "_windows_process_table", lambda: {300: 200})
+    monkeypatch.setattr(cdp_peer, "_windows_dll", lambda name: kernel32)
+
+    assert cdp_peer._windows_process_info(300) == (
+        200,
+        str((2 << 32) | 7),
+        r"C:\Program Files\WindowsApps\OpenAI.Codex\ChatGPT.exe",
+        "OpenAI.Codex_publisher",
+    )
+    assert closed == [456]
+
+
+def test_windows_tcp_table_decodes_the_owner_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    row = struct.pack(
+        "<IIIIII",
+        5,
+        struct.unpack("=I", socket.inet_aton("127.0.0.1"))[0],
+        socket.htons(9222),
+        struct.unpack("=I", socket.inet_aton("127.0.0.1"))[0],
+        socket.htons(51004),
+        100,
+    )
+    payload = struct.pack("<I", 1) + row
+
+    class FakeFunction:
+        def __call__(self, buffer: Any, size: Any, *_args: Any) -> int:
+            size._obj.value = len(payload)
+            if buffer is None:
+                return 122
+            cdp_peer.ctypes.memmove(buffer, payload, len(payload))
+            return 0
+
+    iphlpapi = SimpleNamespace(GetExtendedTcpTable=FakeFunction())
+    monkeypatch.setattr(cdp_peer, "_windows_dll", lambda name: iphlpapi)
+
+    assert cdp_peer._windows_tcp_rows() == [("127.0.0.1", 9222, "127.0.0.1", 51004, 5, 100)]
 
 
 def test_authentication_rejects_non_loopback_before_owner_lookup(
