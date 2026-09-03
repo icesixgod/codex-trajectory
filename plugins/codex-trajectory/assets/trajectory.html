@@ -2,7 +2,6 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; font-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <title>Codex Trajectory</title>
   <style>
@@ -205,7 +204,6 @@
       background:
         linear-gradient(to bottom, transparent 31%, var(--line) 31%, var(--line) 32%, transparent 32%, transparent 65%, var(--line) 65%, var(--line) 66%, transparent 66%),
         repeating-linear-gradient(to right, transparent 0, transparent calc(10% - 1px), color-mix(in srgb, var(--line) 65%, transparent) calc(10% - 1px), color-mix(in srgb, var(--line) 65%, transparent) 10%);
-      touch-action: none;
       user-select: none;
       cursor: crosshair;
     }
@@ -342,6 +340,7 @@
     .dock-shell {
       position: fixed;
       inset: 0;
+      container-type: inline-size;
       display: flex;
       width: 100vw;
       height: 100vh;
@@ -589,7 +588,7 @@
     .dock-usage-part-label { overflow: hidden; color: var(--muted); font-size: 8px; text-overflow: ellipsis; }
     .dock-usage-part-value { color: var(--text); font: 700 8px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; }
     .dock-no-usage { padding: 6px 8px; color: var(--muted); background: var(--panel-2); font-size: 8px; }
-    .dock-foot { display: flex; flex: none; justify-content: space-between; gap: 8px; padding: 7px 12px max(8px, env(safe-area-inset-bottom)); border-top: 1px solid var(--line); color: var(--muted); background: var(--panel); font-size: 9px; }
+    .dock-foot { display: flex; flex: none; justify-content: space-between; gap: 8px; padding: 7px 12px 8px; border-top: 1px solid var(--line); color: var(--muted); background: var(--panel); font-size: 9px; }
     .dock-foot span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     @keyframes spin { to { transform: rotate(360deg); } }
     @keyframes dock-whale-mining-x { to { transform: translateX(calc(-1 * var(--whale-sheet-width))); } }
@@ -598,26 +597,6 @@
       .dock-whale-miner.mining .dock-whale-miner-y,
       .dock-whale-miner.mining .dock-whale-miner-sheet { animation: none; }
     }
-    @media (max-width: 760px) {
-      #app { padding: 0; }
-      .shell { border-radius: 0; border-left: 0; border-right: 0; }
-      .topbar { flex-direction: column; }
-      .top-actions, #sessionSelect { width: 100%; }
-      #sessionSelect { flex: 1; }
-      .stats { grid-template-columns: repeat(3, 1fr); }
-      .stat-value { overflow-wrap: anywhere; white-space: normal; }
-      .token-head { flex-direction: column; }
-      .token-badges { justify-content: flex-start; }
-      .token-bars { grid-template-columns: 1fr; }
-      .content { grid-template-columns: 1fr; }
-      .inspector { border-left: 0; border-top: 1px solid var(--line); max-height: 420px; }
-      .ledger-wrap { max-height: 470px; }
-      .toolbar { flex-wrap: wrap; }
-      .privacy-bar { align-items: flex-start; flex-direction: column; }
-      .integration-bar { align-items: flex-start; flex-direction: column; }
-      .integration-controls { width: 100%; justify-content: space-between; }
-      .pagination-bar { align-items: flex-start; flex-direction: column; }
-    }
     @media (max-height: 620px) {
       .dock-head { padding-block: 9px 7px; }
       .dock-stopbar { padding-block: 4px; }
@@ -625,7 +604,7 @@
       .dock-overview { margin-bottom: 8px; padding: 8px; }
       .dock-token { padding-block: 5px; }
     }
-    @media (max-width: 380px) {
+    @container (max-width: 380px) {
       .dock-head { gap: 7px; }
       .dock-head-actions { gap: 5px; }
       .dock-quota { gap: 3px; padding-inline: 4px; }

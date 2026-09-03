@@ -39,8 +39,7 @@
     "logo": "./assets/logo.png",
     "logoDark": "./assets/logo-dark.png",
     "screenshots": [
-      "./assets/screenshots/desktop-en.png",
-      "./assets/screenshots/mobile-zh.png"
+      "./assets/screenshots/desktop-en.png"
     ]
   }
 }

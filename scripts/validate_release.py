@@ -318,11 +318,7 @@ def validate_manifest(expected_version: str | None) -> str:
         plugin_path(value)
     screenshots = interface.get("screenshots")
     require(
-        screenshots
-        == [
-            "./assets/screenshots/desktop-en.png",
-            "./assets/screenshots/mobile-zh.png",
-        ],
+        screenshots == ["./assets/screenshots/desktop-en.png"],
         "screenshot declarations changed",
     )
     screenshots = cast(list[Any], screenshots)
@@ -336,7 +332,6 @@ def validate_manifest(expected_version: str | None) -> str:
         "./assets/logo.png": (1200, 360),
         "./assets/logo-dark.png": (1200, 360),
         "./assets/screenshots/desktop-en.png": (1280, 900),
-        "./assets/screenshots/mobile-zh.png": (600, 900),
         "./assets/whale-girl-mining-32f.png": (768, 384),
     }
     for value, dimensions in expected_sizes.items():

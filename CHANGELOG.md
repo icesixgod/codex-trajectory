@@ -4,6 +4,10 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## [Unreleased]
 
+### Changed
+
+- Restrict the viewer, acceptance coverage, and packaged screenshots to supported Codex desktop surfaces.
+
 ## [0.4.0] - 2026-08-26
 
 ### Added

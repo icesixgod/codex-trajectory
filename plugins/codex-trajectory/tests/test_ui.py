@@ -1873,7 +1873,7 @@ def test_timeline_selection_native_wheel_zoom_and_reset(page: Page, harness_url:
     assert frame.locator("#tickEnd").inner_text() == before
 
 
-def test_english_desktop_and_chinese_mobile_layout(page: Page, harness_url: str) -> None:
+def test_english_and_chinese_desktop_layout(page: Page, harness_url: str) -> None:
     page.set_viewport_size({"width": 1280, "height": 900})
     page.goto(f"{harness_url}/en")
     frame = viewer(page)
@@ -1883,7 +1883,6 @@ def test_english_desktop_and_chinese_mobile_layout(page: Page, harness_url: str)
     )
     assert "340px" in content_columns
 
-    page.set_viewport_size({"width": 600, "height": 900})
     page.goto(f"{harness_url}/zh")
     frame = viewer(page)
     frame.get_by_text("安全摘要", exact=True).wait_for()
@@ -1935,13 +1934,10 @@ def test_english_desktop_and_chinese_mobile_layout(page: Page, harness_url: str)
     ledger_wrap = frame.locator(".ledger-wrap")
     assert ledger_wrap.evaluate("element => element.scrollWidth === element.clientWidth")
     assert ledger_wrap.evaluate("element => getComputedStyle(element).overflowX") == "hidden"
-    assert turn_columns.nth(2).evaluate("element => element.getBoundingClientRect().width") <= 100
+    assert turn_columns.nth(2).evaluate("element => element.getBoundingClientRect().width") > 100
     assert turn_columns.last.evaluate(
         "element => element.getBoundingClientRect().right"
     ) <= ledger_wrap.evaluate("element => element.getBoundingClientRect().right")
-    assert (
-        frame.locator(".content").evaluate(
-            "element => getComputedStyle(element).gridTemplateColumns"
-        )
-        == "600px"
+    assert "340px" in frame.locator(".content").evaluate(
+        "element => getComputedStyle(element).gridTemplateColumns"
     )
