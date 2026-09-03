@@ -8,7 +8,9 @@
 
 Codex Trajectory 是一个兼顾隐私的 Codex 插件，其 MCP 工具可将本地任务日志转换为事件账本和交互式时间轴。它展示轮次、近似模型步骤、推理摘要、助手消息、工具耗时、子代理、上下文压缩、Token 用量和失败信息，不会修改原始日志。可选的实时停止控件只使用用户明确开启的本机回环 CDP：先暂停活跃 Goal，再直接中断当前回合；不会发送后续消息、进入“调整方向”队列、删除 worktree 或修改任务文件。
 
-![Codex Trajectory 移动端界面](plugins/codex-trajectory/assets/screenshots/mobile-zh.png)
+轨迹页面仅面向 Codex 桌面端界面和桌面 Chromium 浏览器。
+
+![Codex Trajectory 桌面端界面](plugins/codex-trajectory/assets/screenshots/desktop-en.png)
 
 ## 安装
 

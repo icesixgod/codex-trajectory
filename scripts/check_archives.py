@@ -37,7 +37,6 @@ REQUIRED = {
     "plugins/codex-trajectory/assets/logo-dark.png",
     "plugins/codex-trajectory/assets/logo.png",
     "plugins/codex-trajectory/assets/screenshots/desktop-en.png",
-    "plugins/codex-trajectory/assets/screenshots/mobile-zh.png",
     "plugins/codex-trajectory/assets/trajectory-browser.css",
     "plugins/codex-trajectory/assets/trajectory-browser.html",
     "plugins/codex-trajectory/assets/trajectory-browser.js",

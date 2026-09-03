@@ -491,7 +491,7 @@ def wrapper_html(
     )
     return f"""<!doctype html>
 <html lang="{language}">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<head><meta charset="utf-8">
 <title>Codex Trajectory UI Harness</title>
 <style>html,body,#viewer{{width:100%;height:100%;margin:0;border:0;background:#f7f8fc}}body{{overflow:auto}}#viewer{{display:block}}</style>
 </head>

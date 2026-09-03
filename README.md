@@ -8,6 +8,8 @@ Read this in [简体中文](README.zh-CN.md).
 
 Codex Trajectory is a privacy-aware Codex plugin whose MCP tools turn local task logs into an event ledger and interactive timeline. It shows turns, approximate model steps, reasoning summaries, assistant messages, tool timing, subagents, compaction, token usage, and failures without changing the original logs. Its optional live stop controls use an explicitly enabled loopback CDP path to pause an active Goal and interrupt the current turn directly; they never post a follow-up message, enter the steering queue, delete worktrees, or modify task files.
 
+The viewer is built for Codex desktop surfaces and desktop Chromium browsers.
+
 ![Codex Trajectory desktop viewer](plugins/codex-trajectory/assets/screenshots/desktop-en.png)
 
 ## Install
