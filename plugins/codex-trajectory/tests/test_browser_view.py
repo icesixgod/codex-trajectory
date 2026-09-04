@@ -190,10 +190,11 @@ def test_browser_server_exposes_only_validated_codex_theme_colors() -> None:
         invalid_server = BrowserViewServer(sample_provider, theme_provider=invalid)
         invalid_server.start()
         try:
-            with pytest.raises(HTTPError) as error:
+            with pytest.raises(HTTPError) as caught:
                 urlopen(urljoin(invalid_server.url, "api/theme"), timeout=2)
-            assert error.value.code == 500
-            assert json.loads(error.value.read()) == {"error": "theme unavailable"}
+            with caught.value as error:
+                assert error.code == 500
+                assert json.loads(error.read()) == {"error": "theme unavailable"}
         finally:
             invalid_server.close()
 
@@ -281,9 +282,10 @@ def test_browser_server_exposes_only_validated_stop_intents_when_configured() ->
                 "prompt": "arbitrary text",
             },
         ):
-            with pytest.raises(HTTPError) as error:
+            with pytest.raises(HTTPError) as caught:
                 post_stop(server, invalid)
-            assert error.value.code == 400
+            with caught.value as error:
+                assert error.code == 400
         assert len(requested) == 1
     finally:
         server.close()
@@ -300,9 +302,10 @@ def test_browser_server_hides_stop_provider_failures_and_absence() -> None:
     server = BrowserViewServer(sample_provider)
     server.start()
     try:
-        with pytest.raises(HTTPError) as error:
+        with pytest.raises(HTTPError) as caught:
             post_stop(server, value)
-        assert error.value.code == 404
+        with caught.value as error:
+            assert error.code == 404
     finally:
         server.close()
 
@@ -329,10 +332,11 @@ def test_browser_server_hides_stop_provider_failures_and_absence() -> None:
     invalid_server = BrowserViewServer(sample_provider, lambda _value: {"value": "invalid"})
     invalid_server.start()
     try:
-        with pytest.raises(HTTPError) as error:
+        with pytest.raises(HTTPError) as caught:
             post_stop(invalid_server, value)
-        assert error.value.code == 500
-        assert json.loads(error.value.read()) == {"error": "stop unavailable"}
+        with caught.value as error:
+            assert error.code == 500
+            assert json.loads(error.read()) == {"error": "stop unavailable"}
     finally:
         invalid_server.close()
 
@@ -342,10 +346,11 @@ def test_browser_server_hides_stop_provider_failures_and_absence() -> None:
     failed_server = BrowserViewServer(sample_provider, failed_stop)
     failed_server.start()
     try:
-        with pytest.raises(HTTPError) as error:
+        with pytest.raises(HTTPError) as caught:
             post_stop(failed_server, value)
-        assert error.value.code == 500
-        assert json.loads(error.value.read()) == {"error": "stop unavailable"}
+        with caught.value as error:
+            assert error.code == 500
+            assert json.loads(error.read()) == {"error": "stop unavailable"}
     finally:
         failed_server.close()
 
@@ -370,9 +375,10 @@ def test_browser_server_exposes_only_validated_task_state() -> None:
         assert requested == [("session-alpha", "turn-candidate")]
 
         for suffix in ("", "?sessionId=", "?sessionId=../other", "?sessionId=a&extra=1"):
-            with pytest.raises(HTTPError) as error:
+            with pytest.raises(HTTPError) as caught:
                 urlopen(urljoin(server.url, f"api/task-state{suffix}"), timeout=2)
-            assert error.value.code == 400
+            with caught.value as error:
+                assert error.code == 400
         assert requested == [("session-alpha", "turn-candidate")]
     finally:
         server.close()
@@ -386,9 +392,10 @@ def test_browser_server_exposes_only_validated_task_state() -> None:
     )
     invalid_server.start()
     try:
-        with pytest.raises(HTTPError) as error:
+        with pytest.raises(HTTPError) as caught:
             get_task_state(invalid_server, "session-alpha")
-        assert error.value.code == 500
+        with caught.value as error:
+            assert error.code == 500
     finally:
         invalid_server.close()
 
@@ -401,15 +408,17 @@ def test_browser_server_rejects_invalid_routes_hosts_and_bodies() -> None:
             urljoin(server.url, "missing"),
             urljoin(server.url, "api/tool"),
         ):
-            with pytest.raises(HTTPError) as error:
+            with pytest.raises(HTTPError) as caught:
                 urlopen(target, timeout=2)
-            assert error.value.code == 404
+            with caught.value as error:
+                assert error.code == 404
 
         parsed = urlparse(server.url)
         wrong_token = f"http://127.0.0.1:{parsed.port}/wrong-token/"
-        with pytest.raises(HTTPError) as error:
+        with pytest.raises(HTTPError) as caught:
             urlopen(wrong_token, timeout=2)
-        assert error.value.code == 404
+        with caught.value as error:
+            assert error.code == 404
 
         connection = http.client.HTTPConnection("127.0.0.1", parsed.port, timeout=2)
         connection.request("GET", parsed.path, headers={"Host": "example.invalid"})
@@ -446,9 +455,10 @@ def test_browser_server_rejects_invalid_routes_hosts_and_bodies() -> None:
                 headers={"Content-Type": content_type},
                 method="POST",
             )
-            with pytest.raises(HTTPError) as error:
+            with pytest.raises(HTTPError) as caught:
                 urlopen(request, timeout=2)
-            assert error.value.code == expected
+            with caught.value as error:
+                assert error.code == expected
 
         oversized = Request(
             urljoin(server.url, "api/tool"),
@@ -456,9 +466,10 @@ def test_browser_server_rejects_invalid_routes_hosts_and_bodies() -> None:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with pytest.raises(HTTPError) as error:
+        with pytest.raises(HTTPError) as caught:
             urlopen(oversized, timeout=2)
-        assert error.value.code == 413
+        with caught.value as error:
+            assert error.code == 413
 
         connection = http.client.HTTPConnection("127.0.0.1", parsed.port, timeout=2)
         connection.putrequest("POST", f"{parsed.path}api/tool")
@@ -491,10 +502,11 @@ def test_browser_server_hides_provider_failures() -> None:
                 server._tool_provider = raising_provider(invalid_result)
             else:
                 server._tool_provider = lambda _name, _arguments, result=invalid_result: result
-            with pytest.raises(HTTPError) as error:
+            with pytest.raises(HTTPError) as caught:
                 post_tool(server, "get_codex_trajectory", {})
-            assert error.value.code == 500
-            assert json.loads(error.value.read()) == {"error": "tool unavailable"}
+            with caught.value as error:
+                assert error.code == 500
+                assert json.loads(error.read()) == {"error": "tool unavailable"}
     finally:
         server.close()
 
