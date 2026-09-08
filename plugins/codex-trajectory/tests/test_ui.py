@@ -108,6 +108,41 @@ def viewer(page: Page) -> FrameLocator:
     return page.frame_locator("#viewer")
 
 
+@pytest.mark.parametrize("width", [400, 600, 800, 1280])
+@pytest.mark.parametrize("locale", ["en", "zh"])
+def test_long_title_keeps_header_actions_reachable(
+    page: Page, harness_url: str, width: int, locale: str
+) -> None:
+    page.set_viewport_size({"width": width, "height": 900})
+    try:
+        page.goto(f"{harness_url}/{locale}")
+        frame = viewer(page)
+        expect(frame.locator("#refresh")).to_be_visible()
+        frame.locator(".topbar").evaluate(
+            """header => {
+              header.querySelector('h1').textContent = 'LongProjectName'.repeat(20);
+              header.querySelector('.subtitle').textContent = '/workspace/'.repeat(40);
+              const select = header.querySelector('select');
+              select.selectedOptions[0].textContent = 'LongSessionName'.repeat(20);
+            }"""
+        )
+        for selector in ("h1", ".subtitle", "#sessionSelect", "#openPip", "#refresh"):
+            assert frame.locator(selector).evaluate(
+                """element => {
+                  const r = element.getBoundingClientRect();
+                  const header = element.closest('.topbar').getBoundingClientRect();
+                  const x = (r.left + r.right) / 2, y = (r.top + r.bottom) / 2;
+                  return r.width > 0 && r.left >= header.left && r.right <= header.right
+                    && r.right <= innerWidth && r.top >= header.top && r.bottom <= header.bottom
+                    && element.contains(document.elementFromPoint(x, y));
+                }"""
+            ), selector
+        frame.locator("#openPip").click(trial=True)
+        frame.locator("#refresh").click(trial=True)
+    finally:
+        page.set_viewport_size({"width": 1280, "height": 900})
+
+
 def test_cdp_injection_places_safe_entry_after_full_access(page: Page, harness_url: str) -> None:
     page.goto(f"{harness_url}/toolbar-fixture")
     viewer_url = "http://127.0.0.1:43123/private-token/"

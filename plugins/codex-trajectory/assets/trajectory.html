@@ -111,6 +111,7 @@
     }
     .topbar {
       display: flex;
+      flex-wrap: wrap;
       align-items: flex-start;
       justify-content: space-between;
       gap: 16px;
@@ -120,8 +121,11 @@
     .eyebrow { color: var(--accent); font-size: 11px; font-weight: 750; letter-spacing: .09em; text-transform: uppercase; }
     h1 { margin: 3px 0 2px; font-size: 20px; line-height: 1.2; }
     .subtitle { max-width: 720px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .top-actions { display: flex; gap: 7px; align-items: center; }
-    #sessionSelect { width: min(360px, 38vw); padding: 7px 30px 7px 9px; }
+    .topbar > :first-child { flex: 1 1 240px; min-width: 0; }
+    .topbar h1 { overflow-wrap: anywhere; }
+    .top-actions { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; max-width: 100%; }
+    .top-actions button { flex: none; }
+    #sessionSelect { width: min(360px, 38vw); min-width: 0; max-width: 100%; padding: 7px 30px 7px 9px; }
     .stats {
       display: grid;
       grid-template-columns: repeat(7, minmax(84px, 1fr));
