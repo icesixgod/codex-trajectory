@@ -4,6 +4,10 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## [Unreleased]
 
+### Fixed
+
+- Initialize the native MCP Apps viewer before waiting for host results and render delayed legacy `toolOutput` updates, preventing the viewer from remaining on its loading screen. Failed initialization shows a recoverable error without replacing an already rendered trajectory.
+
 ### Changed
 
 - Restrict the viewer, acceptance coverage, and packaged screenshots to supported Codex desktop surfaces.

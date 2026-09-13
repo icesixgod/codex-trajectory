@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 from codex_trajectory.browser_view import THEME_COLOR_KEYS, BrowserViewServer, injection_source
 from playwright.sync_api import FrameLocator, Page, expect, sync_playwright
-from ui_harness import demo_trajectories, start_server
+from ui_harness import app_resource_html, demo_trajectories, start_server
 
 pytestmark = [
     pytest.mark.ui,
@@ -141,6 +141,110 @@ def test_long_title_keeps_header_actions_reachable(
         frame.locator("#refresh").click(trial=True)
     finally:
         page.set_viewport_size({"width": 1280, "height": 900})
+
+
+@pytest.mark.parametrize(
+    "delivery",
+    [
+        "handshake",
+        "globals",
+        "initial",
+        "initial-rejected",
+        "notification",
+        "rejected",
+        "unsupported",
+    ],
+)
+def test_viewer_receives_initial_data_from_host(page: Page, delivery: str) -> None:
+    """Real hosts may wait for initialization or inject globals after page startup."""
+    page.set_content('<iframe id="viewer" sandbox="allow-scripts"></iframe>')
+    page.evaluate(
+        """({delivery, payload}) => {
+          window.startupMessages = [];
+          const viewer = document.getElementById('viewer');
+          const send = message => viewer.contentWindow.postMessage(message, '*');
+          const notify = () => send({jsonrpc: '2.0',
+            method: 'ui/notifications/tool-result', params: {structuredContent: payload}});
+          window.addEventListener('message', event => {
+            if (event.source !== viewer.contentWindow) return;
+            const message = event.data;
+            window.startupMessages.push(message);
+            if (message.method === 'ui/initialize') {
+              if (delivery === 'rejected' || delivery === 'initial-rejected') {
+                send({jsonrpc: '2.0', id: message.id,
+                  error: {code: -32601, message: 'Unsupported initialization'}});
+                return;
+              }
+              send({jsonrpc: '2.0', id: message.id, result: {
+                protocolVersion: delivery === 'unsupported' ? 'unknown' : '2026-01-26',
+                hostInfo: {name: 'test-host', version: '1'},
+                hostCapabilities: {}, hostContext: {theme: 'dark'}}});
+            } else if (message.method === 'ui/notifications/initialized') {
+              if (delivery === 'handshake') notify();
+            } else if (message.method === 'tools/call') {
+              send({jsonrpc: '2.0', id: message.id, result: {structuredContent: {}}});
+            }
+          });
+          if (delivery === 'notification') viewer.addEventListener('load', notify);
+        }""",
+        {"delivery": delivery, "payload": demo_trajectories()["session-alpha"]},
+    )
+    html = app_resource_html()
+    if delivery in {"initial", "initial-rejected"}:
+        payload = json.dumps(demo_trajectories()["session-alpha"]).replace("<", "\\u003c")
+        html = html.replace(
+            "<head>", f"<head><script>window.openai={{toolOutput:{payload}}}</script>"
+        )
+    page.locator("iframe").evaluate("(el, html) => el.srcdoc = html", html)
+    frame = page.frame_locator("iframe")
+    if delivery in {"rejected", "unsupported"}:
+        expect(frame.get_by_role("alert")).to_be_visible()
+        assert "ui/notifications/initialized" not in page.evaluate(
+            "startupMessages.map(message => message.method)"
+        )
+        # A legacy host can still deliver a result after rejecting the shared handshake.
+        page.evaluate(
+            """payload => document.querySelector('iframe').contentWindow.postMessage({
+              jsonrpc: '2.0', method: 'ui/notifications/tool-result',
+              params: {structuredContent: payload}}, '*')""",
+            demo_trajectories()["session-alpha"],
+        )
+    if delivery == "globals":
+        expect(frame.locator(".loading")).to_be_visible()
+        frame.locator("#app").evaluate(
+            """(el, payload) => window.dispatchEvent(new CustomEvent('openai:set_globals',
+              {detail: {globals: {toolOutput: payload}}}))""",
+            demo_trajectories()["session-alpha"],
+        )
+    expect(frame.locator("#sessionSelect")).to_be_visible(timeout=3000)
+    expect(frame.locator(".loading")).to_have_count(0)
+    expect(frame.get_by_role("alert")).to_have_count(0)
+    if delivery == "handshake":
+        messages = page.evaluate("startupMessages")
+        methods = [message.get("method") for message in messages]
+        assert methods[:2] == ["ui/initialize", "ui/notifications/initialized"]
+        assert methods.count("ui/initialize") == 1
+        assert messages[0]["params"]["protocolVersion"] == "2026-01-26"
+        assert messages[0]["params"]["appCapabilities"] == {}
+
+
+def test_viewer_initialization_timeout_recovers_when_data_arrives(page: Page) -> None:
+    with page.context.new_page() as isolated:
+        isolated.clock.install()
+        isolated.set_content('<iframe sandbox="allow-scripts"></iframe>')
+        isolated.locator("iframe").evaluate("(el, html) => el.srcdoc = html", app_resource_html())
+        frame = isolated.frame_locator("iframe")
+        expect(frame.locator(".loading")).to_be_visible()
+        isolated.clock.fast_forward(60_001)
+        expect(frame.get_by_role("alert")).to_be_visible()
+        isolated.evaluate(
+            """payload => document.querySelector('iframe').contentWindow.postMessage({
+              jsonrpc: '2.0', method: 'ui/notifications/tool-result',
+              params: {structuredContent: payload}}, '*')""",
+            demo_trajectories()["session-alpha"],
+        )
+        expect(frame.locator("#sessionSelect")).to_be_visible()
+        expect(frame.get_by_role("alert")).to_have_count(0)
 
 
 def test_cdp_injection_places_safe_entry_after_full_access(page: Page, harness_url: str) -> None:
