@@ -33,6 +33,8 @@ Full details are opt-in through `detailLevel: "full"` or the viewer's confirmati
 
 ## Tools
 
+The native viewer initializes its MCP Apps connection before handshake-dependent hosts deliver results. It also accepts tool results injected later through the legacy `openai:set_globals` bridge. If initialization fails before data arrives, the viewer shows a loading error and can still recover when a result arrives; a successful tool call alone does not confirm that the host displayed the viewer.
+
 | Tool | Purpose |
 | --- | --- |
 | `list_codex_sessions` | List recent task metadata without transcript bodies. |

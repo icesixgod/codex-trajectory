@@ -33,6 +33,8 @@ codex plugin add codex-trajectory@icesixgod
 
 ## 工具
 
+原生查看器会先初始化 MCP Apps 连接，以便接收需要握手后才下发的工具结果；也支持通过旧版 `openai:set_globals` 桥接延迟注入结果。若初始化失败且尚无数据，查看器会显示加载错误，后续收到结果仍可恢复。工具调用成功本身不代表宿主已显示界面。
+
 | 工具 | 用途 |
 | --- | --- |
 | `list_codex_sessions` | 列出最近任务的元数据，不返回对话正文。 |

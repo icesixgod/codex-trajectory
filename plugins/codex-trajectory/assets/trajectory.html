@@ -3175,6 +3175,7 @@
       window.addEventListener("openai:set_globals", event => {
         const globals = event?.detail?.globals || event?.detail || {};
         applyCodexTheme({ scheme: globals.theme });
+        if (globals.toolOutput?.session) render(globals.toolOutput);
         const nextMode = globals.displayMode;
         if (nextMode !== "inline" && nextMode !== "fullscreen") return;
         displayMode = nextMode;
@@ -3214,6 +3215,23 @@
 
       const initial = window.openai?.toolOutput;
       if (initial?.session) render(initial);
+      // Some hosts withhold tool results until the app completes this handshake.
+      // Keep legacy toolOutput and direct-notification hosts working independently.
+      if (window.parent !== window) {
+        request("ui/initialize", {
+          appInfo: { name: "Codex Trajectory", version: "0.4.0" },
+          appCapabilities: {},
+          protocolVersion: "2026-01-26",
+        }).then(result => {
+          if (result?.protocolVersion !== "2026-01-26") throw new Error(labels.loadError);
+          applyCodexTheme({ scheme: result.hostContext?.theme });
+          window.parent.postMessage({
+            jsonrpc: "2.0", method: "ui/notifications/initialized", params: {},
+          }, "*");
+        }).catch(() => {
+          if (!data) app.innerHTML = `<div class="notice error" role="alert">${labels.loadError}</div>`;
+        });
+      }
     })();
   </script>
 </body>
