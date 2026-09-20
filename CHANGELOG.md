@@ -4,7 +4,12 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-09-20
+
 ### Fixed
+
+- Keep header actions reachable with long task titles (#6).
+- Close expected HTTP error responses in acceptance tests and enforce resource-leak checks on Python 3.14 (#5).
 
 - Increase report and live-panel text sizes and reflow narrow desktop panels, keeping ledger columns readable and live events accessible (#8).
 
@@ -156,4 +161,5 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 [0.3.1]: https://github.com/icesixgod/codex-trajectory/compare/v0.3.0...v0.3.1
 [0.3.2]: https://github.com/icesixgod/codex-trajectory/compare/v0.3.1...v0.3.2
 [0.4.0]: https://github.com/icesixgod/codex-trajectory/compare/v0.3.2...v0.4.0
-[Unreleased]: https://github.com/icesixgod/codex-trajectory/compare/v0.4.0...HEAD
+[0.4.1]: https://github.com/icesixgod/codex-trajectory/compare/v0.4.0...v0.4.1
+[Unreleased]: https://github.com/icesixgod/codex-trajectory/compare/v0.4.1...HEAD
