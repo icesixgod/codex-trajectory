@@ -1052,8 +1052,8 @@ def test_safe_summary_search_filter_keyboard_and_detail_inspector(
     event_width = event_header.evaluate("element => element.getBoundingClientRect().width")
     content_width = content_header.evaluate("element => element.getBoundingClientRect().width")
     assert event_width > content_width
-    assert event_width <= 150
-    assert content_header.evaluate("element => element.getBoundingClientRect().width") <= 150
+    assert event_width >= 140
+    assert content_width >= 130
     assert frame.locator(".ledger-wrap").evaluate(
         "element => element.scrollWidth === element.clientWidth"
     )
@@ -2020,7 +2020,7 @@ def test_english_and_chinese_desktop_layout(page: Page, harness_url: str) -> Non
     content_columns = frame.locator(".content").evaluate(
         "element => getComputedStyle(element).gridTemplateColumns"
     )
-    assert "340px" in content_columns
+    assert "340px" not in content_columns
 
     page.goto(f"{harness_url}/zh")
     frame = viewer(page)
@@ -2072,11 +2072,72 @@ def test_english_and_chinese_desktop_layout(page: Page, harness_url: str) -> Non
     ) > turn_columns.nth(3).evaluate("element => element.getBoundingClientRect().width")
     ledger_wrap = frame.locator(".ledger-wrap")
     assert ledger_wrap.evaluate("element => element.scrollWidth === element.clientWidth")
-    assert ledger_wrap.evaluate("element => getComputedStyle(element).overflowX") == "hidden"
+    assert ledger_wrap.evaluate("element => getComputedStyle(element).overflowX") == "auto"
     assert turn_columns.nth(2).evaluate("element => element.getBoundingClientRect().width") > 100
     assert turn_columns.last.evaluate(
         "element => element.getBoundingClientRect().right"
     ) <= ledger_wrap.evaluate("element => element.getBoundingClientRect().right")
-    assert "340px" in frame.locator(".content").evaluate(
+    assert "340px" not in frame.locator(".content").evaluate(
         "element => getComputedStyle(element).gridTemplateColumns"
     )
+
+
+@pytest.mark.parametrize("width", [400, 600, 760, 1000, 1280, 1440])
+@pytest.mark.parametrize("scale", [1, 2])
+def test_readable_report_and_live_panel_at_desktop_widths(
+    page: Page, harness_url: str, width: int, scale: int
+) -> None:
+    """Small panels retain readable text, reachable controls and a usable event stream."""
+    browser = page.context.browser
+    assert browser is not None
+    context = browser.new_context(
+        viewport={"width": width, "height": 700}, device_scale_factor=scale
+    )
+    try:
+        probe = context.new_page()
+        probe.goto(f"{harness_url}/en-dock")
+        frame = viewer(probe)
+        frame.locator("tr.record").first.wait_for()
+        assert frame.locator("body").evaluate("e => parseFloat(getComputedStyle(e).fontSize) >= 15")
+        for selector in (".stat-label", "th", ".token-metric-label"):
+            assert frame.locator(selector).first.evaluate(
+                "e => parseFloat(getComputedStyle(e).fontSize) >= 12"
+            )
+        for selector in ("#refresh", "#openPip", "#loadFull", "#cdpToolbarPort"):
+            assert frame.locator(selector).evaluate(
+                "e => {const r=e.getBoundingClientRect(); "
+                "return r.left >= 0 && r.right <= innerWidth;}"
+            )
+        assert frame.locator("body").evaluate("e => e.scrollWidth <= innerWidth")
+        assert frame.locator("#ledger").evaluate("e => e.clientWidth >= 900")
+        if width <= 1280:
+            assert frame.locator("#inspector").evaluate(
+                "e => e.getBoundingClientRect().top >= "
+                "document.querySelector('.ledger-wrap').getBoundingClientRect().bottom - 1"
+            )
+        if width >= 1440:
+            assert "340px" in frame.locator(".content").evaluate(
+                "e => getComputedStyle(e).gridTemplateColumns"
+            )
+        frame.locator("#openPip").click()
+        frame.locator(".dock-record").first.wait_for()
+        for selector in (
+            ".dock-record-event",
+            ".dock-record-summary",
+            ".dock-usage-name",
+            ".dock-usage-part-value",
+            ".dock-quota-window span",
+        ):
+            assert frame.locator(selector).first.evaluate(
+                "e => parseFloat(getComputedStyle(e).fontSize) >= 12"
+            )
+        assert frame.locator("#liveRecordStream").evaluate(
+            "e => e.clientHeight >= 150 && e.scrollWidth <= e.clientWidth"
+        )
+        for selector in ("#closeDock", ".dock-stop-button", ".dock-quota"):
+            assert frame.locator(selector).evaluate(
+                "e => {const r=e.getBoundingClientRect(); "
+                "return r.left >= 0 && r.right <= innerWidth;}"
+            )
+    finally:
+        context.close()
