@@ -6,6 +6,8 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ### Fixed
 
+- Increase report and live-panel text sizes and reflow narrow desktop panels, keeping ledger columns readable and live events accessible (#8).
+
 - Initialize the native MCP Apps viewer before waiting for host results and render delayed legacy `toolOutput` updates, preventing the viewer from remaining on its loading screen. Failed initialization shows a recoverable error without replacing an already rendered trajectory.
 
 ### Changed
