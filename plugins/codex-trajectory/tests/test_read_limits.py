@@ -202,12 +202,18 @@ def test_read_limit_context_isolated_and_restored_after_errors() -> None:
     assert sessions.jsonl_byte_limit() == sessions.MAX_JSONL_TOTAL_BYTES
 
 
+@pytest.mark.parametrize("unrelated_first", [True, False])
 def test_task_budget_does_not_expand_unrelated_metadata_reads(
-    codex_home: Path, monkeypatch: pytest.MonkeyPatch
+    codex_home: Path, monkeypatch: pytest.MonkeyPatch, unrelated_first: bool
 ) -> None:
     unrelated = write_rollout(
         codex_home / "sessions" / "rollout-other.jsonl", rollout_events("other-task")
     )
+    selected = codex_home / "sessions" / "2026" / "rollout-alpha.jsonl"
+    # Discovery uses mtime, which can tie on Windows. Exercise both scan orders
+    # explicitly instead of assuming the file just created will appear first.
+    paths = [unrelated, selected] if unrelated_first else [selected, unrelated]
+    monkeypatch.setattr(projection, "session_files", lambda include_archived: paths)
     original = projection.first_session_metadata
     limits: list[int] = []
 
@@ -221,7 +227,7 @@ def test_task_budget_does_not_expand_unrelated_metadata_reads(
         "get_codex_trajectory", {"sessionId": "session-alpha", "maxReadBytes": 3_000_000_000}
     )
     assert result["structuredContent"]["session"]["id"] == "session-alpha"
-    assert limits and all(limit == sessions.MAX_JSONL_TOTAL_BYTES for limit in limits)
+    assert limits == ([sessions.MAX_JSONL_TOTAL_BYTES] if unrelated_first else [])
 
 
 def test_read_limit_schema_exposed_only_on_selected_task_reads() -> None:
