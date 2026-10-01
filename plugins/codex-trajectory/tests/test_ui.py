@@ -933,7 +933,7 @@ def test_safe_summary_search_filter_keyboard_and_detail_inspector(
     ]
     assert frame.locator('tr[data-id="record-2-7"] td').nth(1).inner_text() == "S2"
     assert frame.locator(".turn-column-row th").evaluate_all(
-        "cells => cells.every(cell => getComputedStyle(cell).overflowX === 'hidden')"
+        "cells => cells.every(cell => cell.scrollWidth <= cell.clientWidth + 1)"
     )
     assert (
         frame.locator(".turn-column-row").evaluate("element => getComputedStyle(element).position")
