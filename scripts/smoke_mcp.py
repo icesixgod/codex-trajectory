@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["zstandard==0.25.0; python_version < '3.14'"]
+# ///
 """Exercise the packaged MCP server through its real stdio entry point."""
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import importlib
 import json
@@ -18,7 +23,7 @@ from typing import Any
 
 ROOT = Path(__file__).parents[1]
 PLUGIN = ROOT / "plugins" / "codex-trajectory"
-WINDOWS_LAUNCHER_SHA256 = "BF3CF1118AD6D5FD1CF91A671D9CCBA6CD3AF7DFB7DABEEEBD37F6C6442EA67F"
+WINDOWS_LAUNCHER_SHA256 = "EAE4F330C46E521624F26362A7062C1FC0DB44EE109AA6C9ACFC3F242F36CBD6"
 
 
 def require(condition: bool, message: str) -> None:
@@ -114,13 +119,72 @@ def windows_pe_subsystem(executable: Path) -> int:
     return int(struct.unpack_from("<H", optional_header, 68)[0])
 
 
+def local_task_smoke(command: list[str], cwd: Path, session_id: str) -> None:
+    """Check the native entry against one explicitly selected real local task."""
+    messages = [
+        request(
+            1,
+            "initialize",
+            {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "local-native-smoke", "version": "1.0.0"},
+            },
+        ),
+        json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+        request(
+            2,
+            "tools/call",
+            {
+                "name": "open_codex_trajectory",
+                "arguments": {},
+                "_meta": {"thread_id": session_id, "threadId": session_id},
+            },
+        ),
+    ]
+    completed = subprocess.run(
+        command,
+        cwd=cwd,
+        input="\n".join(messages) + "\n",
+        text=True,
+        encoding="utf-8",
+        capture_output=True,
+        timeout=60,
+        check=False,
+    )
+    require(completed.returncode == 0, "Installed MCP local-task check failed.")
+    responses = [json.loads(line) for line in completed.stdout.splitlines()]
+    results = {item["id"]: item.get("result", {}) for item in responses if "id" in item}
+    trajectory = results.get(2, {}).get("structuredContent", {})
+    require(
+        trajectory.get("session", {}).get("id") == session_id
+        and trajectory.get("detailLevel") == "summary",
+        "Native entry could not resolve the exact selected local task.",
+    )
+    require(
+        all(
+            record.get("input") is None
+            and record.get("output") is None
+            and record.get("metadata") == {}
+            for record in trajectory.get("records", [])
+        ),
+        "Local-task smoke exposed full details.",
+    )
+    print(f"Local task native MCP smoke passed ({trajectory['stats']['records']} records).")
+
+
 def main() -> None:
     """Start the runtime and validate MCP discovery, UI, and Unicode output."""
-    manifest = json.loads((PLUGIN / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--plugin-root", type=Path, default=PLUGIN)
+    parser.add_argument("--local-session", help="Exact local task ID; uses the current CODEX_HOME.")
+    options = parser.parse_args()
+    plugin = options.plugin_root
+    manifest = json.loads((plugin / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
     expected_version = manifest.get("version")
     if not isinstance(expected_version, str):
         raise RuntimeError("Plugin manifest version is missing.")
-    command, command_cwd = declared_mcp_command()
+    command, command_cwd = declared_mcp_command(plugin)
     if os.name == "nt":
         launcher = Path(command[0])
         require(
@@ -164,6 +228,7 @@ def main() -> None:
                     "clientInfo": {"name": "codex-trajectory-smoke", "version": "1.0.0"},
                 },
             ),
+            json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}),
             request(2, "tools/list"),
             request(3, "resources/list"),
             request(4, "resources/read", {"uri": "ui://codex-trajectory/trajectory-v2.html"}),
@@ -178,6 +243,20 @@ def main() -> None:
                 {"name": "get_codex_trajectory_update", "arguments": {}},
             ),
         ]
+        messages.extend(
+            [
+                request(
+                    7,
+                    "tools/call",
+                    {
+                        "name": "open_codex_trajectory",
+                        "arguments": {},
+                        "_meta": {"thread_id": "smoke-session", "threadId": "smoke-session"},
+                    },
+                ),
+                request(8, "tools/call", {"name": "open_codex_trajectory", "arguments": {}}),
+            ]
+        )
         environment = os.environ.copy()
         environment["CODEX_HOME"] = str(codex_home)
         completed = subprocess.run(  # nosec B603
@@ -194,6 +273,9 @@ def main() -> None:
     if completed.returncode != 0:
         raise RuntimeError(completed.stderr or f"MCP exited with {completed.returncode}")
     responses = [json.loads(line) for line in completed.stdout.splitlines()]
+    require(
+        not any("error" in response for response in responses), "MCP handshake or request failed."
+    )
     by_id = {response["id"]: response for response in responses if "id" in response}
     require(
         by_id[1]["result"]["serverInfo"]["version"] == expected_version,
@@ -207,9 +289,9 @@ def main() -> None:
             "get_codex_trajectory",
             "show_codex_trajectory",
             "get_codex_trajectory_update",
-            "get_codex_toolbar_injection_status",
-            "set_codex_toolbar_injection",
-            "request_codex_task_stop",
+            "open_codex_trajectory",
+            "get_codex_trajectory_preferences",
+            "set_codex_trajectory_preferences",
         },
         "MCP tool discovery is incomplete.",
     )
@@ -219,22 +301,13 @@ def main() -> None:
         and live_tool.get("_meta", {}).get("openai/visibility") == "private",
         "Live update tool is not app-only.",
     )
-    toolbar_status_tool = tools["get_codex_toolbar_injection_status"]
-    toolbar_setting_tool = tools["set_codex_toolbar_injection"]
-    direct_stop_tool = tools["request_codex_task_stop"]
+    native_tool = tools["open_codex_trajectory"]
     require(
-        toolbar_status_tool.get("_meta", {}).get("ui", {}).get("visibility") == ["app"]
-        and toolbar_setting_tool.get("_meta", {}).get("openai/visibility") == "private"
-        and toolbar_setting_tool.get("annotations", {}).get("readOnlyHint") is False,
-        "CDP toolbar tools are not scoped to the app resource.",
-    )
-    require(
-        direct_stop_tool.get("_meta", {}).get("ui", {}).get("visibility") == ["app"]
-        and direct_stop_tool.get("_meta", {}).get("openai/visibility") == "private"
-        and direct_stop_tool.get("annotations", {}).get("readOnlyHint") is False
-        and direct_stop_tool.get("annotations", {}).get("destructiveHint") is True
-        and direct_stop_tool.get("annotations", {}).get("idempotentHint") is False,
-        "Direct stop tool is not scoped to the app resource.",
+        native_tool.get("_meta", {}).get("ui", {}).get("visibility") == ["app"]
+        and native_tool.get("_meta", {}).get("openai/ui", {}).get("entrypoints")
+        == [{"type": "thread"}]
+        and native_tool.get("annotations", {}).get("readOnlyHint") is True,
+        "Native panel entrypoint is not app-only and read-only.",
     )
     require(
         by_id[3]["result"]["resources"][0]["uri"].startswith("ui://"),
@@ -258,7 +331,17 @@ def main() -> None:
         live_update["trajectory"]["detailLevel"] == "summary",
         "Live update did not use summary mode.",
     )
-    print("MCP stdio smoke passed.")
+    require(
+        by_id[7]["result"]["structuredContent"]["session"]["id"] == "smoke-session",
+        "Native panel did not bind to the calling task.",
+    )
+    require(
+        by_id[8]["result"]["structuredContent"]["viewerState"] == "select-session",
+        "Missing context silently substituted another task.",
+    )
+    print("MCP stdio smoke passed, including native task binding and selection fallback.")
+    if options.local_session:
+        local_task_smoke(command, command_cwd, options.local_session)
 
 
 if __name__ == "__main__":

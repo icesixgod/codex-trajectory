@@ -1,4 +1,4 @@
-"""Estimate standard OpenAI API text-token costs for projected model calls."""
+"""Estimate API-rate-based token costs with the requested Codex Fast usage multiplier."""
 
 from __future__ import annotations
 
@@ -7,9 +7,12 @@ from dataclasses import dataclass
 from decimal import Decimal, localcontext
 from typing import Any
 
-PRICING_UPDATED_AT = "2026-08-24"
+PRICING_UPDATED_AT = "2026-10-01"
 PRICING_SOURCE = "https://developers.openai.com/api/docs/pricing"
 MILLION_TOKENS = Decimal(1_000_000)
+# Included subscription usage, not purchased-credit or API invoice pricing:
+# https://learn.chatgpt.com/docs/agent-configuration/speed
+CODEX_FAST_MULTIPLIER = Decimal("2.5")
 _COST_PRECISION = Decimal("0.000000000001")
 
 
@@ -34,7 +37,13 @@ def _price(input_rate: str, cached_rate: str | None, output_rate: str) -> ModelP
 # API price (for example, gpt-5.3-codex-spark) stay unpriced instead of inheriting a guessed
 # rate. Only dated snapshots explicitly published in the model catalog resolve to a base model.
 MODEL_PRICES_USD_PER_MILLION: dict[str, ModelPrice] = {
-    # The current standard short-context Sol rate is promotional through at least 2026-11-21.
+    "gpt-6.1-sol": _price("2", "0.1", "10"),
+    "gpt-6-astra": _price("10", "1", "50"),
+    # The previous Sol model retains its separately published cache-read rate:
+    # https://developers.openai.com/api/docs/models/gpt-6-sol
+    "gpt-6-sol": _price("2", "0.2", "10"),
+    "gpt-6-luna": _price("0.1", "0.01", "0.5"),
+    # The GPT-5.6 Sol standard rate is promotional through at least 2026-11-21.
     "gpt-5.6": _price("4", "0.4", "20"),
     "gpt-5.6-sol": _price("4", "0.4", "20"),
     "gpt-5.6-terra": _price("2", "0.2", "12"),
@@ -176,8 +185,22 @@ def _cost_estimate(
     }
 
 
-def estimate_usage_cost(model: Any, usage: Mapping[str, Any]) -> dict[str, Any]:
-    """Price one model-call usage sample, or mark it explicitly as unpriced."""
+def normalized_service_tier(value: Any) -> str | None:
+    """Accept only explicit persisted tiers, never infer Fast from model names."""
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().casefold()
+    return (
+        normalized
+        if normalized in {"fast", "priority", "default", "auto", "flex", "ultrafast"}
+        else None
+    )
+
+
+def estimate_usage_cost(
+    model: Any, usage: Mapping[str, Any], *, service_tier: Any = None
+) -> dict[str, Any]:
+    """Estimate token costs with the requested Codex included-usage Fast multiplier."""
     canonical_model = canonical_priced_model(model)
     has_billable_breakdown = all(
         _valid_token_counter(usage, name) for name in ("input_tokens", "output_tokens")
@@ -212,14 +235,19 @@ def estimate_usage_cost(model: Any, usage: Mapping[str, Any]) -> dict[str, Any]:
             unpriced_calls=1,
         )
     uncached_tokens = input_tokens - cached_tokens
+    multiplier = (
+        CODEX_FAST_MULTIPLIER
+        if normalized_service_tier(service_tier) in {"fast", "priority"}
+        else Decimal(1)
+    )
     return _cost_estimate(
-        uncached_input_usd=Decimal(uncached_tokens) * price.input / MILLION_TOKENS,
+        uncached_input_usd=Decimal(uncached_tokens) * price.input * multiplier / MILLION_TOKENS,
         cached_input_usd=(
-            Decimal(cached_tokens) * price.cached_input / MILLION_TOKENS
+            Decimal(cached_tokens) * price.cached_input * multiplier / MILLION_TOKENS
             if price.cached_input is not None
             else Decimal(0)
         ),
-        output_usd=Decimal(output_tokens) * price.output / MILLION_TOKENS,
+        output_usd=Decimal(output_tokens) * price.output * multiplier / MILLION_TOKENS,
         priced_calls=1,
         unpriced_calls=0,
     )

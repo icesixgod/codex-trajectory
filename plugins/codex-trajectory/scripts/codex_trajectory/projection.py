@@ -3,33 +3,25 @@
 
 from __future__ import annotations
 
+import atexit
 import hashlib
+import json
 import math
+import sqlite3
 import threading
 from base64 import b64encode
 from collections import OrderedDict, deque
+from collections.abc import Iterator
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from . import __version__
-from .cdp_settings import (
-    DEFAULT_CDP_PORT,
-    MAX_CDP_PORT,
-    MIN_CDP_PORT,
-)
-from .cdp_settings import (
-    configure as configure_cdp_toolbar,
-)
-from .cdp_settings import (
-    public_status as cdp_toolbar_status,
-)
-from .cdp_settings import (
-    recover_daemon as recover_cdp_toolbar,
-)
+from .command_summary import command_activity
 from .json_support import strict_json_loads
-from .pricing import estimate_usage_cost, merge_cost_estimates
+from .page_index import PageIndex
+from .pricing import estimate_usage_cost, merge_cost_estimates, normalized_service_tier
 from .privacy import (
     DetailLevel,
     bounded,
@@ -45,13 +37,19 @@ from .privacy import (
 )
 from .session_index import SessionSearchIndex
 from .sessions import (
+    ReadLimitExceeded,
     first_session_metadata,
     is_archived_session,
     iter_session_jsonl,
     iter_session_search_jsonl,
+    jsonl_byte_limit,
+    recent_rate_limit_entries,
     rollout_id_from_path,
     session_files,
+    session_read_limit,
+    session_scan,
     session_signature,
+    thread_id_from_path,
 )
 
 SERVER_NAME = "codex-trajectory"
@@ -66,6 +64,8 @@ MAX_TURNS = 1_000
 MAX_WARNINGS = 100
 MAX_OVERVIEW_CACHE = 256
 MAX_TRAJECTORY_CACHE = 16
+MAX_TRAJECTORY_CACHE_BYTES = 24 * 1024 * 1024
+MAX_TRAJECTORY_PAGE_BYTES = 5 * 1024 * 1024
 MAX_TRACKED_CALLS = 4_096
 MAX_SAFE_INTEGER = 2**53 - 1
 _SESSION_OVERVIEW_CACHE: OrderedDict[
@@ -79,10 +79,31 @@ _TRAJECTORY_CACHE: OrderedDict[
         int,
         DetailLevel,
         int | None,
+        int,
     ],
     dict[str, Any],
 ] = OrderedDict()
 _TRAJECTORY_CACHE_LOCK = threading.Lock()
+_TRAJECTORY_CACHE_SIZES: dict[Any, int] = {}
+
+_PAGE_INDEXES: OrderedDict[Any, PageIndex] = OrderedDict()
+_PAGE_INDEX_LOCK = threading.RLock()
+MAX_PAGE_INDEXES = 4
+MAX_PAGE_INDEX_TOTAL_BYTES = 256 * 1024 * 1024
+MAX_QUOTA_FILES = 32
+_QUOTA_CACHE: OrderedDict[Path, tuple[tuple[int, ...], dict[str, Any] | None]] = OrderedDict()
+_QUOTA_CACHE_LOCK = threading.Lock()
+
+
+def _close_page_indexes() -> None:
+    """Close SQLite handles before temporary-directory cleanup (also on Windows)."""
+    with _PAGE_INDEX_LOCK:
+        for index in _PAGE_INDEXES.values():
+            index.close()
+        _PAGE_INDEXES.clear()
+
+
+atexit.register(_close_page_indexes)
 
 
 def parse_timestamp(value: Any) -> int | None:
@@ -144,7 +165,7 @@ def epoch_milliseconds(value: Any) -> int | None:
 
 
 def duration_milliseconds(value: Any) -> int | None:
-    """Normalize Rust ``Duration`` objects and legacy numeric seconds."""
+    """Normalize durations; zero marks unconfirmed sub-millisecond timing internally."""
     if isinstance(value, dict):
         seconds = value.get("secs")
         nanos = value.get("nanos", 0)
@@ -170,10 +191,9 @@ def duration_milliseconds(value: Any) -> int | None:
         milliseconds = seconds_number * 1000 + nanos_number / 1_000_000
         if not math.isfinite(milliseconds) or milliseconds > MAX_SAFE_INTEGER:
             return None
-        # Millisecond precision cannot represent a positive sub-millisecond
-        # duration exactly. Keep it distinguishable from a genuinely measured
-        # zero instead of rounding it down to the misleading ``0 ms``.
-        return max(1, round(milliseconds)) if milliseconds > 0 else 0
+        # Keep a zero marker so an explicit unconfirmed duration cannot fall back
+        # to unrelated timestamps. Tool records expose this marker as null.
+        return round(milliseconds) if milliseconds >= 1 else 0
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     try:
@@ -185,15 +205,15 @@ def duration_milliseconds(value: Any) -> int | None:
     milliseconds = number * 1000
     if not math.isfinite(milliseconds) or milliseconds > MAX_SAFE_INTEGER:
         return None
-    return max(1, round(milliseconds)) if milliseconds > 0 else 0
+    return round(milliseconds) if milliseconds >= 1 else 0
 
 
 def elapsed_milliseconds(started_at: int | None, completed_at: int | None) -> int | None:
-    """Return a non-negative, JSON-safe elapsed duration."""
+    """Return a positive, JSON-safe interval only when its boundaries distinguish it."""
     if started_at is None or completed_at is None:
         return None
     elapsed = completed_at - started_at
-    return elapsed if 0 <= elapsed <= MAX_SAFE_INTEGER else None
+    return elapsed if 1 <= elapsed <= MAX_SAFE_INTEGER else None
 
 
 def attachment_count(value: Any) -> int:
@@ -526,6 +546,7 @@ def session_overview(path: Path) -> dict[str, Any]:
     return deepcopy(overview)
 
 
+@session_scan()
 def list_session_overviews(
     limit: int = 20, query: str = "", include_archived: bool = False
 ) -> list[dict[str, Any]]:
@@ -575,6 +596,7 @@ def list_session_overviews(
     return result
 
 
+@session_scan()
 def resolve_session(session_id: str | None, include_archived: bool) -> Path:
     """Resolve a session identifier without accepting arbitrary filesystem paths."""
     paths = session_files(include_archived)
@@ -583,40 +605,57 @@ def resolve_session(session_id: str | None, include_archived: bool) -> Path:
     if session_id is None:
         return paths[0]
     requested = session_id.strip()
-    if not requested or requested == "latest":
+    if not requested:
+        raise ValueError("sessionId must not be empty.")
+    if requested == "latest":
         return paths[0]
     if len(requested) > 240:
         raise ValueError("sessionId must contain at most 240 characters.")
     if "/" in requested or "\\" in requested:
         raise ValueError("sessionId must be an identifier, not a filesystem path.")
     prefix: dict[str, Path] = {}
-    index: SessionSearchIndex | None = None
-    try:
-        for path in paths:
-            if path.stem == requested:
-                return path
-            physical_id = rollout_id_from_path(path)
-            if physical_id == requested.casefold():
-                return path
-            if index is None:
-                index = SessionSearchIndex()
-            try:
-                fields = indexed_session_search_fields(index, path)
-            except (OSError, RuntimeError, ValueError):
-                continue
-            candidate = str(fields["id"])
-            if candidate == requested:
-                return path
-            if candidate.startswith(requested):
-                prefix.setdefault(f"thread:{candidate}", path)
-            if physical_id is not None and physical_id.startswith(requested.casefold()):
-                prefix.setdefault(f"rollout:{physical_id}", path)
-            if path.stem.startswith(requested):
-                prefix.setdefault(f"file:{path.stem}", path)
-    finally:
-        if index is not None:
-            index.flush()
+    aliases: set[Path] = set()
+    size_error: ReadLimitExceeded | None = None
+    with session_read_limit():
+        default_read_limit = jsonl_byte_limit()
+    for path in paths:
+        try:
+            filename_ids = (thread_id_from_path(path), rollout_id_from_path(path), path.stem)
+            selected_file = any(
+                value is not None and value.casefold().startswith(requested.casefold())
+                for value in filename_ids
+            )
+            # A larger task budget must not expand probes of unrelated compressed logs.
+            if jsonl_byte_limit() > default_read_limit and not selected_file:
+                with session_read_limit():
+                    candidate = metadata_identity(first_session_metadata(path), path)
+            else:
+                candidate = metadata_identity(first_session_metadata(path), path)
+        except ReadLimitExceeded as error:
+            if requested.casefold() in {thread_id_from_path(path), rollout_id_from_path(path)}:
+                error.session_id = thread_id_from_path(path)
+                size_error = size_error or error
+            continue
+        except (OSError, RuntimeError, ValueError):
+            continue
+        if candidate == requested:
+            return path
+        if candidate.startswith(requested):
+            prefix.setdefault(f"thread:{candidate}", path)
+        physical_id = rollout_id_from_path(path)
+        if path.stem == requested or physical_id == requested.casefold():
+            aliases.add(path)
+        if physical_id is not None and physical_id.startswith(requested.casefold()):
+            prefix.setdefault(f"rollout:{physical_id}", path)
+        if path.stem.startswith(requested):
+            prefix.setdefault(f"file:{path.stem}", path)
+    if len(aliases) == 1:
+        return next(iter(aliases))
+    if len(aliases) > 1:
+        raise ValueError(f"Codex session alias {requested!r} is ambiguous.")
     if not prefix:
+        if size_error is not None:
+            raise size_error
         raise ValueError(f"Codex session {requested!r} was not found.")
     matched_paths = set(prefix.values())
     if len(matched_paths) > 1:
@@ -689,21 +728,35 @@ def token_usage_snapshot(
     """Normalize one token event and report whether it represents a new model call."""
     usage_changed = "total_token_usage" not in info
     current_total_usage: dict[str, int | float] | None = None
+    last_usage = numeric_token_usage(info.get("last_token_usage"))
     usage = info.get("total_token_usage")
     if isinstance(usage, dict):
         usage_update = numeric_token_usage(usage)
         if usage_update:
-            current_total_usage = {**previous_total_usage, **usage_update}
+            reset = any(
+                value < previous_total_usage.get(key, 0) for key, value in usage_update.items()
+            )
+            current_total_usage = {**({} if reset else previous_total_usage), **usage_update}
             counter_names = current_total_usage.keys() | previous_total_usage.keys()
             usage_changed = any(
                 current_total_usage.get(name, 0) != previous_total_usage.get(name, 0)
                 for name in counter_names
             )
+            # Cumulative deltas are authoritative when present. A missing or
+            # inconsistent last-call sample must not silently lose token usage.
+            # A decreasing counter starts a new cumulative epoch (e.g. resume).
+            last_usage = {
+                **{key: value for key, value in last_usage.items() if key not in usage_update},
+                **{
+                    key: value if reset else value - previous_total_usage.get(key, 0)
+                    for key, value in usage_update.items()
+                },
+            }
             previous_total_usage = current_total_usage
     return (
         previous_total_usage,
         current_total_usage,
-        numeric_token_usage(info.get("last_token_usage")),
+        last_usage,
         usage_changed,
     )
 
@@ -711,6 +764,8 @@ def token_usage_snapshot(
 def safe_rate_limits(value: Any) -> dict[str, dict[str, Any]] | None:
     """Project the bounded Codex rate-limit windows used by the live viewer."""
     if not isinstance(value, dict):
+        return None
+    if value.get("limit_id") not in (None, "codex"):
         return None
     result: dict[str, dict[str, Any]] = {}
     for name in ("primary", "secondary"):
@@ -737,6 +792,89 @@ def safe_rate_limits(value: Any) -> dict[str, dict[str, Any]] | None:
     return result or None
 
 
+def merge_rate_limits(
+    previous: dict[str, dict[str, Any]] | None, raw: Any
+) -> dict[str, dict[str, Any]] | None:
+    """Keep partial valid updates, but remove windows explicitly retired by Codex."""
+    if not isinstance(raw, dict) or raw.get("limit_id") not in (None, "codex"):
+        return previous
+    result = {**(previous or {}), **(safe_rate_limits(raw) or {})}
+    for key in ("primary", "secondary"):
+        if key in raw and raw[key] is None:
+            result.pop(key, None)
+    return result or None
+
+
+def latest_account_quota() -> dict[str, Any]:
+    """Find the newest Codex sample independently of the selected task's activity."""
+    newest: dict[str, Any] = {"rateLimits": None, "sampledAt": None}
+    newest_time = -1
+    try:
+        paths = session_files(False)[:MAX_QUOTA_FILES]
+    except (OSError, ValueError):
+        return newest
+    now = round(datetime.now(timezone.utc).timestamp() * 1000)
+    with _QUOTA_CACHE_LOCK:
+        for path in paths:
+            cached = _QUOTA_CACHE.get(path)
+            try:
+                signature, entries = recent_rate_limit_entries(path, cached[0] if cached else None)
+            except (OSError, ValueError):
+                _QUOTA_CACHE.pop(path, None)
+                continue
+            sample = None
+            if cached is not None:
+                previous_signature, previous_sample = cached
+                # Preserve samples that have rolled out of the bounded tail when
+                # the same file grows; replacements and non-growing edits reset it.
+                if signature == previous_signature or (
+                    len(signature) == len(previous_signature) == 5
+                    and signature[:2] == previous_signature[:2]
+                    and signature[2] > previous_signature[2]
+                ):
+                    sample = previous_sample
+            if entries is not None:
+                cached_time = parse_timestamp(sample["sampledAt"]) if sample else None
+                sample_time = cached_time if cached_time is not None else -1
+                for entry in entries:
+                    payload = entry.get("payload")
+                    if entry.get("type") != "event_msg" or not isinstance(payload, dict):
+                        continue
+                    raw = payload.get("rate_limits")
+                    timestamp = parse_timestamp(entry.get("timestamp"))
+                    if (
+                        payload.get("type") != "token_count"
+                        or not isinstance(raw, dict)
+                        or raw.get("limit_id") not in (None, "codex")
+                        or timestamp is None
+                        or timestamp < sample_time
+                        or timestamp > now + 300_000
+                        or not (
+                            safe_rate_limits(raw)
+                            or any(
+                                key in raw and raw[key] is None for key in ("primary", "secondary")
+                            )
+                        )
+                    ):
+                        continue
+                    sample_time = timestamp
+                    sample = {
+                        "rateLimits": merge_rate_limits(
+                            sample["rateLimits"] if sample else None, raw
+                        ),
+                        "sampledAt": iso_timestamp(timestamp),
+                    }
+                _QUOTA_CACHE[path] = (signature, sample)
+            _QUOTA_CACHE.move_to_end(path)
+            timestamp = parse_timestamp(sample["sampledAt"]) if sample else None
+            if sample is not None and timestamp is not None and timestamp > newest_time:
+                newest_time = timestamp
+                newest = sample
+        while len(_QUOTA_CACHE) > MAX_QUOTA_FILES:
+            _QUOTA_CACHE.popitem(last=False)
+    return deepcopy(newest)
+
+
 def _finite_number(value: int | float) -> bool:
     try:
         return math.isfinite(float(value))
@@ -749,10 +887,18 @@ def parse_session(
     max_records: int = DEFAULT_MAX_RECORDS,
     detail_level: DetailLevel = "summary",
     before_record: int | None = None,
+    *,
+    _index: PageIndex | None = None,
+    _entries: Iterator[tuple[int, int, dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
     """Project one Codex rollout log into a turn-aware trajectory page."""
     detail_level = normalize_detail_level(detail_level)
     include_details = detail_level == "full"
+
+    def detail_json_text(value: Any) -> str | None:
+        # Summary reads never format inputs or outputs that will be discarded.
+        return json_text(value) if include_details else None
+
     limited = max(MIN_RECORDS, min(int(max_records), MAX_RECORDS))
     records: deque[dict[str, Any]] = deque(maxlen=limited)
     visible_record_ids: set[str] = set()
@@ -767,6 +913,8 @@ def parse_session(
     latest_usage: dict[str, int | float] | None = None
     accounted_usage: dict[str, int | float] | None = None
     session_cost: dict[str, Any] | None = None
+    fast_cost_calls = 0
+    last_model_service_tier: str | None = None
     latest_rate_limits: dict[str, dict[str, Any]] | None = None
     previous_total_usage: dict[str, int | float] = {}
     context_window: int | None = None
@@ -794,6 +942,8 @@ def parse_session(
             current_step = 0
             after_tool_result = False
             active_turn = True
+            if _index is not None and len(turns) == MAX_TURNS:
+                _index.save_turn(turns[0])
             turns.append(
                 {
                     "index": current_turn,
@@ -810,6 +960,7 @@ def parse_session(
                     "usage": None,
                     "cost": None,
                     "model": turn_model if isinstance(turn_model, str) else None,
+                    "_serviceTier": context.get("service_tier"),
                 }
             )
         turn = turns[-1]
@@ -820,8 +971,9 @@ def parse_session(
         return turn
 
     def model_step(timestamp: int | None) -> tuple[int, dict[str, Any]]:
-        nonlocal current_step, after_tool_result
+        nonlocal current_step, after_tool_result, last_model_service_tier
         turn = ensure_turn(timestamp)
+        last_model_service_tier = turn.get("_serviceTier")
         if current_step == 0 or after_tool_result:
             current_step += 1
             after_tool_result = False
@@ -842,6 +994,8 @@ def parse_session(
         call_id: str | None = None,
         metadata_detail: dict[str, Any] | None = None,
         count_tool: bool = True,
+        has_start_boundary: bool = True,
+        inherited_call: bool = False,
     ) -> dict[str, Any]:
         nonlocal all_record_count, tool_calls, compactions
         turn = ensure_turn(timestamp)
@@ -851,6 +1005,9 @@ def parse_session(
         )
         event_text = safe_text(event, 260) or "Event"
         summary_text = safe_text(summary) or event_text
+        call_id = protocol_identifier(call_id)
+        if _index is not None:
+            _index.track_identifiers(record_id, None if inherited_call else call_id)
         if record_id in visible_record_ids:
             salt = 0
             while record_id in visible_record_ids:
@@ -859,7 +1016,6 @@ def parse_session(
                 ).hexdigest()[:16]
                 record_id = f"{record_id[:220]}…{digest}"
                 salt += 1
-        call_id = protocol_identifier(call_id)
         counts_as_tool = kind == "tool" and count_tool
         state: dict[str, bool] | None = None
         if kind == "tool" and call_id:
@@ -900,7 +1056,10 @@ def parse_session(
             "_failedCounted": state["failedCounted"] if state is not None else False,
             "_durationAuthoritative": False,
             "_outputAuthoritative": False,
+            "_hasStartBoundary": has_start_boundary and timestamp is not None,
         }
+        if _index is not None:
+            _index.track(record)
         if kind == "tool" and call_id:
             tracked_calls[call_id] = record
             tracked_calls.move_to_end(call_id)
@@ -942,7 +1101,7 @@ def parse_session(
         raw_call_id = record.get("callId")
         call_id = raw_call_id if isinstance(raw_call_id, str) else None
         marker_id = f"tool-result-{call_id or 'unknown'}-{all_record_count + 1}"
-        return add_record(
+        marker = add_record(
             timestamp=timestamp,
             kind="tool",
             event=str(record.get("event") or "Tool result"),
@@ -956,14 +1115,41 @@ def parse_session(
                 record.get("metadata") if isinstance(record.get("metadata"), dict) else None
             ),
             count_tool=False,
+            inherited_call=True,
         )
+        if _index is not None:
+            _index.track(marker, inherit=int(record["index"]))
+        # The marker is ordered at completion but retains the measured call
+        # boundary. Otherwise finishing it fabricates a zero-length duration.
+        marker["startedAt"] = record.get("startedAt")
+        for key in (
+            "durationMs",
+            "completedAt",
+            "_durationAuthoritative",
+            "_outputAuthoritative",
+            "_hasStartBoundary",
+            "_commandActivity",
+            "_commandExitCode",
+            "output",
+        ):
+            marker[key] = record.get(key)
+        return marker
+
+    def tool_summary(record: dict[str, Any], status: str) -> str:
+        activity = record.get("_commandActivity")
+        prefix = f"Command: {activity}" if activity else record["event"]
+        exit_code = record.get("_commandExitCode")
+        suffix = f" · exit {exit_code}" if exit_code is not None else ""
+        return shorten(f"{prefix} · {status}{suffix}")
 
     def mark_tool_error(record: dict[str, Any], message: str) -> None:
         """Mark one retained tool record and its aggregate state as failed."""
         nonlocal failed_tools
+        if _index is not None:
+            _index.track(record)
         record["status"] = "error"
         record["error"] = record.get("error") or message
-        record["summary"] = shorten(f"{record['event']} · error")
+        record["summary"] = tool_summary(record, "error")
         raw_call_id = record.get("callId")
         state = call_states.get(raw_call_id) if isinstance(raw_call_id, str) else None
         counts_as_tool = (
@@ -990,27 +1176,35 @@ def parse_session(
         authoritative: bool = False,
     ) -> None:
         """Apply a terminal tool event without losing an earlier authoritative result."""
+        if _index is not None:
+            _index.track(record)
         completed_at = timestamp
-        started_at = parse_timestamp(record.get("startedAt"))
-        if completed_at is not None or record.get("completedAt") is None:
+        started_at = (
+            parse_timestamp(record.get("startedAt")) if record.get("_hasStartBoundary") else None
+        )
+        if (authoritative or not record.get("_durationAuthoritative")) and (
+            completed_at is not None or record.get("completedAt") is None
+        ):
             record["completedAt"] = iso_timestamp(completed_at)
-        if duration_ms is not None:
-            record["durationMs"] = max(0, duration_ms)
+        if duration_ms is not None and (authoritative or not record.get("_durationAuthoritative")):
+            record["durationMs"] = duration_ms if duration_ms >= 1 else None
             if authoritative:
                 record["_durationAuthoritative"] = True
         elif not record.get("_durationAuthoritative"):
             elapsed = elapsed_milliseconds(started_at, completed_at)
             if elapsed is not None or record.get("durationMs") is None:
                 record["durationMs"] = elapsed
+            if authoritative:
+                record["_durationAuthoritative"] = True
         if include_details and output is not None and not record.get("_outputAuthoritative"):
-            record["output"] = json_text(output)
+            record["output"] = detail_json_text(output)
             if authoritative:
                 record["_outputAuthoritative"] = True
         if failed or record.get("status") == "error":
             mark_tool_error(record, error_message)
         else:
             record["status"] = "complete"
-            record["summary"] = shorten(f"{record['event']} · complete")
+            record["summary"] = tool_summary(record, "complete")
 
     def terminal_tool(
         *,
@@ -1029,10 +1223,16 @@ def parse_session(
         nonlocal after_tool_result, last_model_record, last_model_turn
         call_id = protocol_identifier(call_id)
         record = tracked_calls.get(call_id) if call_id else None
-        duration_unavailable = record is None and started_at is None and duration_ms is None
+        has_duration = duration_ms is not None and duration_ms >= 1
+        duration_unavailable = record is None and started_at is None and not has_duration
         if record is None:
             record_time = started_at
-            if record_time is None and timestamp is not None and duration_ms is not None:
+            if (
+                record_time is None
+                and timestamp is not None
+                and duration_ms is not None
+                and has_duration
+            ):
                 record_time = max(0, timestamp - duration_ms)
             if record_time is None:
                 record_time = timestamp
@@ -1049,7 +1249,7 @@ def parse_session(
                 summary=f"{event} · running",
                 step=step,
                 record_id=record_id,
-                input_detail=json_text(input_value) if input_value is not None else None,
+                input_detail=detail_json_text(input_value) if input_value is not None else None,
                 status="running",
                 call_id=call_id,
                 metadata_detail=metadata_detail,
@@ -1058,8 +1258,12 @@ def parse_session(
                     or call_id not in call_states
                     or not call_states[call_id]["countsAsTool"]
                 ),
+                has_start_boundary=started_at is not None or has_duration,
             )
         else:
+            if started_at is not None and not record.get("_hasStartBoundary"):
+                record["startedAt"] = iso_timestamp(started_at)
+                record["_hasStartBoundary"] = True
             authoritative_event = safe_text(event, 260)
             existing_event = str(record.get("event") or "")
             generic_events = {"tool", "mcp tool"}
@@ -1070,9 +1274,20 @@ def parse_session(
                 record["event"] = authoritative_event
         if record is not None and include_details:
             if record.get("input") is None and input_value is not None:
-                record["input"] = json_text(input_value)
+                record["input"] = detail_json_text(input_value)
             if metadata_detail:
                 record["metadata"].update(metadata_detail)
+        if event == "Command":
+            command = input_value.get("command") if isinstance(input_value, dict) else None
+            if command is not None or "_commandActivity" not in record:
+                record["_commandActivity"] = command_activity(command)
+            exit_code = output_value.get("exit_code") if isinstance(output_value, dict) else None
+            if (
+                isinstance(exit_code, int)
+                and not isinstance(exit_code, bool)
+                and -(2**31) <= exit_code < 2**31
+            ):
+                record["_commandExitCode"] = exit_code
         marker = late_tool_marker(record, timestamp)
         if marker is not None:
             finish_tool(
@@ -1112,6 +1327,8 @@ def parse_session(
         record: dict[str, Any], started_at: int | None, completed_at: int | None
     ) -> dict[str, Any]:
         """Apply persisted item timing to a non-tool record."""
+        if _index is not None:
+            _index.track(record)
         record["completedAt"] = iso_timestamp(completed_at)
         record["durationMs"] = elapsed_milliseconds(started_at, completed_at)
         return record
@@ -1155,6 +1372,8 @@ def parse_session(
                     if include_details
                     else "Turn ended without a matching completion event."
                 )
+                if _index is not None:
+                    _index.track_turn_error(previous, "mismatched_item_turn")
                 add_warning(
                     warnings,
                     "mismatched_item_turn",
@@ -1204,7 +1423,7 @@ def parse_session(
                 event="Hook prompt",
                 summary="Internal hook prompt",
                 record_id=item_id,
-                input_detail=json_text(item.get("fragments")),
+                input_detail=detail_json_text(item.get("fragments")),
             )
             finish_record_timing(record, timing_started_at, completed_at)
             return
@@ -1288,7 +1507,7 @@ def parse_session(
                 summary=label,
                 step=current_step or None,
                 record_id=item_id,
-                output_detail=json_text(
+                output_detail=detail_json_text(
                     {
                         key: item[key]
                         for key in ("target", "user_facing_hint", "review_output")
@@ -1302,6 +1521,9 @@ def parse_session(
         status = safe_text(item.get("status"), 80) or "completed"
         failed = status.casefold() in {"failed", "declined", "incomplete", "error"}
         duration = duration_milliseconds(item.get("duration"))
+        if duration is None and "duration" in item:
+            # An explicitly unconfirmed duration must not be replaced by a guessed interval.
+            duration = 0
         event = "Tool"
         input_value: Any = None
         output_value: Any = None
@@ -1366,6 +1588,8 @@ def parse_session(
                 event = "Sleep"
                 raw_duration = item.get("durationMs")
                 duration = epoch_milliseconds(raw_duration)
+                if duration is None and "durationMs" in item:
+                    duration = 0
                 input_value = {"durationMs": raw_duration}
             elif extension_kind == "web.search":
                 action = item.get("action")
@@ -1411,7 +1635,16 @@ def parse_session(
         )
 
     warnings: list[dict[str, Any]] = []
-    for event_number, (line_number, entry) in enumerate(iter_session_jsonl(path, warnings), 1):
+
+    def source_entries() -> Iterator[tuple[int, int, dict[str, Any]]]:
+        for event_number, (line_number, entry) in enumerate(iter_session_jsonl(path, warnings), 1):
+            if _index is not None:
+                _index.enter_event(event_number, line_number)
+            yield event_number, line_number, entry
+            if _index is not None:
+                _index.flush()
+
+    for event_number, line_number, entry in _entries if _entries is not None else source_entries():
         entry_type = entry.get("type")
         payload = entry.get("payload")
         if not isinstance(payload, dict):
@@ -1430,7 +1663,10 @@ def parse_session(
                 for key, limit in (("model", 200), ("effort", 80))
                 if (value := safe_text(payload.get(key), limit)) is not None
             }
+            context["service_tier"] = normalized_service_tier(payload.get("service_tier"))
             turn_model = safe_text(payload.get("model"), 200)
+            if active_turn and turns:
+                turns[-1]["_serviceTier"] = context["service_tier"]
             if active_turn and turns and turn_model is not None:
                 turns[-1]["model"] = turn_model
             continue
@@ -1453,6 +1689,8 @@ def parse_session(
                         if include_details
                         else "Turn ended without a matching completion event."
                     )
+                    if _index is not None:
+                        _index.track_turn_error(previous, "overlapping_turn_start")
                     add_warning(
                         warnings,
                         "overlapping_turn_start",
@@ -1466,6 +1704,9 @@ def parse_session(
                     current_step = 0
                     after_tool_result = False
             turn = ensure_turn(started, turn_id if isinstance(turn_id, str) else None)
+            started_tier = normalized_service_tier(payload.get("service_tier"))
+            if started_tier is not None:
+                turn["_serviceTier"] = started_tier
             turn_model = safe_text(payload.get("model"), 200)
             if turn_model is not None:
                 turn["model"] = turn_model
@@ -1512,15 +1753,16 @@ def parse_session(
                         if include_details
                         else "Turn ended without a matching completion event."
                     )
+                    if _index is not None:
+                        _index.track_turn_error(previous, "mismatched_turn_completion")
                     active_turn = False
                     current_step = 0
                     after_tool_result = False
+            has_turn_start = active_turn
             turn = ensure_turn(boundary, turn_id if isinstance(turn_id, str) else None)
             started = persisted_started
-            if started is None:
+            if started is None and has_turn_start:
                 started = parse_timestamp(turn.get("startedAt"))
-            if started is None:
-                started = timestamp
             turn["completedAt"] = iso_timestamp(completed)
             duration = payload.get("duration_ms")
             if (
@@ -1530,7 +1772,9 @@ def parse_session(
                 and duration >= 0
                 and duration <= MAX_SAFE_INTEGER
             ):
-                turn["durationMs"] = round(duration)
+                turn["durationMs"] = round(duration) if duration >= 1 else None
+            elif "duration_ms" in payload:
+                turn["durationMs"] = None
             else:
                 turn["durationMs"] = elapsed_milliseconds(started, completed)
             ttft = payload.get("time_to_first_token_ms")
@@ -1567,6 +1811,8 @@ def parse_session(
                     if include_details and error_text
                     else "Turn completed with an error."
                 )
+            if _index is not None and turn["error"] is not None:
+                _index.track_turn_error(turn, "turn_aborted" if aborted else "turn_error")
             active_turn = False
             current_step = 0
             after_tool_result = False
@@ -1592,9 +1838,7 @@ def parse_session(
             turn["steps"] = max(turn["steps"], current_step)
             continue
         if entry_type == "event_msg" and payload_type == "token_count":
-            rate_limits = safe_rate_limits(payload.get("rate_limits"))
-            if rate_limits:
-                latest_rate_limits = {**(latest_rate_limits or {}), **rate_limits}
+            latest_rate_limits = merge_rate_limits(latest_rate_limits, payload.get("rate_limits"))
             info = payload.get("info")
             if isinstance(info, dict):
                 (
@@ -1622,18 +1866,29 @@ def parse_session(
                             usage_turn.get("usage"), safe_last_usage
                         )
                         usage_turn["modelCalls"] += 1
-                        call_cost = estimate_usage_cost(
-                            usage_turn.get("model") or context.get("model"), safe_last_usage
+                        service_tier = (
+                            normalized_service_tier(info.get("service_tier"))
+                            or normalized_service_tier(payload.get("service_tier"))
+                            or (
+                                last_model_service_tier
+                                if last_model_turn is not None
+                                else usage_turn.get("_serviceTier")
+                            )
                         )
-                        if last_model_record is not None and last_model_record.get(
-                            "turn"
-                        ) == usage_turn.get("index"):
-                            last_model_record["usage"] = safe_last_usage
-                            last_model_record["cost"] = call_cost
+                        call_cost = estimate_usage_cost(
+                            usage_turn.get("model") or context.get("model"),
+                            safe_last_usage,
+                            service_tier=service_tier,
+                        )
+                        if service_tier in {"fast", "priority"}:
+                            fast_cost_calls += 1
                         usage_turn["cost"] = merge_cost_estimates(usage_turn.get("cost"), call_cost)
+                        if _index is not None:
+                            _index.save_turn(usage_turn)
                         session_cost = merge_cost_estimates(session_cost, call_cost)
                     last_model_record = None
                     last_model_turn = None
+                    last_model_service_tier = None
             continue
         if entry_type == "event_msg" and payload_type == "thread_rolled_back":
             rolled_back_turns = payload.get("num_turns")
@@ -1711,15 +1966,15 @@ def parse_session(
             tool_name = name
             arguments = payload.get("arguments", payload.get("input"))
             raw_call_id = payload.get("call_id") or payload.get("id")
-            call_id = protocol_identifier(raw_call_id, str(event_number)) or str(event_number)
+            call_id = protocol_identifier(raw_call_id)
             tool_record = add_record(
                 timestamp=timestamp,
                 kind="tool",
                 event=tool_name,
                 summary=f"{tool_name} · running",
                 step=step,
-                record_id=f"tool-{call_id}",
-                input_detail=json_text(arguments) if arguments is not None else None,
+                record_id=f"tool-{call_id or f'anonymous-{event_number}'}",
+                input_detail=detail_json_text(arguments) if arguments is not None else None,
                 status="running",
                 call_id=call_id,
                 metadata_detail={"protocolType": payload_type},
@@ -1733,7 +1988,7 @@ def parse_session(
             "tool_search_call",
         }:
             raw_call_id = payload.get("call_id") or payload.get("id")
-            call_id = protocol_identifier(raw_call_id, str(event_number)) or str(event_number)
+            call_id = protocol_identifier(raw_call_id)
             if payload_type == "local_shell_call":
                 event = "Local shell"
                 input_value = payload.get("action")
@@ -1745,8 +2000,7 @@ def parse_session(
                 terminal_tool(
                     event=event,
                     timestamp=timestamp,
-                    started_at=timestamp,
-                    record_id=f"tool-{call_id}",
+                    record_id=f"tool-{call_id or f'anonymous-{event_number}'}",
                     call_id=call_id,
                     input_value=input_value,
                     failed=status.casefold() != "completed",
@@ -1760,8 +2014,8 @@ def parse_session(
                     event=event,
                     summary=f"{event} · running",
                     step=step,
-                    record_id=f"tool-{call_id}",
-                    input_detail=json_text(input_value) if input_value is not None else None,
+                    record_id=f"tool-{call_id or f'anonymous-{event_number}'}",
+                    input_detail=detail_json_text(input_value) if input_value is not None else None,
                     status="running",
                     call_id=call_id,
                     metadata_detail={"protocolType": payload_type},
@@ -1785,6 +2039,7 @@ def parse_session(
                     call_id=call_id or None,
                     status="running",
                     count_tool=not matched_evicted_call,
+                    has_start_boundary=False,
                 )
                 if not matched_evicted_call:
                     add_warning(
@@ -1817,7 +2072,7 @@ def parse_session(
             "image_generation_call",
         }:
             raw_call_id = payload.get("call_id") or payload.get("id")
-            call_id = protocol_identifier(raw_call_id, str(event_number)) or str(event_number)
+            call_id = protocol_identifier(raw_call_id)
             status = safe_text(payload.get("status"), 80) or "completed"
             if payload_type == "web_search_call":
                 action = payload.get("action")
@@ -1834,8 +2089,7 @@ def parse_session(
             terminal_tool(
                 event=event,
                 timestamp=timestamp,
-                started_at=timestamp,
-                record_id=f"tool-{call_id}",
+                record_id=f"tool-{call_id or f'anonymous-{event_number}'}",
                 call_id=call_id,
                 input_value=input_value,
                 output_value=output_value,
@@ -1876,6 +2130,7 @@ def parse_session(
                     call_id=call_id or None,
                     status="running",
                     count_tool=not matched_evicted_call,
+                    has_start_boundary=False,
                 )
                 if not matched_evicted_call:
                     add_warning(
@@ -1920,6 +2175,8 @@ def parse_session(
             completion_output: Any = None
             failed = False
             duration = duration_milliseconds(payload.get("duration"))
+            if duration is None and "duration" in payload:
+                duration = 0
             if payload_type == "mcp_tool_call_end":
                 invocation = payload.get("invocation")
                 invocation_value = invocation if isinstance(invocation, dict) else {}
@@ -2013,7 +2270,7 @@ def parse_session(
                 summary=label,
                 step=current_step or None,
                 record_id=protocol_identifier(payload.get("item_id"), f"review-{event_number}"),
-                output_detail=json_text(
+                output_detail=detail_json_text(
                     {
                         key: payload[key]
                         for key in ("target", "user_facing_hint", "review_output")
@@ -2045,6 +2302,8 @@ def parse_session(
                     step=current_step or None,
                     record_id=f"compaction-{event_number}",
                 )
+            if _index is not None:
+                _index.track(pending_compaction)
             pending_compaction["completedAt"] = iso_timestamp(timestamp)
             pending_compaction = None
             continue
@@ -2111,9 +2370,31 @@ def parse_session(
 
     for record in records:
         if record["status"] == "running":
-            record["summary"] = shorten(f"{record['event']} · running")
+            record["summary"] = tool_summary(record, "running")
+
+    if _index is not None:
+        for record in records:
+            _index.pending[int(record["index"])] = record
+        _index.flush()
+        for turn in {**retained_turns, **{turn["index"]: turn for turn in turns}}.values():
+            _index.save_turn(turn)
 
     visible_records = list(records)
+    # Bound serialized detail size as well as record count. Escaping is included
+    # so unusual Unicode/control characters cannot exceed the transport limit.
+    retained_bytes = 0
+    for record in reversed(visible_records):
+        record_bytes = len(json.dumps(record, ensure_ascii=True).encode("ascii"))
+        if retained_bytes + record_bytes > MAX_TRAJECTORY_PAGE_BYTES:
+            visible_records = [item for item in visible_records if item["index"] > record["index"]]
+            add_warning(
+                warnings,
+                "page_byte_limit",
+                0,
+                "Page size was reduced; load earlier records to continue.",
+            )
+            break
+        retained_bytes += record_bytes
     first_record = visible_records[0]["index"] if visible_records else None
     last_record = visible_records[-1]["index"] if visible_records else None
     earlier_records = first_record - 1 if first_record is not None else 0
@@ -2122,8 +2403,10 @@ def parse_session(
     for record in visible_records:
         for private_key in tuple(key for key in record if key.startswith("_")):
             del record[private_key]
-    visible_turns = list(retained_turns.values())
-    visible_turn_indices = set(retained_turns)
+    visible_turn_indices = {record["turn"] for record in visible_records}
+    visible_turns = [
+        turn for index, turn in retained_turns.items() if index in visible_turn_indices
+    ]
     for turn in reversed(turns):
         if len(visible_turns) >= MAX_TURNS:
             break
@@ -2132,6 +2415,19 @@ def parse_session(
             visible_turns.append(turn)
             visible_turn_indices.add(turn_index)
     visible_turns.sort(key=lambda turn: turn["index"])
+    for turn in visible_turns:
+        turn.pop("_serviceTier", None)
+    if fast_cost_calls:
+        # Retain this accounting notice even if malformed input filled the warning budget.
+        pricing_notices: list[dict[str, Any]] = []
+        add_warning(
+            pricing_notices,
+            "codex_fast_cost_multiplier",
+            1,
+            f"Fast x2.5 included-usage estimate applied to {fast_cost_calls} usage sample(s); "
+            "this is not an API invoice or purchased-credit bill.",
+        )
+        warnings = (pricing_notices + warnings)[:MAX_WARNINGS]
     git = safe_git(metadata.get("git"))
     model = context.get("model") if isinstance(context.get("model"), str) else None
     effort = context.get("effort") if isinstance(context.get("effort"), str) else None
@@ -2201,35 +2497,141 @@ def cached_trajectory(
     normalized_detail = normalize_detail_level(detail_level)
     limited = max(MIN_RECORDS, min(int(max_records), MAX_RECORDS))
     signature = session_signature(path)
-    key = (path, signature, limited, normalized_detail, before_record)
+    key = (path, signature, limited, normalized_detail, before_record, jsonl_byte_limit())
     with _TRAJECTORY_CACHE_LOCK:
         cached = _TRAJECTORY_CACHE.get(key)
         if cached is not None:
             _TRAJECTORY_CACHE.move_to_end(key)
             return deepcopy(cached)
 
-    trajectory = parse_session(path, limited, normalized_detail, before_record)
+    index_key = (path, signature, jsonl_byte_limit())
+    with _PAGE_INDEX_LOCK:
+        index = _PAGE_INDEXES.get(index_key)
+        if index is None:
+            try:
+                index = PageIndex()
+                summary = parse_session(path, limited, "summary", before_record, _index=index)
+                index.finish(summary)
+                if not index.enabled or session_signature(path) != signature:
+                    index.close()
+                    index = None
+                else:
+                    _PAGE_INDEXES[index_key] = index
+            except (OSError, sqlite3.Error):
+                if index is not None:
+                    index.close()
+                index = None
+            except BaseException:
+                if index is not None:
+                    index.close()
+                raise
+        if index is not None:
+            _PAGE_INDEXES.move_to_end(index_key)
+            trajectory = index.page(limited, before_record, MAX_TRAJECTORY_PAGE_BYTES)
+            if index.details_ambiguous:
+                # Indexed IDs reflect the initial page's collision window. Reparse
+                # ambiguous summaries too, so enlarging a page cannot repeat IDs.
+                trajectory = parse_session(path, limited, normalized_detail, before_record)
+                if normalized_detail == "full" and session_signature(path) != signature:
+                    raise ValueError("Codex rollout changed during detail read; refresh and retry.")
+            elif normalized_detail == "full":
+                details = parse_session(
+                    path, MAX_RECORDS, "full", _entries=index.detail_entries(trajectory["records"])
+                )
+                by_id = {record["id"]: record for record in details["records"]}
+                by_call = {
+                    record["callId"]: record for record in details["records"] if record["callId"]
+                }
+                for record in trajectory["records"]:
+                    detail = by_id.get(record["id"])
+                    if detail is None and record["kind"] == "tool":
+                        detail = by_call.get(record["callId"])
+                    if detail is None:
+                        # Unusual identifier collisions must retain the canonical projection.
+                        trajectory = parse_session(path, limited, "full", before_record)
+                        break
+                    for field in ("input", "output", "metadata", "error", "summary"):
+                        record[field] = detail[field]
+                retained_bytes = 0
+                kept: list[dict[str, Any]] = []
+                for record in reversed(trajectory["records"]):
+                    record_bytes = len(json.dumps(record, ensure_ascii=True).encode("ascii"))
+                    if retained_bytes + record_bytes > MAX_TRAJECTORY_PAGE_BYTES:
+                        break
+                    kept.append(record)
+                    retained_bytes += record_bytes
+                if len(kept) < len(trajectory["records"]):
+                    end = trajectory["pagination"]["lastRecord"] + 1
+                    trajectory = index.page(len(kept), end, MAX_TRAJECTORY_PAGE_BYTES)
+                    trajectory["records"] = list(reversed(kept))
+                    add_warning(
+                        trajectory["warnings"],
+                        "page_byte_limit",
+                        0,
+                        "Page size was reduced; load earlier records to continue.",
+                    )
+                index.hydrate_turn_errors(trajectory["turns"])
+                trajectory["detailLevel"] = "full"
+                if session_signature(path) != signature:
+                    raise ValueError("Codex rollout changed during detail read; refresh and retry.")
+            while _PAGE_INDEXES and (
+                len(_PAGE_INDEXES) > MAX_PAGE_INDEXES
+                or sum(item.size for item in _PAGE_INDEXES.values()) > MAX_PAGE_INDEX_TOTAL_BYTES
+            ):
+                _, evicted_index = _PAGE_INDEXES.popitem(last=False)
+                evicted_index.close()
+        else:
+            trajectory = parse_session(path, limited, normalized_detail, before_record)
+    size = len(json.dumps(trajectory, ensure_ascii=True).encode("ascii"))
     if session_signature(path) == signature:
         with _TRAJECTORY_CACHE_LOCK:
             _TRAJECTORY_CACHE[key] = trajectory
+            _TRAJECTORY_CACHE_SIZES[key] = size
             _TRAJECTORY_CACHE.move_to_end(key)
-            while len(_TRAJECTORY_CACHE) > MAX_TRAJECTORY_CACHE:
-                _TRAJECTORY_CACHE.popitem(last=False)
+            while _TRAJECTORY_CACHE and (
+                len(_TRAJECTORY_CACHE) > MAX_TRAJECTORY_CACHE
+                or sum(_TRAJECTORY_CACHE_SIZES.get(item, 0) for item in _TRAJECTORY_CACHE)
+                > MAX_TRAJECTORY_CACHE_BYTES
+            ):
+                evicted_key, _ = _TRAJECTORY_CACHE.popitem(last=False)
+                _TRAJECTORY_CACHE_SIZES.pop(evicted_key, None)
+            # Cache clears (including tests) must not retain stale size keys.
+            for old_key in _TRAJECTORY_CACHE_SIZES.keys() - _TRAJECTORY_CACHE.keys():
+                del _TRAJECTORY_CACHE_SIZES[old_key]
     return deepcopy(trajectory)
 
 
 def prewarm_caches() -> None:
     """Warm the bounded session and latest-summary caches after MCP startup."""
-    list_session_overviews(limit=20, include_archived=True)
-    path = resolve_session(None, include_archived=True)
+    path = resolve_session(None, include_archived=False)
     cached_trajectory(path, DEFAULT_MAX_RECORDS, "summary")
 
 
-def trajectory_result(arguments: dict[str, Any], with_ui: bool) -> dict[str, Any]:
+def _read_limit_task_id(path: Path) -> str | None:
+    try:
+        metadata = first_session_metadata(path)
+        for key in ("id", "session_id"):
+            if identity := protocol_identifier(metadata.get(key)):
+                return identity
+        return None
+    except (OSError, ValueError):
+        return None
+
+
+def trajectory_result(
+    arguments: dict[str, Any], with_ui: bool, *, exact_session_id: str | None = None
+) -> dict[str, Any]:
     """Resolve and project a session for one MCP tool call."""
-    allowed = {"sessionId", "maxRecords", "beforeRecord", "includeArchived", "detailLevel"}
+    allowed = {
+        "sessionId",
+        "maxRecords",
+        "beforeRecord",
+        "includeArchived",
+        "detailLevel",
+        "maxReadBytes",
+    }
     reject_unknown_arguments(arguments, allowed)
-    include_archived = arguments.get("includeArchived", True)
+    include_archived = arguments.get("includeArchived", False)
     if not isinstance(include_archived, bool):
         raise ValueError("includeArchived must be a boolean.")
     session_id = arguments.get("sessionId")
@@ -2247,8 +2649,25 @@ def trajectory_result(arguments: dict[str, Any], with_ui: bool) -> dict[str, Any
         if not 1 <= before_record <= MAX_SAFE_INTEGER:
             raise ValueError(f"beforeRecord must be between 1 and {MAX_SAFE_INTEGER}.")
     detail_level = normalize_detail_level(arguments.get("detailLevel", "summary"))
-    path = resolve_session(session_id, include_archived)
-    trajectory = cached_trajectory(path, requested_max, detail_level, before_record)
+    if detail_level == "full" and (session_id is None or session_id.strip() == "latest"):
+        raise ValueError("Full details require an explicit sessionId selected from a summary.")
+    with session_read_limit(arguments.get("maxReadBytes")):
+        if arguments.get("maxReadBytes") is not None and (
+            session_id is None or session_id.strip() == "latest"
+        ):
+            raise ValueError("maxReadBytes requires an explicit sessionId.")
+        path = resolve_session(session_id, include_archived)
+        try:
+            if exact_session_id is not None and _read_limit_task_id(path) != exact_session_id:
+                raise ValueError("Calling task identity is unavailable or does not match metadata.")
+            revision: str | None = trajectory_revision(path)
+            trajectory = cached_trajectory(path, requested_max, detail_level, before_record)
+            if trajectory_revision(path) != revision:
+                revision = None
+        except ReadLimitExceeded as error:
+            error.session_id = _read_limit_task_id(path)
+            error.session_id_verified = error.session_id is not None
+            raise
     stats = trajectory["stats"]
     summary = (
         f"Trajectory for {trajectory['session']['id']}: "
@@ -2258,9 +2677,10 @@ def trajectory_result(arguments: dict[str, Any], with_ui: bool) -> dict[str, Any
     result: dict[str, Any] = {
         "structuredContent": trajectory,
         "content": [{"type": "text", "text": summary}],
+        "_meta": {"codex-trajectory/revision": revision} if revision else {},
     }
     if with_ui:
-        result["_meta"] = {"ui": {"resourceUri": UI_URI}}
+        result["_meta"]["ui"] = {"resourceUri": UI_URI}
     return result
 
 
@@ -2277,8 +2697,10 @@ def trajectory_revision(path: Path) -> str:
 
 def trajectory_update_result(arguments: dict[str, Any]) -> dict[str, Any]:
     """Return a safe live-view update only when the selected rollout changed."""
-    reject_unknown_arguments(arguments, {"sessionId", "revision", "includeArchived"})
-    include_archived = arguments.get("includeArchived", True)
+    reject_unknown_arguments(
+        arguments, {"sessionId", "revision", "includeArchived", "maxReadBytes"}
+    )
+    include_archived = arguments.get("includeArchived", False)
     if not isinstance(include_archived, bool):
         raise ValueError("includeArchived must be a boolean.")
     session_id = arguments.get("sessionId")
@@ -2293,15 +2715,26 @@ def trajectory_update_result(arguments: dict[str, Any]) -> dict[str, Any]:
         ):
             raise ValueError("revision must be a lowercase SHA-256 digest.")
 
-    path = resolve_session(session_id, include_archived)
-    current_revision = trajectory_revision(path)
-    update: dict[str, Any] = {
-        "schemaVersion": TRAJECTORY_SCHEMA_VERSION,
-        "unchanged": revision == current_revision,
-        "revision": current_revision,
-    }
-    if revision != current_revision:
-        update["trajectory"] = cached_trajectory(path, LIVE_MAX_RECORDS, "summary")
+    with session_read_limit(arguments.get("maxReadBytes")):
+        if arguments.get("maxReadBytes") is not None and (
+            session_id is None or session_id.strip() == "latest"
+        ):
+            raise ValueError("maxReadBytes requires an explicit sessionId.")
+        path = resolve_session(session_id, include_archived)
+        current_revision = trajectory_revision(path)
+        update: dict[str, Any] = {
+            "schemaVersion": TRAJECTORY_SCHEMA_VERSION,
+            "unchanged": revision == current_revision,
+            "revision": current_revision,
+            "quota": latest_account_quota(),
+        }
+        if revision != current_revision:
+            try:
+                update["trajectory"] = cached_trajectory(path, LIVE_MAX_RECORDS, "summary")
+            except ReadLimitExceeded as error:
+                error.session_id = _read_limit_task_id(path)
+                error.session_id_verified = error.session_id is not None
+                raise
     state = "unchanged" if update["unchanged"] else "updated"
     return {
         "structuredContent": update,
@@ -2309,435 +2742,20 @@ def trajectory_update_result(arguments: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def request_direct_task_stop(arguments: dict[str, Any]) -> dict[str, Any]:
-    """Invoke the loopback-only App Server stop bridge without exposing it to the model."""
-    from codex_trajectory_cdp import request_task_stop
-
-    return request_task_stop(arguments)
-
-
-def valid_cdp_identifier(value: Any) -> bool:
-    """Return whether a value is one bounded App Server identifier."""
-    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
-    allowed = f"{alphabet}._:-"
-    return (
-        isinstance(value, str)
-        and 1 <= len(value) <= 128
-        and value[0] in alphabet
-        and all(character in allowed for character in value)
-    )
-
-
 def tool_definitions() -> list[dict[str, Any]]:
-    """Return MCP tool metadata."""
-    read_only = {
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": True,
-        "openWorldHint": False,
-    }
-    local_change = {
-        "readOnlyHint": False,
-        "destructiveHint": False,
-        "idempotentHint": True,
-        "openWorldHint": False,
-    }
-    stop_action = {
-        "readOnlyHint": False,
-        "destructiveHint": True,
-        "idempotentHint": False,
-        "openWorldHint": False,
-    }
-    trajectory_properties = {
-        "sessionId": {
-            "type": "string",
-            "maxLength": 240,
-            "description": (
-                "Exact or unambiguous-prefix Codex session ID. Omit for the latest task."
-            ),
-        },
-        "maxRecords": {
-            "type": "integer",
-            "minimum": MIN_RECORDS,
-            "maximum": MAX_RECORDS,
-            "default": DEFAULT_MAX_RECORDS,
-            "description": (
-                "Maximum records in one page while preserving stable original indexes."
-            ),
-        },
-        "beforeRecord": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": MAX_SAFE_INTEGER,
-            "description": (
-                "Exclusive stable record index for loading the immediately preceding page. "
-                "Omit to load the newest tail."
-            ),
-        },
-        "includeArchived": {
-            "type": "boolean",
-            "default": True,
-            "description": "Also resolve sessions from archived_sessions.",
-        },
-        "detailLevel": {
-            "type": "string",
-            "enum": ["summary", "full"],
-            "default": "summary",
-            "description": (
-                "Safe summaries by default; full explicitly includes bounded record details."
-            ),
-        },
-    }
-    return [
-        {
-            "name": "list_codex_sessions",
-            "title": "List local Codex tasks",
-            "description": "List recent local Codex task logs without returning transcript bodies.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20},
-                    "query": {
-                        "type": "string",
-                        "maxLength": 500,
-                        "description": "Filter by ID, title, cwd, or model.",
-                    },
-                    "includeArchived": {"type": "boolean", "default": False},
-                },
-                "additionalProperties": False,
-            },
-            "annotations": read_only,
-        },
-        {
-            "name": "get_codex_trajectory",
-            "title": "Read a Codex trajectory",
-            "description": (
-                "Return a structured turn-aware trajectory for analysis without rendering UI."
-            ),
-            "inputSchema": {
-                "type": "object",
-                "properties": trajectory_properties,
-                "additionalProperties": False,
-            },
-            "annotations": read_only,
-        },
-        {
-            "name": "show_codex_trajectory",
-            "title": "Show a Codex trajectory",
-            "description": (
-                "Render a local Codex task as an interactive timing overview, "
-                "event ledger, and inspector."
-            ),
-            "inputSchema": {
-                "type": "object",
-                "properties": trajectory_properties,
-                "additionalProperties": False,
-            },
-            "annotations": read_only,
-            "_meta": {
-                "ui": {"resourceUri": UI_URI},
-                "openai/outputTemplate": UI_URI,
-                "openai/toolInvocation/invoking": "Building trajectory…",
-                "openai/toolInvocation/invoked": "Trajectory ready.",
-            },
-        },
-        {
-            "name": "get_codex_trajectory_update",
-            "title": "Refresh the live trajectory window",
-            "description": (
-                "Return an app-only safe-summary update when a local Codex task changed."
-            ),
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "sessionId": trajectory_properties["sessionId"],
-                    "revision": {
-                        "type": "string",
-                        "pattern": "^[0-9a-f]{64}$",
-                        "description": "Opaque revision returned by the previous live update.",
-                    },
-                    "includeArchived": trajectory_properties["includeArchived"],
-                },
-                "additionalProperties": False,
-            },
-            "annotations": read_only,
-            "_meta": {
-                "ui": {"visibility": ["app"]},
-                "openai/visibility": "private",
-            },
-        },
-        {
-            "name": "get_codex_toolbar_injection_status",
-            "title": "Read the optional Codex direct-stop integration status",
-            "description": (
-                "Return app-only status for the loopback CDP direct-stop integration and "
-                "whether the authenticated Browser shortcut is available, without exposing "
-                "local paths."
-            ),
-            "inputSchema": {
-                "type": "object",
-                "properties": {},
-                "additionalProperties": False,
-            },
-            "annotations": read_only,
-            "_meta": {
-                "ui": {"visibility": ["app"]},
-                "openai/visibility": "private",
-            },
-        },
-        {
-            "name": "set_codex_toolbar_injection",
-            "title": "Configure the optional Codex direct-stop integration",
-            "description": (
-                "Enable or disable the local loopback CDP direct-stop channel and persist its "
-                "port. This changes only plugin-owned settings and removes obsolete injected "
-                "controls from the current Codex page."
-            ),
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "enabled": {
-                        "type": "boolean",
-                        "description": "Enable direct stop and remove obsolete toolbar entries.",
-                    },
-                    "port": {
-                        "type": "integer",
-                        "minimum": MIN_CDP_PORT,
-                        "maximum": MAX_CDP_PORT,
-                        "default": DEFAULT_CDP_PORT,
-                        "description": "Loopback Chrome DevTools Protocol port.",
-                    },
-                    "reconcileOnly": {
-                        "type": "boolean",
-                        "default": False,
-                        "description": (
-                            "Restart a missing watcher only if the persisted enabled setting "
-                            "and port still match; never overwrite a newer user choice."
-                        ),
-                    },
-                },
-                "required": ["enabled"],
-                "allOf": [
-                    {
-                        "if": {
-                            "properties": {"reconcileOnly": {"const": True}},
-                            "required": ["reconcileOnly"],
-                        },
-                        "then": {
-                            "properties": {"enabled": {"const": True}},
-                            "required": ["port"],
-                        },
-                    }
-                ],
-                "additionalProperties": False,
-            },
-            "annotations": local_change,
-            "_meta": {
-                "ui": {"visibility": ["app"]},
-                "openai/visibility": "private",
-            },
-        },
-        {
-            "name": "request_codex_task_stop",
-            "title": "Stop the bound Codex task",
-            "description": (
-                "Use the explicitly enabled loopback CDP integration to pause an active Goal "
-                "and interrupt one exact local Codex task turn."
-            ),
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "sessionId": {
-                        "type": "string",
-                        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
-                    },
-                    "turnId": {
-                        "type": "string",
-                        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
-                    },
-                    "source": {"type": "string", "enum": ["manual", "auto"]},
-                    "threshold": {"type": "integer", "minimum": 1, "maximum": 100},
-                    "language": {"type": "string", "enum": ["en", "zh"]},
-                },
-                "required": ["sessionId", "source", "threshold", "language"],
-                "additionalProperties": False,
-            },
-            "annotations": stop_action,
-            "_meta": {
-                "ui": {"visibility": ["app"]},
-                "openai/visibility": "private",
-            },
-        },
-    ]
+    """Compatibility import for the separated MCP tool layer."""
+    from .tools import tool_definitions as definitions
+
+    return definitions()
 
 
-def call_tool(name: str, arguments: Any) -> dict[str, Any]:
-    """Dispatch one MCP tool call."""
-    args = arguments if isinstance(arguments, dict) else {}
-    try:
-        if name == "list_codex_sessions":
-            reject_unknown_arguments(args, {"limit", "query", "includeArchived"})
-            limit = args.get("limit", 20)
-            if isinstance(limit, bool) or not isinstance(limit, int):
-                raise ValueError("limit must be an integer.")
-            if not 1 <= limit <= 100:
-                raise ValueError("limit must be between 1 and 100.")
-            query = args.get("query", "")
-            if not isinstance(query, str):
-                raise ValueError("query must be a string.")
-            if len(query) > 500:
-                raise ValueError("query must contain at most 500 characters.")
-            include_archived = args.get("includeArchived", False)
-            if not isinstance(include_archived, bool):
-                raise ValueError("includeArchived must be a boolean.")
-            sessions = list_session_overviews(
-                limit=limit,
-                query=query,
-                include_archived=include_archived,
-            )
-            return {
-                "structuredContent": {"sessions": sessions, "count": len(sessions)},
-                "content": [{"type": "text", "text": f"Found {len(sessions)} local Codex tasks."}],
-            }
-        if name == "get_codex_trajectory":
-            return trajectory_result(args, with_ui=False)
-        if name == "show_codex_trajectory":
-            return trajectory_result(args, with_ui=True)
-        if name == "get_codex_trajectory_update":
-            return trajectory_update_result(args)
-        if name == "get_codex_toolbar_injection_status":
-            reject_unknown_arguments(args, set())
-            return {
-                "structuredContent": cdp_toolbar_status(),
-                "content": [{"type": "text", "text": "Read local CDP direct-stop status."}],
-            }
-        if name == "set_codex_toolbar_injection":
-            reject_unknown_arguments(args, {"enabled", "port", "reconcileOnly"})
-            enabled = args.get("enabled")
-            if not isinstance(enabled, bool):
-                raise ValueError("enabled must be a boolean.")
-            port = args.get("port", DEFAULT_CDP_PORT)
-            if isinstance(port, bool) or not isinstance(port, int):
-                raise ValueError("port must be an integer.")
-            reconcile_only = args.get("reconcileOnly", False)
-            if not isinstance(reconcile_only, bool):
-                raise ValueError("reconcileOnly must be a boolean.")
-            if reconcile_only and (enabled is not True or "port" not in args):
-                raise ValueError(
-                    "reconcileOnly requires enabled=true and an explicit expected port."
-                )
-            try:
-                status = (
-                    recover_cdp_toolbar(port)
-                    if reconcile_only
-                    else configure_cdp_toolbar(enabled, port)
-                )
-            except OSError:
-                return {
-                    "isError": True,
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": "Could not update the private CDP direct-stop setting.",
-                        }
-                    ],
-                }
-            return {
-                "structuredContent": status,
-                "content": [
-                    {
-                        "type": "text",
-                        "text": (
-                            "Reconciled local CDP direct-stop integration."
-                            if reconcile_only
-                            else (
-                                "Enabled local CDP direct-stop integration."
-                                if enabled
-                                else "Disabled local CDP direct-stop integration."
-                            )
-                        ),
-                    }
-                ],
-            }
-        if name == "request_codex_task_stop":
-            reject_unknown_arguments(
-                args,
-                {"sessionId", "turnId", "source", "threshold", "language"},
-            )
-            session_id = args.get("sessionId")
-            turn_id = args.get("turnId")
-            source = args.get("source")
-            threshold = args.get("threshold")
-            language = args.get("language")
-            if not valid_cdp_identifier(session_id):
-                raise ValueError("sessionId must be a bounded Codex identifier.")
-            if turn_id is not None and not valid_cdp_identifier(turn_id):
-                raise ValueError("turnId must be a bounded Codex identifier.")
-            if source not in {"manual", "auto"}:
-                raise ValueError("source must be manual or auto.")
-            if isinstance(threshold, bool) or not isinstance(threshold, int):
-                raise ValueError("threshold must be an integer.")
-            if not 1 <= threshold <= 100:
-                raise ValueError("threshold must be between 1 and 100.")
-            if language not in {"en", "zh"}:
-                raise ValueError("language must be en or zh.")
-            request = {
-                "sessionId": session_id,
-                "source": source,
-                "threshold": threshold,
-                "language": language,
-            }
-            if isinstance(turn_id, str):
-                request["turnId"] = turn_id
-            result = request_direct_task_stop(request)
-            if (
-                not isinstance(result, dict)
-                or not isinstance(result.get("sent"), bool)
-                or set(result) - {"sent", "error", "idle", "stale"}
-                or ("error" in result and not isinstance(result["error"], str))
-                or ("idle" in result and not isinstance(result["idle"], bool))
-                or ("stale" in result and not isinstance(result["stale"], bool))
-                or (
-                    result.get("sent") is True
-                    and (result.get("idle") is True or result.get("stale") is True)
-                )
-                or (result.get("idle") is True and result.get("stale") is True)
-                or (
-                    result.get("sent") is False
-                    and result.get("idle") is not True
-                    and result.get("stale") is not True
-                    and "error" not in result
-                )
-                or (result.get("stale") is True and "error" not in result)
-            ):
-                raise OSError("Invalid direct stop result.")
-            response: dict[str, Any] = {
-                "structuredContent": result,
-                "content": [
-                    {
-                        "type": "text",
-                        "text": (
-                            "Stopped the bound Codex task."
-                            if result["sent"]
-                            else "The bound Codex task was not stopped."
-                        ),
-                    }
-                ],
-            }
-            if not result["sent"] and result.get("idle") is not True:
-                response["isError"] = True
-            return response
-        raise ValueError(f"Unknown tool {name!r}.")
-    except OSError:
-        return {
-            "isError": True,
-            "content": [{"type": "text", "text": "Could not read local Codex task data."}],
-        }
-    except ValueError as error:
-        return {
-            "isError": True,
-            "content": [{"type": "text", "text": str(error)}],
-        }
+def call_tool(
+    name: str, arguments: Any, *, metadata: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Compatibility import for the separated MCP tool layer."""
+    from .tools import call_tool as dispatch
+
+    return dispatch(name, arguments, metadata=metadata)
 
 
 def reject_unknown_arguments(arguments: dict[str, Any], allowed: set[str]) -> None:
@@ -2752,7 +2770,12 @@ def ui_html() -> str:
     assets = Path(__file__).resolve().parent.parent.parent / "assets"
     html = (assets / "trajectory.html").read_text(encoding="utf-8")
     sprite = b64encode((assets / "whale-girl-mining-32f.png").read_bytes()).decode("ascii")
-    return html.replace(
-        "__WHALE_MINING_SPRITE_DATA_URI__",
-        f"data:image/png;base64,{sprite}",
+    bridge = (assets / "mcp-app-bridge.js").read_text(encoding="utf-8")
+    return (
+        html.replace("/* __MCP_APP_BRIDGE__ */", bridge)
+        .replace("__TRAJECTORY_VERSION__", SERVER_VERSION)
+        .replace(
+            "__WHALE_MINING_SPRITE_DATA_URI__",
+            f"data:image/png;base64,{sprite}",
+        )
     )

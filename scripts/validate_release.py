@@ -23,8 +23,9 @@ MAX_JSON_INTEGER_DIGITS = 256
 MAX_JSON_NESTING_DEPTH = 256
 FROZEN_SCHEMA_SHA256 = {
     1: "b74e0aa0b75280151cdaf3502a819e0ebf501699e52a83315dda9fddf1ebf458",
+    2: "beb5f9e080c926c2c36359cde96691e06789198adc42ddae1cadd8cc7840e1d7",
 }
-WINDOWS_LAUNCHER_SHA256 = "bf3cf1118ad6d5fd1cf91a671d9ccba6cd3af7dfb7dabeeebd37f6c6442ea67f"
+WINDOWS_LAUNCHER_SHA256 = "eae4f330c46e521624f26362a7062c1fc0db44ee109aa6c9acfc3f242f36cbd6"
 
 
 def _validate_json_nesting(value: str) -> None:
@@ -513,8 +514,8 @@ def validate_mcp() -> None:
     )
 
 
-def validate_watcher_startup() -> None:
-    """Keep watcher recovery on MCP startup without a command-shell hook."""
+def validate_native_view() -> None:
+    """Require the native viewer and exclude retired integration components."""
     require(
         not (PLUGIN / "hooks" / "hooks.json").exists(),
         "plugin must not bundle a command hook that opens a Windows terminal",
@@ -525,8 +526,23 @@ def validate_watcher_startup() -> None:
     )
     mcp_source = (PLUGIN / "scripts" / "codex_trajectory_mcp.py").read_text(encoding="utf-8")
     require(
-        "reconcile_daemon()" in mcp_source,
-        "MCP startup must restore the opted-in watcher",
+        "prewarm_caches()" in mcp_source and "reconcile_daemon" not in mcp_source,
+        "MCP startup must only initialize the read-only cache",
+    )
+    for retired in (
+        "scripts/codex_trajectory_cdp.py",
+        "scripts/codex_trajectory/browser_view.py",
+        "scripts/codex_trajectory/cdp_peer.py",
+        "scripts/codex_trajectory/cdp_settings.py",
+        "assets/trajectory-browser.html",
+        "assets/trajectory-browser.js",
+        "assets/trajectory-browser.css",
+    ):
+        require(not (PLUGIN / retired).exists(), "retired integration must not be packaged")
+    bridge = (PLUGIN / "assets" / "mcp-app-bridge.js").read_text(encoding="utf-8")
+    require(
+        "ui/initialize" in bridge and "ui/notifications/host-context-changed" in bridge,
+        "native MCP Apps host bridge is missing",
     )
 
 
@@ -701,7 +717,7 @@ def main() -> None:
     validate_marketplace()
     validate_skill()
     validate_mcp()
-    validate_watcher_startup()
+    validate_native_view()
     validate_schema()
     validate_attribution()
     validate_repository_contents()

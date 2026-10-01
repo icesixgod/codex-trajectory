@@ -16,6 +16,10 @@ from codex_trajectory.pricing import (
 )
 
 OFFICIAL_STANDARD_PRICES: dict[str, tuple[str, str | None, str]] = {
+    "gpt-6.1-sol": ("2", "0.1", "10"),
+    "gpt-6-astra": ("10", "1", "50"),
+    "gpt-6-sol": ("2", "0.2", "10"),
+    "gpt-6-luna": ("0.1", "0.01", "0.5"),
     "gpt-5.6": ("4", "0.4", "20"),
     "gpt-5.6-sol": ("4", "0.4", "20"),
     "gpt-5.6-terra": ("2", "0.2", "12"),
@@ -123,6 +127,10 @@ def test_only_explicit_official_dated_snapshots_are_priced() -> None:
         "gpt-5-1900-01-01",
         "gpt-5.6-sol-2026-08-24",
         "gpt-5.3-codex-2026-02-30",
+        "gpt-6.1-sol-2026-09-29",
+        "gpt-6-astra-2026-09-30",
+        "gpt-6-sol-fast",
+        "gpt-6.1-sol-preview",
     ):
         assert canonical_priced_model(unknown) is None
 
@@ -150,9 +158,40 @@ def test_prices_uncached_cached_and_output_tokens_without_double_counting_reason
         "coverage": "complete",
         "pricedModelCalls": 1,
         "unpricedModelCalls": 0,
-        "pricingUpdatedAt": "2026-08-24",
+        "pricingUpdatedAt": "2026-10-01",
     }
     assert PRICING_SOURCE == "https://developers.openai.com/api/docs/pricing"
+
+
+@pytest.mark.parametrize(
+    ("model", "total", "uncached", "cached", "output"),
+    [
+        ("gpt-6.1-sol", 0.2525, 0.15, 0.0025, 0.1),
+        ("gpt-6-astra", 1.275, 0.75, 0.025, 0.5),
+        ("gpt-6-sol", 0.255, 0.15, 0.005, 0.1),
+        ("gpt-6-luna", 0.01275, 0.0075, 0.00025, 0.005),
+    ],
+)
+def test_gpt_6_cached_usage_uses_each_published_standard_rate(
+    model: str, total: float, uncached: float, cached: float, output: float
+) -> None:
+    estimate = estimate_usage_cost(
+        model,
+        {
+            "input_tokens": 100_000,
+            "cached_input_tokens": 25_000,
+            "output_tokens": 10_000,
+            "reasoning_output_tokens": 8_000,
+        },
+    )
+
+    assert estimate["coverage"] == "complete"
+    assert (
+        estimate["totalUsd"],
+        estimate["uncachedInputUsd"],
+        estimate["cachedInputUsd"],
+        estimate["outputUsd"],
+    ) == (total, uncached, cached, output)
 
 
 def test_current_gpt_5_6_standard_short_context_prices() -> None:
@@ -262,3 +301,39 @@ def test_large_valid_cost_aggregate_does_not_exhaust_decimal_precision() -> None
     assert aggregate["pricedModelCalls"] == 9_000
     assert math.isfinite(aggregate["totalUsd"])
     assert aggregate["totalUsd"] > call["totalUsd"]
+
+
+@pytest.mark.parametrize("tier", ["fast", "priority", " FAST ", "Priority"])
+def test_fast_estimate_scales_each_component_without_scaling_tokens(tier: str) -> None:
+    usage = {
+        "input_tokens": 1_000_000,
+        "cached_input_tokens": 250_000,
+        "output_tokens": 100_000,
+        "reasoning_output_tokens": 80_000,
+    }
+    original = dict(usage)
+    result = estimate_usage_cost("gpt-5", usage, service_tier=tier)
+    assert result["uncachedInputUsd"] == 2.34375
+    assert result["cachedInputUsd"] == 0.078125
+    assert result["outputUsd"] == 2.5
+    assert result["totalUsd"] == 4.921875
+    assert result["pricedModelCalls"] == 1
+    assert usage == original
+
+
+@pytest.mark.parametrize(
+    "tier", [None, "default", "auto", "flex", "ultrafast", "unknown", True, {}]
+)
+def test_other_or_missing_tiers_do_not_infer_fast(tier: object) -> None:
+    usage = {"input_tokens": 100, "output_tokens": 20}
+    assert estimate_usage_cost("gpt-5", usage, service_tier=tier) == estimate_usage_cost(
+        "gpt-5", usage
+    )
+
+
+def test_fast_does_not_invent_a_price_for_unknown_models() -> None:
+    result = estimate_usage_cost(
+        "private-model-fast", {"input_tokens": 100, "output_tokens": 20}, service_tier="fast"
+    )
+    assert result["coverage"] == "unavailable"
+    assert result["totalUsd"] is None

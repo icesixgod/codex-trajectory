@@ -44,36 +44,23 @@ def test_mcp_starts_optional_initialization_before_serving(
     codex_trajectory_mcp.main()
 
     assert calls == ["initialize", "serve"]
-    assert float(codex_trajectory_mcp.os.environ["CODEX_TRAJECTORY_MCP_STARTED_AT"]) > 0
 
 
-def test_background_initialization_reconciles_then_prewarms(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_background_initialization_only_prewarms(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[str] = []
-    monkeypatch.setattr(
-        codex_trajectory_mcp,
-        "reconcile_daemon",
-        lambda: calls.append("reconcile"),
-    )
     monkeypatch.setattr(codex_trajectory_mcp, "prewarm_caches", lambda: calls.append("prewarm"))
-
     codex_trajectory_mcp._initialize_in_background()
-
-    assert calls == ["reconcile", "prewarm"]
-
-
-def test_background_prewarm_continues_when_watcher_recovery_fails(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: list[str] = []
-
-    def fail_reconcile() -> None:
-        raise OSError("temporary watcher race")
-
-    monkeypatch.setattr(codex_trajectory_mcp, "reconcile_daemon", fail_reconcile)
-    monkeypatch.setattr(codex_trajectory_mcp, "prewarm_caches", lambda: calls.append("prewarm"))
-
-    codex_trajectory_mcp._initialize_in_background()
-
     assert calls == ["prewarm"]
+
+
+@pytest.mark.parametrize(
+    "error", [OSError("unavailable"), RuntimeError("busy"), ValueError("no logs")]
+)
+def test_background_prewarm_failure_does_not_break_stdio(
+    monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    def fail() -> None:
+        raise error
+
+    monkeypatch.setattr(codex_trajectory_mcp, "prewarm_caches", fail)
+    codex_trajectory_mcp._initialize_in_background()

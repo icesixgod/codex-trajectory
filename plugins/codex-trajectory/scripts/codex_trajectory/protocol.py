@@ -7,7 +7,6 @@ import math
 import queue
 import sys
 import threading
-from contextlib import suppress
 from typing import Any
 
 from .json_support import strict_json_loads
@@ -15,15 +14,16 @@ from .projection import (
     SERVER_NAME,
     SERVER_VERSION,
     UI_URI,
-    call_tool,
-    tool_definitions,
     ui_html,
 )
+from .tools import call_tool, tool_definitions
 
 SUPPORTED_PROTOCOL_VERSION = "2025-06-18"
 MAX_RPC_LINE_BYTES = 8 * 1024 * 1024
 MAX_RPC_RESPONSE_BYTES = 8 * 1024 * 1024
 MAX_RPC_IDENTIFIER_LENGTH = 256
+MAX_PENDING_REQUESTS = 8
+_WRITE_LOCK = threading.Lock()
 LEGACY_UI_URI = "ui://codex-trajectory/trajectory-v1.html"
 
 _Inbound = tuple[str, Any]
@@ -49,9 +49,12 @@ class _CancellationState:
         self._outstanding_ids: set[Any] = set()
         self._cancelled_ids: set[Any] = set()
 
-    def register(self, request_id: Any) -> None:
+    def register(self, request_id: Any) -> bool:
         with self._lock:
+            if request_id in self._outstanding_ids:
+                return False
             self._outstanding_ids.add(request_id)
+            return True
 
     def cancel(self, request_id: Any) -> None:
         with self._lock:
@@ -104,7 +107,7 @@ def _validate_initialize_params(values: dict[str, Any]) -> str:
                 f"Initialize clientInfo.{field} must be a string.",
             )
     title = client_info.get("title")
-    if title is not None and not isinstance(title, str):
+    if "title" in client_info and not isinstance(title, str):
         raise JsonRpcError(-32602, "Initialize clientInfo.title must be a string.")
     return requested
 
@@ -121,11 +124,13 @@ def handle(method: str, params: Any) -> dict[str, Any]:
         )
         return {
             "protocolVersion": protocol,
-            "capabilities": {"tools": {}, "resources": {}},
+            "capabilities": {"tools": {}, "resources": {}, "prompts": {}},
             "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
         }
     if method == "ping":
         return {}
+    if method.endswith("/list") and "cursor" in values:
+        raise JsonRpcError(-32602, "This server has not issued a pagination cursor.")
     if method == "tools/list":
         return {"tools": tool_definitions()}
     if method == "tools/call":
@@ -137,7 +142,10 @@ def handle(method: str, params: Any) -> dict[str, Any]:
             raise JsonRpcError(-32602, "Unknown tool name.")
         if not isinstance(arguments, dict):
             raise JsonRpcError(-32602, "Tool arguments must be an object.")
-        return call_tool(name, arguments)
+        metadata = values.get("_meta")
+        if "_meta" in values and not isinstance(metadata, dict):
+            raise JsonRpcError(-32602, "Tool metadata must be an object.")
+        return call_tool(name, arguments, metadata=metadata)
     if method == "resources/list":
         return {
             "resources": [
@@ -194,8 +202,9 @@ def send(message: dict[str, Any]) -> None:
             encoded.extend(chunk_bytes)
     encoded.append(0x0A)
     try:
-        sys.stdout.buffer.write(encoded)
-        sys.stdout.buffer.flush()
+        with _WRITE_LOCK:
+            sys.stdout.buffer.write(encoded)
+            sys.stdout.buffer.flush()
     except BrokenPipeError as error:
         raise SystemExit(0) from error
 
@@ -246,7 +255,7 @@ def _cancelled_request_id(message: Any) -> tuple[bool, Any]:
     if not _valid_request_id(request_id):
         return False, None
     reason = params.get("reason")
-    if reason is not None and not isinstance(reason, str):
+    if "reason" in params and not isinstance(reason, str):
         return False, None
     return True, request_id
 
@@ -265,118 +274,133 @@ def _read_inbound() -> _Inbound | None:
         return "error", (-32700, "Parse error.")
 
 
-def _read_loop(inbox: queue.Queue[_Inbound | None], cancellations: _CancellationState) -> None:
+def _dispatch(message: dict[str, Any], cancellations: _CancellationState) -> bool:
+    """Dispatch one request; keep wire failures bounded and internal errors private."""
+    request_id = message["id"]
     try:
-        while True:
-            inbound = _read_inbound()
-            if inbound is None:
-                break
-            if inbound[0] == "message":
-                message = inbound[1]
-                is_cancellation, request_id = _cancelled_request_id(message)
-                if is_cancellation:
-                    cancellations.cancel(request_id)
-                    continue
-                if (
-                    isinstance(message, dict)
-                    and "id" in message
-                    and _valid_request_id(message.get("id"))
-                ):
-                    cancellations.register(message["id"])
-            inbox.put(inbound)
-    except Exception:
-        pass
+        if cancellations.consume(request_id):
+            return False
+        try:
+            result = handle(message["method"], message.get("params"))
+            response = {"jsonrpc": "2.0", "id": request_id, "result": result}
+        except JsonRpcError as error:
+            response = {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": {"code": error.code, "message": str(error)},
+            }
+        except Exception:
+            response = {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": {"code": -32603, "message": "Internal server error."},
+            }
+        if cancellations.consume(request_id):
+            return False
+        try:
+            send(response)
+        except _ResponseTooLarge:
+            _send_bounded_error(request_id, -32603, "Response exceeds the server size limit.")
+            return False
+        except (TypeError, ValueError, RecursionError):
+            _send_bounded_error(request_id, -32603, "Internal server error.")
+            return False
+        return "result" in response
     finally:
-        inbox.put(None)
+        cancellations.finish(request_id)
+
+
+def _work_loop(
+    inbox: queue.Queue[dict[str, Any] | None], cancellations: _CancellationState
+) -> None:
+    disconnected = False
+    while (message := inbox.get()) is not None:
+        if not disconnected:
+            try:
+                _dispatch(message, cancellations)
+            except SystemExit:
+                disconnected = True
 
 
 def main() -> None:
-    """Run the stdio MCP loop."""
-    # One queued message bounds read-ahead memory while still allowing the reader to
-    # observe a cancellation notification during a long-running request.
-    inbox: queue.Queue[_Inbound | None] = queue.Queue(maxsize=1)
+    """Read control traffic promptly; execute bounded queued business requests serially."""
+    inbox: queue.Queue[dict[str, Any] | None] = queue.Queue(maxsize=MAX_PENDING_REQUESTS)
     cancellations = _CancellationState()
-    reader = threading.Thread(
-        target=_read_loop,
+    worker = threading.Thread(
+        target=_work_loop,
         args=(inbox, cancellations),
-        name="codex-trajectory-mcp-reader",
+        name="codex-trajectory-mcp-worker",
         daemon=True,
     )
-    reader.start()
-    while True:
-        inbound = inbox.get()
-        if inbound is None:
-            break
-        if inbound[0] == "error":
-            code, message = inbound[1]
-            _send_bounded_error(None, code, message)
-            continue
-        message = inbound[1]
-        if not isinstance(message, dict):
-            _send_bounded_error(None, -32600, "Invalid Request.")
-            continue
-        has_request_id = "id" in message
-        request_id = message.get("id")
-        method = message.get("method")
-        valid_id = not has_request_id or _valid_request_id(request_id)
-        if (
-            message.get("jsonrpc") != "2.0"
-            or not valid_id
-            or not isinstance(method, str)
-            or not method
-            or len(method) > MAX_RPC_IDENTIFIER_LENGTH
-        ):
-            response_id = request_id if has_request_id and valid_id else None
-            _send_bounded_error(response_id, -32600, "Invalid Request.")
-            if has_request_id and valid_id:
-                cancellations.finish(request_id)
-            continue
-        if not has_request_id:
-            # JSON-RPC notifications never receive an error response and must not stop the server.
-            with suppress(Exception):
-                handle(method, message.get("params"))
-            continue
-        if cancellations.consume(request_id):
-            cancellations.finish(request_id)
-            continue
-        try:
-            try:
-                result = handle(method, message.get("params"))
-                response = {"jsonrpc": "2.0", "id": request_id, "result": result}
-            except JsonRpcError as error:
-                response = {
-                    "jsonrpc": "2.0",
-                    "id": request_id,
-                    "error": {"code": error.code, "message": str(error)},
-                }
-            except ValueError:
-                response = {
-                    "jsonrpc": "2.0",
-                    "id": request_id,
-                    "error": {"code": -32602, "message": "Invalid params."},
-                }
-            except Exception:  # Never expose local paths or implementation details on the wire.
-                response = {
-                    "jsonrpc": "2.0",
-                    "id": request_id,
-                    "error": {"code": -32603, "message": "Internal server error."},
-                }
-            if cancellations.consume(request_id):
+    worker.start()
+    phase = "new"
+    try:
+        while (inbound := _read_inbound()) is not None:
+            if inbound[0] == "error":
+                code, error_message = inbound[1]
+                _send_bounded_error(None, code, error_message)
+                continue
+            message = inbound[1]
+            if not isinstance(message, dict):
+                _send_bounded_error(None, -32600, "Invalid Request.")
+                continue
+            has_id = "id" in message
+            request_id = message.get("id")
+            method = message.get("method")
+            valid_id = not has_id or _valid_request_id(request_id)
+            if (
+                message.get("jsonrpc") != "2.0"
+                or not valid_id
+                or not isinstance(method, str)
+                or not method
+                or len(method) > MAX_RPC_IDENTIFIER_LENGTH
+            ):
+                _send_bounded_error(
+                    request_id if has_id and valid_id else None, -32600, "Invalid Request."
+                )
+                continue
+            valid_params = "params" not in message or isinstance(message["params"], dict)
+            if not has_id:
+                # Request-only methods must never execute as unconfirmable notifications.
+                if not valid_params:
+                    continue
+                if method == "notifications/initialized" and phase == "initializing":
+                    phase = "ready"
+                is_cancel, target = _cancelled_request_id(message)
+                if is_cancel and phase == "ready":
+                    cancellations.cancel(target)
+                continue
+            if not valid_params:
+                _send_bounded_error(request_id, -32602, "Request parameters must be an object.")
+                continue
+            if method == "initialize":
+                if phase != "new":
+                    _send_bounded_error(request_id, -32600, "Already initialized.")
+                elif _dispatch(message, cancellations):
+                    phase = "initializing"
+                continue
+            if method == "ping":
+                if cancellations.register(request_id):
+                    _dispatch(message, cancellations)
+                else:
+                    _send_bounded_error(request_id, -32600, "Request ID is already in flight.")
+                continue
+            if phase != "ready":
+                _send_bounded_error(request_id, -32002, "Server is not initialized.")
+                continue
+            if not cancellations.register(request_id):
+                _send_bounded_error(request_id, -32600, "Request ID is already in flight.")
                 continue
             try:
-                send(response)
-            except _ResponseTooLarge:
-                if not cancellations.consume(request_id):
-                    _send_bounded_error(
-                        request_id,
-                        -32603,
-                        "Response exceeds the server size limit.",
-                    )
-            except (TypeError, ValueError, RecursionError):
-                _send_bounded_error(request_id, -32603, "Internal server error.")
-        finally:
-            cancellations.finish(request_id)
-    reader.join()
+                inbox.put_nowait(message)
+            except queue.Full:
+                cancellations.finish(request_id)
+                _send_bounded_error(
+                    request_id, -32000, "Server request queue is full; retry later."
+                )
+    finally:
+        inbox.put(None)
+        worker.join()
 
 
 __all__ = ["handle", "main"]

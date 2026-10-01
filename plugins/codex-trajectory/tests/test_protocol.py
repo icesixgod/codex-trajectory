@@ -10,6 +10,7 @@ import sys
 import threading
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from codex_trajectory import __version__, projection, protocol
@@ -26,49 +27,48 @@ def initialize_params(protocol_version: str = "2025-06-18") -> dict[str, object]
     }
 
 
-def test_tool_definitions_scope_reads_and_private_cdp_setting() -> None:
-    tools = tool_definitions()
-    assert [tool["name"] for tool in tools] == [
+def initialization_lines() -> bytes:
+    return (
+        json.dumps(
+            {"jsonrpc": "2.0", "id": "init", "method": "initialize", "params": initialize_params()}
+        ).encode()
+        + b'\n{"jsonrpc":"2.0","method":"notifications/initialized"}\n'
+    )
+
+
+def test_tool_definitions_scope_reads_and_native_panel() -> None:
+    tools = {tool["name"]: tool for tool in tool_definitions()}
+    assert set(tools) == {
         "list_codex_sessions",
         "get_codex_trajectory",
         "show_codex_trajectory",
+        "open_codex_trajectory",
         "get_codex_trajectory_update",
-        "get_codex_toolbar_injection_status",
-        "set_codex_toolbar_injection",
-        "request_codex_task_stop",
-    ]
-    assert all(tool["annotations"]["readOnlyHint"] for tool in tools[:5])
-    assert tools[5]["annotations"] == {
-        "readOnlyHint": False,
-        "destructiveHint": False,
-        "idempotentHint": True,
-        "openWorldHint": False,
+        "get_codex_trajectory_preferences",
+        "set_codex_trajectory_preferences",
     }
-    assert tools[6]["annotations"] == {
-        "readOnlyHint": False,
-        "destructiveHint": True,
-        "idempotentHint": False,
-        "openWorldHint": False,
-    }
-    assert tools[1]["inputSchema"]["properties"]["detailLevel"]["default"] == "summary"
-    assert tools[1]["inputSchema"]["properties"]["beforeRecord"]["minimum"] == 1
-    assert tools[2]["_meta"]["ui"]["resourceUri"] == UI_URI
-    assert tools[3]["_meta"]["ui"]["visibility"] == ["app"]
-    assert tools[3]["_meta"]["openai/visibility"] == "private"
-    assert tools[3]["inputSchema"]["properties"]["revision"]["pattern"] == "^[0-9a-f]{64}$"
-    assert tools[4]["_meta"]["ui"]["visibility"] == ["app"]
-    assert tools[5]["_meta"]["openai/visibility"] == "private"
-    assert tools[5]["inputSchema"]["required"] == ["enabled"]
-    assert tools[5]["inputSchema"]["properties"]["reconcileOnly"]["default"] is False
-    assert tools[5]["inputSchema"]["allOf"][0]["then"]["required"] == ["port"]
-    assert tools[6]["_meta"]["ui"]["visibility"] == ["app"]
-    assert tools[6]["_meta"]["openai/visibility"] == "private"
-    assert tools[6]["inputSchema"]["required"] == [
-        "sessionId",
-        "source",
-        "threshold",
-        "language",
+    assert tools["list_codex_sessions"]["annotations"]["readOnlyHint"] is False
+    assert all(
+        tool["annotations"]["readOnlyHint"]
+        for name, tool in tools.items()
+        if name not in {"list_codex_sessions", "set_codex_trajectory_preferences"}
+    )
+    assert all(tool["annotations"]["destructiveHint"] is False for tool in tools.values())
+    assert (
+        tools["get_codex_trajectory"]["inputSchema"]["properties"]["detailLevel"]["default"]
+        == "summary"
+    )
+    assert (
+        tools["get_codex_trajectory"]["inputSchema"]["properties"]["beforeRecord"]["minimum"] == 1
+    )
+    assert tools["show_codex_trajectory"]["_meta"]["ui"]["resourceUri"] == UI_URI
+    assert tools["open_codex_trajectory"]["_meta"]["openai/ui"]["entrypoints"] == [
+        {"type": "thread"}
     ]
+    update = tools["get_codex_trajectory_update"]
+    assert update["_meta"]["ui"]["visibility"] == ["app"]
+    assert update["_meta"]["openai/visibility"] == "private"
+    assert update["inputSchema"]["properties"]["revision"]["pattern"] == "^[0-9a-f]{64}$"
 
 
 @pytest.mark.parametrize(
@@ -77,6 +77,7 @@ def test_tool_definitions_scope_reads_and_private_cdp_setting() -> None:
         ("list_codex_sessions", {"limit": 0}, "between 1 and 100"),
         ("list_codex_sessions", {"limit": True}, "integer"),
         ("list_codex_sessions", {"query": 1}, "string"),
+        ("list_codex_sessions", {"query": "x" * 501}, "500 characters"),
         ("list_codex_sessions", {"includeArchived": "yes"}, "boolean"),
         ("list_codex_sessions", {"extra": 1}, "Unknown argument"),
         ("get_codex_trajectory", {"maxRecords": 49}, "between 50 and 1000"),
@@ -93,79 +94,6 @@ def test_tool_definitions_scope_reads_and_private_cdp_setting() -> None:
         ("get_codex_trajectory_update", {"revision": "A" * 64}, "SHA-256"),
         ("get_codex_trajectory_update", {"includeArchived": 1}, "boolean"),
         ("get_codex_trajectory_update", {"extra": 1}, "Unknown argument"),
-        ("get_codex_toolbar_injection_status", {"extra": 1}, "Unknown argument"),
-        ("set_codex_toolbar_injection", {}, "enabled"),
-        ("set_codex_toolbar_injection", {"enabled": 1}, "boolean"),
-        ("set_codex_toolbar_injection", {"enabled": True, "port": True}, "integer"),
-        ("set_codex_toolbar_injection", {"enabled": True, "port": 1023}, "between"),
-        (
-            "set_codex_toolbar_injection",
-            {"enabled": True, "port": 9222, "reconcileOnly": "yes"},
-            "reconcileOnly",
-        ),
-        (
-            "set_codex_toolbar_injection",
-            {"enabled": True, "reconcileOnly": True},
-            "explicit expected port",
-        ),
-        (
-            "set_codex_toolbar_injection",
-            {"enabled": False, "port": 9222, "reconcileOnly": True},
-            "enabled=true",
-        ),
-        ("set_codex_toolbar_injection", {"enabled": False, "extra": 1}, "Unknown argument"),
-        (
-            "request_codex_task_stop",
-            {"source": "manual", "threshold": 10, "language": "en"},
-            "sessionId",
-        ),
-        (
-            "request_codex_task_stop",
-            {"sessionId": "../task", "source": "manual", "threshold": 10, "language": "en"},
-            "sessionId",
-        ),
-        (
-            "request_codex_task_stop",
-            {
-                "sessionId": "session-alpha",
-                "turnId": "bad/turn",
-                "source": "manual",
-                "threshold": 10,
-                "language": "en",
-            },
-            "turnId",
-        ),
-        (
-            "request_codex_task_stop",
-            {"sessionId": "session-alpha", "source": "later", "threshold": 10, "language": "en"},
-            "source",
-        ),
-        (
-            "request_codex_task_stop",
-            {"sessionId": "session-alpha", "source": "auto", "threshold": True, "language": "en"},
-            "integer",
-        ),
-        (
-            "request_codex_task_stop",
-            {"sessionId": "session-alpha", "source": "auto", "threshold": 101, "language": "en"},
-            "between",
-        ),
-        (
-            "request_codex_task_stop",
-            {"sessionId": "session-alpha", "source": "auto", "threshold": 10, "language": "fr"},
-            "language",
-        ),
-        (
-            "request_codex_task_stop",
-            {
-                "sessionId": "session-alpha",
-                "source": "auto",
-                "threshold": 10,
-                "language": "en",
-                "prompt": "stop",
-            },
-            "Unknown argument",
-        ),
         ("unknown", {}, "Unknown tool"),
     ],
 )
@@ -279,6 +207,7 @@ def test_protocol_methods_and_resource(codex_home: Path) -> None:
         "schemaVersion": 2,
         "unchanged": True,
         "revision": update["revision"],
+        "quota": update["quota"],
     }
     with pytest.raises(JsonRpcError, match="Resource not found") as unknown_resource:
         handle("resources/read", {"uri": "ui://unknown"})
@@ -345,118 +274,6 @@ def test_initialize_rejects_malformed_client_metadata(params: dict[str, object])
     assert invalid.value.code == -32602
 
 
-def test_private_cdp_toolbar_tools_report_and_update_status(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    current = {
-        "schemaVersion": 1,
-        "enabled": False,
-        "port": 9222,
-        "cdpAvailable": False,
-        "daemonRunning": False,
-        "connected": False,
-        "injected": False,
-        "viewerServing": False,
-        "lastError": None,
-    }
-    monkeypatch.setattr(projection, "cdp_toolbar_status", lambda: current)
-    configured: list[tuple[bool, int]] = []
-
-    def configure(enabled: bool, port: int) -> dict[str, object]:
-        configured.append((enabled, port))
-        return {**current, "enabled": enabled, "port": port}
-
-    monkeypatch.setattr(projection, "configure_cdp_toolbar", configure)
-    recovered: list[int] = []
-
-    def recover(port: int) -> dict[str, object]:
-        recovered.append(port)
-        return {**current, "enabled": True, "port": port}
-
-    monkeypatch.setattr(projection, "recover_cdp_toolbar", recover)
-    status = call_tool("get_codex_toolbar_injection_status", {})
-    assert status["structuredContent"] == current
-    assert recovered == []
-
-    changed = call_tool(
-        "set_codex_toolbar_injection",
-        {"enabled": True, "port": 9333},
-    )
-    assert configured == [(True, 9333)]
-    assert changed["structuredContent"]["enabled"] is True
-    assert changed["structuredContent"]["port"] == 9333
-    assert changed["content"][0]["text"].startswith("Enabled")
-
-    reconciled = call_tool(
-        "set_codex_toolbar_injection",
-        {"enabled": True, "port": 9444, "reconcileOnly": True},
-    )
-    assert recovered == [9444]
-    assert configured == [(True, 9333)]
-    assert reconciled["structuredContent"]["port"] == 9444
-    assert reconciled["content"][0]["text"].startswith("Reconciled")
-
-    def fail(_enabled: bool, _port: int) -> dict[str, object]:
-        raise OSError("private path")
-
-    monkeypatch.setattr(projection, "configure_cdp_toolbar", fail)
-    failed = call_tool("set_codex_toolbar_injection", {"enabled": False})
-    assert failed["isError"] is True
-    assert "private path" not in failed["content"][0]["text"]
-
-    monkeypatch.setattr(projection, "recover_cdp_toolbar", lambda _port: fail(False, 9222))
-    failed_recovery = call_tool(
-        "set_codex_toolbar_injection",
-        {"enabled": True, "port": 9222, "reconcileOnly": True},
-    )
-    assert failed_recovery["isError"] is True
-    assert "private path" not in failed_recovery["content"][0]["text"]
-
-
-def test_private_direct_stop_tool_returns_only_bounded_result(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    requests: list[dict[str, object]] = []
-
-    def stop(arguments: dict[str, object]) -> dict[str, object]:
-        requests.append(arguments)
-        return {"sent": True}
-
-    monkeypatch.setattr(projection, "request_direct_task_stop", stop)
-    result = call_tool(
-        "request_codex_task_stop",
-        {
-            "sessionId": "session-alpha",
-            "turnId": "turn-2",
-            "source": "auto",
-            "threshold": 9,
-            "language": "zh",
-        },
-    )
-    assert result["structuredContent"] == {"sent": True}
-    assert requests == [
-        {
-            "sessionId": "session-alpha",
-            "turnId": "turn-2",
-            "source": "auto",
-            "threshold": 9,
-            "language": "zh",
-        }
-    ]
-
-    monkeypatch.setattr(projection, "request_direct_task_stop", lambda _args: {"sent": False})
-    failed = call_tool(
-        "request_codex_task_stop",
-        {
-            "sessionId": "session-alpha",
-            "source": "manual",
-            "threshold": 10,
-            "language": "en",
-        },
-    )
-    assert failed["isError"] is True
-
-
 def test_live_update_reprojects_only_after_the_rollout_changes(codex_home: Path) -> None:
     first = call_tool(
         "get_codex_trajectory_update",
@@ -494,13 +311,13 @@ def test_live_update_reprojects_only_after_the_rollout_changes(codex_home: Path)
 def test_stdio_server_handshake_and_unicode(codex_home: Path) -> None:
     script = Path(__file__).parents[1] / "scripts" / "codex_trajectory_mcp.py"
     requests = [
-        {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
         {
             "jsonrpc": "2.0",
             "id": 1,
             "method": "initialize",
             "params": initialize_params(),
         },
+        {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
         {
             "jsonrpc": "2.0",
             "id": "二",
@@ -627,15 +444,18 @@ def test_stdio_preserves_escaped_lone_surrogate_ids(
 def test_stdio_sanitizes_value_and_internal_dispatch_failures(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    source = (
+    source = initialization_lines() + (
         b'{"jsonrpc":"2.0","id":1,"method":"value-error"}\n'
         b'{"jsonrpc":"2.0","id":2,"method":"internal-error"}\n'
         b'{"jsonrpc":"2.0","id":true,"method":"ping"}\n'
         b'{"jsonrpc":"2.0","id":{},"method":"ping"}\n'
     )
     output = io.BytesIO()
+    original_handle = protocol.handle
 
     def fail(method: str, params: object) -> dict[str, object]:
+        if method == "initialize":
+            return original_handle(method, params)
         if method == "value-error":
             raise ValueError("safe validation failure")
         raise RuntimeError("private implementation detail")
@@ -647,13 +467,14 @@ def test_stdio_sanitizes_value_and_internal_dispatch_failures(
     protocol.main()
 
     responses = [json.loads(line) for line in output.getvalue().splitlines()]
-    assert [response["error"]["code"] for response in responses] == [
-        -32602,
+    errors = [response for response in responses if "error" in response]
+    assert sorted(response["error"]["code"] for response in errors) == [
+        -32603,
         -32603,
         -32600,
         -32600,
     ]
-    assert responses[0]["error"]["message"] == "Invalid params."
+    assert next(r for r in errors if r["id"] == 1)["error"]["message"] == "Internal server error."
     assert "safe validation failure" not in output.getvalue().decode()
     assert "private implementation detail" not in output.getvalue().decode()
 
@@ -662,7 +483,7 @@ def test_stdio_bounds_oversized_responses_and_continues(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     oversized_id = "i" * 400
-    source = (
+    source = initialization_lines() + (
         b'{"jsonrpc":"2.0","id":1,"method":"large"}\n'
         + b'{"jsonrpc":"2.0","id":4,"method":"unicode-large"}\n'
         + b'{"jsonrpc":"2.0","id":5,"method":"nonfinite"}\n'
@@ -690,7 +511,10 @@ def test_stdio_bounds_oversized_responses_and_continues(
     protocol.main()
 
     wire_lines = output.getvalue().splitlines(keepends=True)
-    responses = [json.loads(line) for line in wire_lines]
+    by_id = {
+        value["id"]: value for line in wire_lines if (value := json.loads(line))["id"] != "init"
+    }
+    responses = [by_id[key] for key in (1, 4, 5, None, 2)]
     assert all(len(line) <= 256 for line in wire_lines)
     assert responses[0] == {
         "jsonrpc": "2.0",
@@ -731,6 +555,15 @@ def test_stdio_observes_midflight_cancellation_and_suppresses_the_response(
     release_request = threading.Event()
     active_cancellation_observed = threading.Event()
     queued_cancellation_observed = threading.Event()
+    ping_sent = threading.Event()
+    original_send = protocol.send
+
+    def observed_send(message: dict[str, Any]) -> None:
+        original_send(message)
+        if message.get("id") == 3:
+            ping_sent.set()
+
+    monkeypatch.setattr(protocol, "send", observed_send)
 
     class ControlledInput:
         def __init__(self) -> None:
@@ -758,6 +591,8 @@ def test_stdio_observes_midflight_cancellation_and_suppresses_the_response(
             if not release_request.wait(timeout=5):
                 raise RuntimeError("test request was not released")
             return {"completed": True}
+        if method == "queued":
+            return {}
         return original_handle(method, params)
 
     monkeypatch.setattr(protocol, "handle", blocking_handle)
@@ -773,9 +608,12 @@ def test_stdio_observes_midflight_cancellation_and_suppresses_the_response(
 
     server = threading.Thread(target=run_server)
     server.start()
+    for line in initialization_lines().splitlines(keepends=True):
+        controlled_input.lines.put(line)
     controlled_input.lines.put(b'{"jsonrpc":"2.0","id":1,"method":"slow"}\n')
     assert request_started.wait(timeout=2)
-    controlled_input.lines.put(b'{"jsonrpc":"2.0","id":2,"method":"ping"}\n')
+    controlled_input.lines.put(b'{"jsonrpc":"2.0","id":2,"method":"queued"}\n')
+    controlled_input.lines.put(b'{"jsonrpc":"2.0","id":4,"method":"queued"}\n')
     controlled_input.lines.put(
         b'{"jsonrpc":"2.0","method":"notifications/cancelled",'
         b'"params":{"requestId":1,"reason":"no longer needed"}}\n'
@@ -785,16 +623,22 @@ def test_stdio_observes_midflight_cancellation_and_suppresses_the_response(
         b'{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":2}}\n'
     )
     assert queued_cancellation_observed.wait(timeout=2)
+    controlled_input.lines.put(
+        b'{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":4}}\n'
+    )
     controlled_input.lines.put(b'{"jsonrpc":"2.0","id":3,"method":"ping"}\n')
+    assert ping_sent.wait(timeout=2), "Ping was blocked behind the slow business call"
     controlled_input.lines.put(b"")
     release_request.set()
     server.join(timeout=5)
 
     assert not server.is_alive()
     assert failures == []
-    assert [json.loads(line) for line in output.getvalue().splitlines()] == [
-        {"jsonrpc": "2.0", "id": 3, "result": {}}
-    ]
+    assert [
+        value
+        for line in output.getvalue().splitlines()
+        if (value := json.loads(line))["id"] != "init"
+    ] == [{"jsonrpc": "2.0", "id": 3, "result": {}}]
 
 
 def test_stdio_ignores_cancellation_for_a_future_request_id(
@@ -812,6 +656,71 @@ def test_stdio_ignores_cancellation_for_a_future_request_id(
     protocol.main()
 
     assert json.loads(output.getvalue()) == {"jsonrpc": "2.0", "id": 7, "result": {}}
+
+
+def test_full_business_queue_does_not_block_ping_or_cancellation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lines: queue.Queue[bytes] = queue.Queue()
+    started, release, ping = threading.Event(), threading.Event(), threading.Event()
+    output = io.BytesIO()
+    original_handle, original_send = protocol.handle, protocol.send
+    executed: list[str] = []
+
+    def handle(method: str, params: Any) -> dict[str, Any]:
+        if method == "slow":
+            started.set()
+            assert release.wait(timeout=5)
+            return {}
+        if method == "queued":
+            executed.append(method)
+            return {}
+        return original_handle(method, params)
+
+    def send(message: dict[str, Any]) -> None:
+        original_send(message)
+        if message.get("id") == 99:
+            ping.set()
+
+    monkeypatch.setattr(protocol, "MAX_PENDING_REQUESTS", 1)
+    monkeypatch.setattr(protocol, "handle", handle)
+    monkeypatch.setattr(protocol, "send", send)
+    monkeypatch.setattr(
+        protocol.sys,
+        "stdin",
+        SimpleNamespace(buffer=SimpleNamespace(readline=lambda _limit: lines.get(timeout=5))),
+    )
+    monkeypatch.setattr(protocol.sys, "stdout", SimpleNamespace(buffer=output))
+    worker = threading.Thread(target=protocol.main, daemon=True)
+    worker.start()
+    try:
+        for line in initialization_lines().splitlines(keepends=True):
+            lines.put(line)
+        lines.put(b'{"jsonrpc":"2.0","id":1,"method":"slow"}\n')
+        assert started.wait(timeout=2)
+        for request in (
+            {"id": 2, "method": "queued"},
+            {"id": 3, "method": "queued"},
+            {"id": 1, "method": "queued"},
+            {"method": "notifications/cancelled", "params": {"requestId": 1}},
+            {"method": "notifications/cancelled", "params": {"requestId": 2}},
+            {"id": 99, "method": "ping"},
+        ):
+            lines.put((json.dumps({"jsonrpc": "2.0", **request}) + "\n").encode())
+        assert ping.wait(timeout=2)
+    finally:
+        lines.put(b"")
+        release.set()
+        worker.join(timeout=5)
+    assert not worker.is_alive()
+    results = {
+        item["id"]: item for line in output.getvalue().splitlines() if (item := json.loads(line))
+    }
+    assert results[3]["error"]["code"] == -32000
+    assert results[1]["error"]["code"] == -32600
+    assert results[99]["result"] == {}
+    assert 2 not in results
+    assert executed == []
 
 
 def test_send_treats_a_broken_stdout_pipe_as_clean_shutdown(
