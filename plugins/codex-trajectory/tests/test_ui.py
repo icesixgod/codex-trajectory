@@ -109,6 +109,145 @@ def viewer(page: Page) -> FrameLocator:
     return page.frame_locator("#viewer")
 
 
+@pytest.mark.parametrize("width", [400, 600, 800, 1280])
+@pytest.mark.parametrize("locale", ["en", "zh"])
+def test_long_title_keeps_header_actions_reachable(
+    page: Page, harness_url: str, width: int, locale: str
+) -> None:
+    page.set_viewport_size({"width": width, "height": 900})
+    try:
+        page.goto(f"{harness_url}/{locale}")
+        frame = viewer(page)
+        expect(frame.locator("#refresh")).to_be_visible()
+        frame.locator(".topbar").evaluate(
+            """header => {
+              header.querySelector('h1').textContent = 'LongProjectName'.repeat(20);
+              header.querySelector('.subtitle').textContent = '/workspace/'.repeat(40);
+              const select = header.querySelector('select');
+              select.selectedOptions[0].textContent = 'LongSessionName'.repeat(20);
+            }"""
+        )
+        for selector in ("h1", ".subtitle", "#sessionSelect", "#openPip", "#refresh"):
+            assert frame.locator(selector).evaluate(
+                """element => {
+                  const r = element.getBoundingClientRect();
+                  const header = element.closest('.topbar').getBoundingClientRect();
+                  const x = (r.left + r.right) / 2, y = (r.top + r.bottom) / 2;
+                  return r.width > 0 && r.left >= header.left && r.right <= header.right
+                    && r.right <= innerWidth && r.top >= header.top && r.bottom <= header.bottom
+                    && element.contains(document.elementFromPoint(x, y));
+                }"""
+            ), selector
+        frame.locator("#openPip").click(trial=True)
+        frame.locator("#refresh").click(trial=True)
+    finally:
+        page.set_viewport_size({"width": 1280, "height": 900})
+
+
+@pytest.mark.parametrize(
+    "delivery",
+    [
+        "handshake",
+        "globals",
+        "initial",
+        "initial-rejected",
+        "notification",
+        "rejected",
+        "unsupported",
+    ],
+)
+def test_viewer_receives_initial_data_from_host(page: Page, delivery: str) -> None:
+    """Real hosts may wait for initialization or inject globals after page startup."""
+    page.set_content('<iframe id="viewer" sandbox="allow-scripts"></iframe>')
+    page.evaluate(
+        """({delivery, payload}) => {
+          window.startupMessages = [];
+          const viewer = document.getElementById('viewer');
+          const send = message => viewer.contentWindow.postMessage(message, '*');
+          const notify = () => send({jsonrpc: '2.0',
+            method: 'ui/notifications/tool-result', params: {structuredContent: payload}});
+          window.addEventListener('message', event => {
+            if (event.source !== viewer.contentWindow) return;
+            const message = event.data;
+            window.startupMessages.push(message);
+            if (message.method === 'ui/initialize') {
+              if (delivery === 'rejected' || delivery === 'initial-rejected') {
+                send({jsonrpc: '2.0', id: message.id,
+                  error: {code: -32601, message: 'Unsupported initialization'}});
+                return;
+              }
+              send({jsonrpc: '2.0', id: message.id, result: {
+                protocolVersion: delivery === 'unsupported' ? 'unknown' : '2026-01-26',
+                hostInfo: {name: 'test-host', version: '1'},
+                hostCapabilities: {}, hostContext: {theme: 'dark'}}});
+            } else if (message.method === 'ui/notifications/initialized') {
+              if (delivery === 'handshake') notify();
+            } else if (message.method === 'tools/call') {
+              send({jsonrpc: '2.0', id: message.id, result: {structuredContent: {}}});
+            }
+          });
+          if (delivery === 'notification') viewer.addEventListener('load', notify);
+        }""",
+        {"delivery": delivery, "payload": demo_trajectories()["session-alpha"]},
+    )
+    html = ui_html()
+    if delivery in {"initial", "initial-rejected"}:
+        payload = json.dumps(demo_trajectories()["session-alpha"]).replace("<", "\\u003c")
+        html = html.replace(
+            "<head>", f"<head><script>window.openai={{toolOutput:{payload}}}</script>"
+        )
+    page.locator("iframe").evaluate("(el, html) => el.srcdoc = html", html)
+    frame = page.frame_locator("iframe")
+    if delivery in {"rejected", "unsupported"}:
+        expect(frame.get_by_role("alert")).to_be_visible()
+        assert "ui/notifications/initialized" not in page.evaluate(
+            "startupMessages.map(message => message.method)"
+        )
+        # A legacy host can still deliver a result after rejecting the shared handshake.
+        page.evaluate(
+            """payload => document.querySelector('iframe').contentWindow.postMessage({
+              jsonrpc: '2.0', method: 'ui/notifications/tool-result',
+              params: {structuredContent: payload}}, '*')""",
+            demo_trajectories()["session-alpha"],
+        )
+    if delivery == "globals":
+        expect(frame.locator(".loading")).to_be_visible()
+        frame.locator("#app").evaluate(
+            """(el, payload) => window.dispatchEvent(new CustomEvent('openai:set_globals',
+              {detail: {globals: {toolOutput: payload}}}))""",
+            demo_trajectories()["session-alpha"],
+        )
+    expect(frame.locator("#sessionSelect")).to_be_visible(timeout=3000)
+    expect(frame.locator(".loading")).to_have_count(0)
+    expect(frame.get_by_role("alert")).to_have_count(0)
+    if delivery == "handshake":
+        messages = page.evaluate("startupMessages")
+        methods = [message.get("method") for message in messages]
+        assert methods[:2] == ["ui/initialize", "ui/notifications/initialized"]
+        assert methods.count("ui/initialize") == 1
+        assert messages[0]["params"]["protocolVersion"] == "2026-01-26"
+        assert messages[0]["params"]["appCapabilities"] == {}
+
+
+def test_viewer_initialization_timeout_recovers_when_data_arrives(page: Page) -> None:
+    with page.context.new_page() as isolated:
+        isolated.clock.install()
+        isolated.set_content('<iframe sandbox="allow-scripts"></iframe>')
+        isolated.locator("iframe").evaluate("(el, html) => el.srcdoc = html", ui_html())
+        frame = isolated.frame_locator("iframe")
+        expect(frame.locator(".loading")).to_be_visible()
+        isolated.clock.fast_forward(60_001)
+        expect(frame.get_by_role("alert")).to_be_visible()
+        isolated.evaluate(
+            """payload => document.querySelector('iframe').contentWindow.postMessage({
+              jsonrpc: '2.0', method: 'ui/notifications/tool-result',
+              params: {structuredContent: payload}}, '*')""",
+            demo_trajectories()["session-alpha"],
+        )
+        expect(frame.locator("#sessionSelect")).to_be_visible()
+        expect(frame.get_by_role("alert")).to_have_count(0)
+
+
 @pytest.fixture
 def timing_trajectory(tmp_path: Path) -> dict[str, Any]:
     """Project a synthetic log through the backend before checking its UI."""
@@ -1773,7 +1912,7 @@ def test_english_and_chinese_desktop_layout(page: Page, harness_url: str) -> Non
     content_columns = frame.locator(".content").evaluate(
         "element => getComputedStyle(element).gridTemplateColumns"
     )
-    assert "340px" in content_columns
+    assert "340px" not in content_columns
 
     page.goto(f"{harness_url}/zh")
     frame = viewer(page)
@@ -1826,7 +1965,7 @@ def test_english_and_chinese_desktop_layout(page: Page, harness_url: str) -> Non
     assert turn_columns.last.evaluate(
         "element => element.getBoundingClientRect().right"
     ) <= ledger_wrap.evaluate("element => element.getBoundingClientRect().right")
-    assert "340px" in frame.locator(".content").evaluate(
+    assert "340px" not in frame.locator(".content").evaluate(
         "element => getComputedStyle(element).gridTemplateColumns"
     )
 
@@ -2204,7 +2343,7 @@ def test_responsive_viewer_wraps_all_information_and_returns_to_record(
             """elements => elements.filter(element => element.getClientRects().length)
               .every(element => element.getBoundingClientRect().height >= 44)"""
         )
-        if width <= 1100:
+        if width <= 1380:
             expect(frame.locator("#inspector")).to_be_focused()
             frame.locator("#backToRecords").click()
             expect(record).to_be_focused()
@@ -2521,3 +2660,63 @@ def test_selector_locale_change_preserves_selector_and_updates_labels(
     expect(frame.locator("#retryOpen")).to_have_text("重试")
     expect(frame.locator("#sessionSelect")).to_have_attribute("aria-label", "选择任务")
     expect(frame.locator(".notice")).to_contain_text("本地任务")
+
+
+@pytest.mark.parametrize("width", [400, 600, 760, 1000, 1280, 1440])
+@pytest.mark.parametrize("scale", [1, 2])
+def test_readable_report_and_live_panel_at_desktop_widths(
+    page: Page, harness_url: str, width: int, scale: int
+) -> None:
+    """Small panels retain readable text, reachable controls and a usable event stream."""
+    browser = page.context.browser
+    assert browser is not None
+    context = browser.new_context(
+        viewport={"width": width, "height": 700}, device_scale_factor=scale
+    )
+    try:
+        probe = context.new_page()
+        probe.goto(f"{harness_url}/en-dock")
+        frame = viewer(probe)
+        frame.locator("tr.record").first.wait_for()
+        assert frame.locator("body").evaluate("e => parseFloat(getComputedStyle(e).fontSize) >= 15")
+        for selector in (".stat-label", "th", ".token-metric-label"):
+            assert frame.locator(selector).first.evaluate(
+                "e => parseFloat(getComputedStyle(e).fontSize) >= 12"
+            )
+        for selector in ("#refresh", "#openPip", "#loadFull"):
+            assert frame.locator(selector).evaluate(
+                "e => {const r=e.getBoundingClientRect(); "
+                "return r.left >= 0 && r.right <= innerWidth;}"
+            )
+        assert frame.locator("body").evaluate("e => e.scrollWidth <= innerWidth")
+        assert frame.locator(".ledger-wrap").evaluate("e => e.scrollWidth <= e.clientWidth")
+        if width <= 1380:
+            assert frame.locator("#inspector").evaluate(
+                "e => e.getBoundingClientRect().top >= "
+                "document.querySelector('.ledger-wrap').getBoundingClientRect().bottom - 1"
+            )
+        if width >= 1440:
+            assert "340px" in frame.locator(".content").evaluate(
+                "e => getComputedStyle(e).gridTemplateColumns"
+            )
+        frame.locator("#openPip").click()
+        frame.locator(".dock-record").first.wait_for()
+        for selector in (
+            ".dock-record-event",
+            ".dock-record-summary",
+            ".dock-token-label",
+            ".dock-quota-window span",
+        ):
+            assert frame.locator(selector).first.evaluate(
+                "e => parseFloat(getComputedStyle(e).fontSize) >= 12"
+            )
+        assert frame.locator("#liveRecordStream").evaluate(
+            "e => e.clientHeight >= 150 && e.scrollWidth <= e.clientWidth"
+        )
+        for selector in ("#closeDock", ".dock-quota"):
+            assert frame.locator(selector).evaluate(
+                "e => {const r=e.getBoundingClientRect(); "
+                "return r.left >= 0 && r.right <= innerWidth;}"
+            )
+    finally:
+        context.close()

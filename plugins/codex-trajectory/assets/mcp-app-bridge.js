@@ -99,11 +99,16 @@
           if (window.openai.toolOutput) onResult({ structuredContent: window.openai.toolOutput });
           return;
         }
+        const initial = window.openai?.toolOutput;
+        if (initial) onResult({ structuredContent: initial });
         const result = await request("ui/initialize", {
           protocolVersion: PROTOCOL_VERSION,
           appInfo: { name: "Codex Trajectory", version: "__TRAJECTORY_VERSION__" },
           appCapabilities: {},
         });
+        if (result?.protocolVersion !== PROTOCOL_VERSION) {
+          throw new Error("Unsupported viewer protocol version.");
+        }
         updateContext(result?.hostContext || {});
         notify("ui/notifications/initialized");
       }).catch(error => {

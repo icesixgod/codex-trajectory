@@ -26,7 +26,11 @@ Native registration follows [OpenAI's extension documentation](https://developer
 
 Legacy hosts can supply `window.openai.toolOutput` before viewer startup. The viewer initializes once and reads preferences once for that initial result, including when full details were previously enabled.
 
+Preloaded results also render when the host omits the legacy `callTool` interface. Native initialization validates the negotiated MCP Apps version; failed or unsupported handshakes leave an already rendered trajectory visible, and delayed results can recover an initial loading error.
+
 旧宿主可以在页面启动前提供 `window.openai.toolOutput`。查看器只初始化一次，并为该初始结果读取一次偏好；此前已启用全文详情时也遵循这一行为。
+
+宿主未提供旧版 `callTool` 接口时，预先提供的结果同样可以显示。原生初始化校验协商后的 MCP Apps 版本；握手失败或版本不受支持时保留已经显示的轨迹，延迟到达的结果可以恢复初始加载错误。
 
 ## Local verification
 
