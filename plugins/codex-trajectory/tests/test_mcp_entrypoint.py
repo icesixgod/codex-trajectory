@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import codex_trajectory_mcp
 import pytest
@@ -33,7 +34,10 @@ def test_mcp_starts_optional_initialization_before_serving(
     monkeypatch.setattr(
         codex_trajectory_mcp,
         "_start_background_initialization",
-        lambda: calls.append("initialize"),
+        lambda: (
+            calls.append("initialize"),
+            SimpleNamespace(join=lambda: calls.append("join")),
+        )[1],
     )
     monkeypatch.setattr(
         codex_trajectory_mcp,
@@ -43,7 +47,26 @@ def test_mcp_starts_optional_initialization_before_serving(
 
     codex_trajectory_mcp.main()
 
-    assert calls == ["initialize", "serve"]
+    assert calls == ["initialize", "serve", "join"]
+
+
+def test_mcp_joins_initialization_when_protocol_exits_with_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    joined: list[bool] = []
+    monkeypatch.setattr(
+        codex_trajectory_mcp,
+        "_start_background_initialization",
+        lambda: SimpleNamespace(join=lambda: joined.append(True)),
+    )
+
+    def fail() -> None:
+        raise RuntimeError("disconnected")
+
+    monkeypatch.setattr(codex_trajectory_mcp, "protocol_main", fail)
+    with pytest.raises(RuntimeError, match="disconnected"):
+        codex_trajectory_mcp.main()
+    assert joined == [True]
 
 
 def test_background_initialization_only_prewarms(monkeypatch: pytest.MonkeyPatch) -> None:
