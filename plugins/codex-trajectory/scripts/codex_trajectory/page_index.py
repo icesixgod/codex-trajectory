@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import tempfile
+import weakref
 from collections.abc import Iterator
 from copy import deepcopy
 from pathlib import Path
@@ -40,6 +41,9 @@ class PageIndex:
                 self.db.close()
             self.directory.cleanup()
             raise
+        # Register after TemporaryDirectory's finalizer so SQLite closes first
+        # during weakref shutdown, when Windows still locks the database file.
+        self._finalizer = weakref.finalize(self, self._cleanup, self.db, self.directory)
         self.current_event = 0
         self.pending: dict[int, dict[str, Any]] = {}
         self.template: dict[str, Any] = {}
@@ -50,9 +54,15 @@ class PageIndex:
     def size(self) -> int:
         return self.path.stat().st_size
 
+    @staticmethod
+    def _cleanup(db: sqlite3.Connection, directory: tempfile.TemporaryDirectory[str]) -> None:
+        try:
+            db.close()
+        finally:
+            directory.cleanup()
+
     def close(self) -> None:
-        self.db.close()
-        self.directory.cleanup()
+        self._finalizer()
 
     def enter_event(self, event: int, line: int) -> None:
         if not self.enabled:

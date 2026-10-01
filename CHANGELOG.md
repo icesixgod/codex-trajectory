@@ -29,6 +29,7 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ### Fixed
 
+- Close temporary SQLite page indexes before directory finalizers run at process exit, preventing Windows file-lock cleanup errors; keep repeated explicit cleanup safe.
 - Format full-detail JSON incrementally within the 12,000-character budget, including escaped strings and object keys, instead of building complete indented output before truncation. Stop at the budget without counting omitted characters and keep non-JSON fallbacks bounded; add allocation regressions and a full-tool-read check for deeply nested, wide records.
 - Prevent recursive viewer initialization and repeated preference reads when a legacy host supplies its initial tool output before startup.
 - Report oversized local tasks with their byte counts instead of treating them as missing, and allow ten minutes for explicitly enabled large-log viewer requests.

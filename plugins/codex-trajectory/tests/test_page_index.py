@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -145,10 +148,35 @@ def test_index_invalidation_and_permissions(codex_home: Path) -> None:
     assert changed["stats"]["records"] == initial["stats"]["records"] + 1
     assert changed["records"][-1]["summary"] == "new message"
     index = next(reversed(projection._PAGE_INDEXES.values()))
-    assert index.path.parent.stat().st_mode & 0o077 == 0
+    if os.name == "posix":
+        assert index.path.parent.stat().st_mode & 0o077 == 0
     directory = index.path.parent
     projection._close_page_indexes()
     assert not directory.exists()
+
+
+@pytest.mark.parametrize("explicit_close", [False, True])
+def test_index_shutdown_closes_database_before_removing_directory(explicit_close: bool) -> None:
+    scripts = Path(projection.__file__).resolve().parent.parent
+    code = (
+        "from codex_trajectory import projection\n"
+        "from codex_trajectory.page_index import PageIndex\n"
+        "index = PageIndex()\n"
+        "projection._PAGE_INDEXES[0] = index\n"
+        "print(index.directory.name, flush=True)\n"
+    )
+    if explicit_close:
+        code += "index.close()\nindex.close()\n"
+    result = subprocess.run(
+        [sys.executable, "-W", "error::ResourceWarning", "-c", code],
+        env={**os.environ, "PYTHONPATH": str(scripts)},
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == ""
+    assert not Path(result.stdout.strip()).exists()
 
 
 def test_index_size_cap_falls_back_without_leaking_tempfiles(

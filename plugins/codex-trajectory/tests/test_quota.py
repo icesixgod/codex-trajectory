@@ -202,5 +202,6 @@ def test_cached_quota_is_invalidated_when_source_is_not_appended(
         path.write_text("{}\n", encoding="utf-8")
     else:
         size = path.stat().st_size
-        path.write_text(" " * (size - 1) + "\n", encoding="utf-8")
+        path.write_bytes(b" " * (size - 1) + b"\n")
+        assert path.stat().st_size == size
     assert projection.latest_account_quota() == {"rateLimits": None, "sampledAt": None}
