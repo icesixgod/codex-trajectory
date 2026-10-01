@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
 import os
 import re
 import stat
+import threading
 import time
 from collections import OrderedDict
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
+from .filesystem import is_link_or_reparse_point, linked_state_path
 from .json_support import strict_json_loads
 from .sessions import codex_home
 
@@ -22,6 +25,7 @@ MAX_INDEX_ENTRIES = 10_000
 MAX_INDEX_LINEAGE_SEGMENTS = 1_024
 MAX_STAT_VALUE = 2**63 - 1
 _HASH_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+_INDEX_WRITE_LOCK = threading.Lock()
 
 SessionSignature = tuple[tuple[str, int, int, int], ...]
 
@@ -84,7 +88,7 @@ def _valid_entry(value: Any) -> bool:
 
 def _read_bounded_regular(path: Path) -> bytes | None:
     """Read one single-link regular index file without following links."""
-    if path.parent.is_symlink():
+    if linked_state_path(path.parent):
         return None
     try:
         expected = path.lstat()
@@ -92,6 +96,7 @@ def _read_bounded_regular(path: Path) -> bytes | None:
         return None
     if (
         not stat.S_ISREG(expected.st_mode)
+        or is_link_or_reparse_point(expected)
         or expected.st_nlink != 1
         or expected.st_size > MAX_INDEX_BYTES
     ):
@@ -163,15 +168,20 @@ def _atomic_write(path: Path, entries: OrderedDict[str, dict[str, Any]]) -> None
         existing = path.lstat()
     except FileNotFoundError:
         existing = None
-    if directory.is_symlink() or (
-        existing is not None and (not stat.S_ISREG(existing.st_mode) or existing.st_nlink != 1)
+    if linked_state_path(directory) or (
+        existing is not None
+        and (
+            is_link_or_reparse_point(existing)
+            or not stat.S_ISREG(existing.st_mode)
+            or existing.st_nlink != 1
+        )
     ):
         raise OSError("Refusing to replace a linked or non-regular session index.")
     while True:
         value = {"schemaVersion": INDEX_VERSION, "entries": entries}
         encoded = json.dumps(
             value,
-            ensure_ascii=False,
+            ensure_ascii=True,
             allow_nan=False,
             separators=(",", ":"),
         ).encode("utf-8")
@@ -203,6 +213,7 @@ class SessionSearchIndex:
         self._path = search_index_path()
         self._entries = _read_entries(self._path)
         self._dirty = False
+        self._touched: OrderedDict[str, dict[str, Any]] = OrderedDict()
 
     def lookup(self, path: Path, signature: SessionSignature) -> dict[str, Any] | None:
         """Return fields only when the complete lineage signature still matches."""
@@ -211,6 +222,9 @@ class SessionSearchIndex:
         if entry is None or entry.get("signature") != _stored_signature(signature):
             return None
         self._entries.move_to_end(key)
+        self._dirty = True
+        self._touched[key] = entry
+        self._touched.move_to_end(key)
         return {
             "id": entry["id"],
             "title": entry["title"],
@@ -233,6 +247,9 @@ class SessionSearchIndex:
             self._entries[key] = entry
             self._dirty = True
         self._entries.move_to_end(key)
+        self._touched[key] = entry
+        self._touched.move_to_end(key)
+        self._dirty = True
         while len(self._entries) > MAX_INDEX_ENTRIES:
             self._entries.popitem(last=False)
             self._dirty = True
@@ -242,7 +259,48 @@ class SessionSearchIndex:
         if not self._dirty:
             return
         try:
-            _atomic_write(self._path, self._entries)
-        except OSError:
+            self._path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            lock_path = self._path.with_suffix(".lock")
+            if linked_state_path(lock_path.parent) or linked_state_path(lock_path):
+                return
+            flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+            with _INDEX_WRITE_LOCK, os.fdopen(os.open(lock_path, flags, 0o600), "r+b") as lock:
+                state = os.fstat(lock.fileno())
+                linked = lock_path.lstat()
+                if (
+                    not stat.S_ISREG(state.st_mode)
+                    or state.st_nlink != 1
+                    or is_link_or_reparse_point(linked)
+                    or (state.st_dev, state.st_ino) != (linked.st_dev, linked.st_ino)
+                ):
+                    return
+                if os.name == "nt":
+                    module = importlib.import_module("msvcrt")
+                    if state.st_size == 0:
+                        lock.write(b"0")
+                        lock.flush()
+                    lock.seek(0)
+                    module.locking(lock.fileno(), module.LK_NBLCK, 1)
+                else:
+                    module = importlib.import_module("fcntl")
+                    module.flock(lock.fileno(), module.LOCK_EX | module.LOCK_NB)
+                # Merge only touched entries, not a stale whole-file snapshot.
+                merged = _read_entries(self._path)
+                for key, entry in self._touched.items():
+                    current = merged.get(key)
+                    if (
+                        current is None
+                        or current["signature"] == entry["signature"]
+                        or max(part[1] for part in current["signature"])
+                        <= max(part[1] for part in entry["signature"])
+                    ):
+                        merged[key] = entry
+                        merged.move_to_end(key)
+                while len(merged) > MAX_INDEX_ENTRIES:
+                    merged.popitem(last=False)
+                _atomic_write(self._path, merged)
+                self._entries = merged
+        except (OSError, ValueError, TypeError):
             return
         self._dirty = False
+        self._touched.clear()

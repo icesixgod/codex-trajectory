@@ -4,33 +4,34 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from typing import Any
 
 MAX_JSON_INTEGER_DIGITS = 256
 MAX_JSON_NESTING_DEPTH = 256
 
 
+# Search structural characters in native code, then use the native JSON string
+# scanner to skip opaque bodies. This stays linear even for huge escaped or
+# malformed strings, without a Python iteration or regex backtracking per byte.
+_JSON_STRUCTURE = re.compile(r'["\[\]{}]')
+_SCAN_JSON_STRING = json.decoder.scanstring  # type: ignore[attr-defined]
+
+
 def _validate_json_nesting(value: str) -> None:
-    """Reject excessive container nesting independently of Python's recursion limit."""
+    """Bound container depth while skipping strings with the JSON scanner."""
     depth = 0
-    in_string = False
-    escaped = False
-    for character in value:
-        if in_string:
-            if escaped:
-                escaped = False
-            elif character == "\\":
-                escaped = True
-            elif character == '"':
-                in_string = False
-            continue
-        if character == '"':
-            in_string = True
-        elif character in "[{":
+    position = 0
+    while match := _JSON_STRUCTURE.search(value, position):
+        token = match.group()
+        position = match.end()
+        if token == '"':
+            _, position = _SCAN_JSON_STRING(value, position, True)
+        elif token in "[{":
             depth += 1
             if depth > MAX_JSON_NESTING_DEPTH:
                 raise ValueError("JSON nesting exceeds the supported depth limit")
-        elif character in "]}":
+        elif token in "]}":
             depth -= 1
 
 

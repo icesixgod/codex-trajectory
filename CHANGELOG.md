@@ -4,6 +4,41 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-02
+
+### Added
+
+- Remember the viewer's full-detail opt-in across tasks, panel reopening, and restarts through a local boolean preference. Offer a checked confirmation option for future tasks, a panel-only alternative, and a button to restore safe-summary defaults; preserve public tool and live-view summary defaults.
+- Let users raise an oversized task's read budget from its error page, with a size-based GB suggestion and task-local enable/retry action. Preserve that panel's choice across refresh, pagination, full details, and live updates; keep the 512 MiB default for other tasks and allow explicit budgets up to 64 GB.
+- Open the calling task from Codex's native conversation side panel through an app-only MCP entrypoint. Validate per-request task metadata and show a selector when caller identity or local history is unavailable.
+- Support the standard MCP Apps initialization, host-context, theme, locale, display-mode, and teardown protocol alongside the legacy host bridge.
+
+### Removed
+
+- Retire manual stop and quota-triggered automatic stop. Remove CDP transports, toolbar injection, watcher recovery, loopback browser wrappers, their app-only tools, and obsolete platform canaries.
+
+### Changed
+
+- Load viewer details on demand after a record click, sharing pending page reads and caching at most 5 MiB. Keep opening, refresh, task switches, and history pagination in summary mode even with remembered consent; skip formatting hidden inputs and outputs in summary projections. Public full-detail reads and frozen schemas remain unchanged.
+- Show saved analysis text directly in multiline previews and opted-in longer summaries directly in the inspector across all projects. For unavailable summaries, directly show numbered neighboring events as context or a dash, and keep the missing-summary notice in hover and details instead of prefixing every preview. Respect turn boundaries, missing indexes, and the live view's safe tail. Keep schemas and privacy defaults unchanged.
+- Refresh the standard API token-price snapshot on 2026-10-01 to cover GPT-6.1 Sol, GPT-6 Astra, GPT-6 Sol, and GPT-6 Luna, preserving their separately published cache-read prices.
+- Separate the MCP tool catalog from rollout projection and share filesystem safety checks independently of the retired integration. Preserve public tool defaults, frozen schemas, live usage/cost/quota display, and the portable windowless launcher.
+
+- Restrict the viewer, acceptance coverage, and packaged screenshots to supported Codex desktop surfaces.
+- Default trajectory reads to active tasks, require an explicit task ID for full-detail access, and document the private search index's writes and title sensitivity in the plugin and bundled skill.
+
+### Fixed
+
+- Finish background cache initialization and close temporary SQLite page indexes before directory finalizers run at process exit, preventing shutdown races and Windows file-lock cleanup errors; keep repeated explicit cleanup safe.
+- Format full-detail JSON incrementally within the 12,000-character budget, including escaped strings and object keys, instead of building complete indented output before truncation. Stop at the budget without counting omitted characters and keep non-JSON fallbacks bounded; add allocation regressions and a full-tool-read check for deeply nested, wide records.
+- Prevent recursive viewer initialization and repeated preference reads when a legacy host supplies its initial tool output before startup.
+- Report oversized local tasks with their byte counts instead of treating them as missing, and allow ten minutes for explicitly enabled large-log viewer requests.
+- Show unconfirmed timing as `-` across every viewer surface. Leave zero, sub-millisecond, missing, and invalid durations unknown; prevent explicit unconfirmed completion timing from being replaced by other timestamps. Keep terminal-only tools, orphan results, and completion-only turns untimed, and leave aggregate duration unknown when a loaded turn has no confirmed timing.
+- Correct compressed-rollout metadata search, lineage scan budgets, exact task identity precedence, concurrent index merging, cumulative Token deltas, and late tool-result timing. Bound projection caches, response pages, and browser history without breaking pagination.
+- Keep MCP control traffic responsive under slow or saturated business requests, enforce initialization and notification semantics, sanitize provider failures, and recover browser loading errors with bounded requests and retry controls.
+- Fix large-timeline rendering, narrow-screen layout, session-selection recovery, and live-scroll anchoring; add regression and browser coverage without replacing end-to-end assertions with dispatch-only checks.
+- Rebuild the Windows launcher from its corrected C source with a pinned reproducible toolchain, freeze both published schema hashes, run extracted archive smoke tests with declared dependencies, and verify installed candidates through their declared MCP entrypoint.
+
 ## [0.4.1] - 2026-09-20
 
 ### Fixed
@@ -162,4 +197,5 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 [0.3.2]: https://github.com/icesixgod/codex-trajectory/compare/v0.3.1...v0.3.2
 [0.4.0]: https://github.com/icesixgod/codex-trajectory/compare/v0.3.2...v0.4.0
 [0.4.1]: https://github.com/icesixgod/codex-trajectory/compare/v0.4.0...v0.4.1
-[Unreleased]: https://github.com/icesixgod/codex-trajectory/compare/v0.4.1...HEAD
+[1.0.0]: https://github.com/icesixgod/codex-trajectory/compare/v0.4.1...v1.0.0
+[Unreleased]: https://github.com/icesixgod/codex-trajectory/compare/v1.0.0...HEAD

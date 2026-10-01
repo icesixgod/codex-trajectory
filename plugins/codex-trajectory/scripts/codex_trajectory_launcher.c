@@ -6,6 +6,9 @@
  * Build from an x64 Visual Studio developer shell:
  *   cl /nologo /O1 /GS- /c codex_trajectory_launcher.c /Fo:launcher.obj
  *   link /nologo /Brepro /MACHINE:X64 /SUBSYSTEM:WINDOWS /NODEFAULTLIB /ENTRY:launch /OPT:REF /OPT:ICF /OUT:codex_trajectory_launcher.exe launcher.obj kernel32.lib
+ * The packaged reproducible cross-build uses pinned Zig 0.14.1:
+ *   uv run --no-project --script scripts/build_windows_launcher.py
+ * Verify source/binary parity with the same command plus --check.
  */
 
 #define LAUNCHER_PATH_LIMIT 32768
@@ -51,12 +54,13 @@ static DWORD find_uv_launcher(const WCHAR *search_path, WCHAR *target, DWORD cap
     if (length == 0 || length >= capacity) {
         length = SearchPathW(search_path, L"uv.exe", NULL, capacity, target, NULL);
     }
-    return length;
+    return length < capacity ? length : 0;
 }
 
 void WINAPI launch(void) {
     HANDLE heap = GetProcessHeap();
     DWORD path_size = GetEnvironmentVariableW(L"PATH", NULL, 0);
+    DWORD path_length;
     WCHAR *search_path;
     WCHAR *target;
     WCHAR *child_command;
@@ -77,7 +81,8 @@ void WINAPI launch(void) {
     if (search_path == NULL || target == NULL) {
         ExitProcess(126);
     }
-    if (GetEnvironmentVariableW(L"PATH", search_path, path_size) == 0 ||
+    path_length = GetEnvironmentVariableW(L"PATH", search_path, path_size);
+    if (path_length == 0 || path_length >= path_size ||
         find_uv_launcher(search_path, target, LAUNCHER_PATH_LIMIT) == 0) {
         ExitProcess(127);
     }

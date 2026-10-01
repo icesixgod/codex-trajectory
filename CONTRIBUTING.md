@@ -14,10 +14,10 @@ uv run mypy
 uv run mypy --no-incremental --platform win32
 uv run pytest --cov --cov-report=term-missing
 uv run python scripts/validate_release.py
-uv run python scripts/smoke_mcp.py
+uv run --no-project --script scripts/smoke_mcp.py
 ```
 
-`smoke_mcp.py` executes the command declared by the packaged `.mcp.json`; do not replace it with a hand-built equivalent command. The relative launcher executes `uv` directly on Unix. On Windows, the smoke verifies the reviewed binary hash, rejects a console-subsystem launcher, and exercises its inherited stdio path end to end. Rebuild `codex_trajectory_launcher.exe` only from its adjacent C source using the documented Visual Studio x64 commands; the `/Brepro` link makes repeated builds deterministic with the same toolchain. The default coverage run measures Python only, so the CI gates `browser_view.py`, `cdp_peer.py`, `cdp_settings.py`, the CDP transport, and the MCP entry point separately instead of relying only on the project-wide percentage.
+`smoke_mcp.py` executes the command declared by the packaged `.mcp.json`; do not replace it with a hand-built equivalent command. The relative launcher executes `uv` directly on Unix. On Windows, the smoke verifies the reviewed binary hash, rejects a console-subsystem launcher, and exercises its inherited stdio path end to end. Rebuild `codex_trajectory_launcher.exe` only from its adjacent C source. The packaged binary uses the pinned Zig 0.14.1 cross-toolchain: run `uv run --no-project --script scripts/build_windows_launcher.py`, then repeat with `--check` to verify byte equality. CI runs the parity check. Update the reviewed SHA-256 in both release validation and the stdio smoke after reviewing a new binary. The source also documents an alternative Visual Studio x64 build; do not expect different toolchains to emit identical bytes. Native Windows stdio smoke remains required before a Windows release. Focused coverage gates protect the parser modules, native task-context layer, tool dispatcher, and MCP entry point.
 
 Browser acceptance tests are opt-in locally:
 
@@ -25,15 +25,8 @@ Browser acceptance tests are opt-in locally:
 RUN_UI_TESTS=1 uv run pytest -m ui -q
 ```
 
-CI runs the full browser suite on Linux and the focused CDP browser transport on Windows. Before a Windows release that changes launcher, watcher, peer authentication, or injection behavior, install the candidate plugin, start Codex with loopback CDP enabled, open this repository as a Codex task, and run the installed-app canary from that task:
+CI runs the browser suite on Linux and the native panel tests on Windows. Local tests emulate both the standard MCP Apps handshake and the legacy host bridge; they exercise actual rendering, pagination, live refresh, theme/locale changes, task selection, and teardown. For an installed candidate, run the same packaged stdio smoke with `--plugin-root` and optionally `--local-session` to check an exact real local task. See [native migration and local testing](docs/native-viewer.md).
 
-```powershell
-$env:RUN_WINDOWS_CODEX_CANARY = '1'
-uv run python scripts/smoke_windows_codex.py
-```
-
-The canary requires the optional shortcut to be enabled and verifies the outer `ChatGPT.exe` identity, live watcher state, authenticated CDP connection, and a visible session-ready shortcut in the real Codex DOM. It is intentionally not run on GitHub-hosted workers because they do not contain the packaged Codex desktop app.
-
-Behavior changes need focused tests and corresponding English and Chinese documentation updates. Changes to session storage must cover plain and compressed rollouts on Python 3.10 and 3.14; CDP changes must cover disabled, cleanup-only, absolute-deadline, the real packaged Windows process-tree shape, and the installed-app canary when applicable. Never commit real Codex task logs, credentials, base instructions, encrypted reasoning, or unredacted screenshots.
+Behavior changes need focused tests and corresponding English and Chinese documentation updates. Changes to session storage must cover plain and compressed rollouts on Python 3.10 and 3.14; native-entry changes must cover exact caller identity, absent/conflicting context, task isolation, host lifecycle, and supported-client integration. Never commit real Codex task logs, credentials, base instructions, encrypted reasoning, or unredacted screenshots.
 
 Use conventional, imperative commit subjects. Pull requests should explain the user-visible behavior, privacy impact, and validation performed.

@@ -194,7 +194,7 @@ def test_windows_mcp_launcher_falls_back_to_no_window_uv(tmp_path: Path) -> None
 @pytest.mark.parametrize(
     "runtime_module",
     [
-        "plugins/codex-trajectory/scripts/codex_trajectory/browser_view.py",
+        "plugins/codex-trajectory/scripts/codex_trajectory/native_view.py",
         "plugins/codex-trajectory/scripts/codex_trajectory/pricing.py",
     ],
 )
@@ -439,18 +439,25 @@ def test_release_versions_include_lockfile_and_issue_template(
         validate_release.validate_versions("0.4.0")
 
 
-def test_published_v1_schema_is_byte_for_byte_frozen(
+@pytest.mark.parametrize("version", [1, 2])
+def test_published_schemas_are_byte_for_byte_frozen(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    version: int,
 ) -> None:
-    source = validate_release.ROOT / "schemas" / "trajectory-v1.schema.json"
-    schema = tmp_path / "schemas" / "trajectory-v1.schema.json"
+    source = validate_release.ROOT / "schemas" / f"trajectory-v{version}.schema.json"
+    schema = tmp_path / "schemas" / f"trajectory-v{version}.schema.json"
     schema.parent.mkdir(parents=True)
+    for other in (1, 2):
+        (schema.parent / f"trajectory-v{other}.schema.json").write_bytes(
+            (validate_release.ROOT / "schemas" / f"trajectory-v{other}.schema.json").read_bytes()
+        )
     schema.write_bytes(source.read_bytes())
     monkeypatch.setattr(validate_release, "ROOT", tmp_path)
 
     assert (
-        hashlib.sha256(schema.read_bytes()).hexdigest() == validate_release.FROZEN_SCHEMA_SHA256[1]
+        hashlib.sha256(schema.read_bytes()).hexdigest()
+        == validate_release.FROZEN_SCHEMA_SHA256[version]
     )
 
     schema.write_bytes(schema.read_bytes() + b"\n")

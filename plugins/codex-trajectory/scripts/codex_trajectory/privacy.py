@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import re
+import reprlib
+from collections.abc import Iterator
 from pathlib import Path, PureWindowsPath
 from typing import Any, Literal, cast
 
-from .json_support import strict_json_loads
+from .json_support import MAX_JSON_NESTING_DEPTH, strict_json_loads
 
 DETAIL_LIMIT = 12_000
 SUMMARY_LIMIT = 220
@@ -16,7 +18,7 @@ DetailLevel = Literal["summary", "full"]
 
 def normalize_detail_level(value: Any) -> DetailLevel:
     """Validate and normalize the public detail-level parameter."""
-    if value not in {"summary", "full"}:
+    if not isinstance(value, str) or value not in {"summary", "full"}:
         raise ValueError("detailLevel must be 'summary' or 'full'.")
     return cast(DetailLevel, value)
 
@@ -55,21 +57,79 @@ def bounded(value: str, limit: int = DETAIL_LIMIT) -> str:
     return value[:limit] + f"\n\n… truncated {len(value) - limit:,} characters"
 
 
+def _json_chunks(value: Any, depth: int, active: set[int]) -> Iterator[str]:
+    """Match indented JSON formatting without allocating entire strings or containers."""
+    if isinstance(value, str):
+        yield '"'
+        for start in range(0, len(value), 1024):
+            yield json.dumps(value[start : start + 1024], ensure_ascii=False)[1:-1]
+        yield '"'
+    elif isinstance(value, (dict, list, tuple)):
+        if depth >= MAX_JSON_NESTING_DEPTH or id(value) in active:
+            raise ValueError("Unsupported JSON container depth or cycle.")
+        mapping = isinstance(value, dict)
+        opening, closing = ("{", "}") if mapping else ("[", "]")
+        if not value:
+            yield opening + closing
+            return
+        active.add(id(value))
+        try:
+            indent = "  " * (depth + 1)
+            yield opening + "\n" + indent
+            for index, entry in enumerate(value.items() if isinstance(value, dict) else value):
+                if index:
+                    yield ",\n" + indent
+                if mapping:
+                    key, child = entry
+                    if not isinstance(key, str):
+                        if key is None or isinstance(key, (bool, int, float)):
+                            key = json.dumps(key, allow_nan=False)
+                        else:
+                            raise TypeError("Unsupported JSON object key.")
+                    yield from _json_chunks(key, depth + 1, active)
+                    yield ": "
+                else:
+                    child = entry
+                yield from _json_chunks(child, depth + 1, active)
+            yield "\n" + "  " * depth + closing
+        finally:
+            active.remove(id(value))
+    elif value is None or isinstance(value, (bool, int, float)):
+        yield json.dumps(value, allow_nan=False)
+    else:
+        raise TypeError("Unsupported JSON value.")
+
+
+def _bounded_json(value: Any) -> str:
+    """Stop formatting at the detail budget; do not traverse omitted values to count them."""
+    parts: list[str] = []
+    remaining = DETAIL_LIMIT
+    for chunk in _json_chunks(value, 0, set()):
+        if len(chunk) > remaining:
+            parts.append(chunk[:remaining])
+            notice = "\n\n… truncated additional characters"
+            return "".join(parts)[: DETAIL_LIMIT - len(notice)] + notice
+        parts.append(chunk)
+        remaining -= len(chunk)
+    return "".join(parts)
+
+
 def json_text(value: Any) -> str:
-    """Render a JSON-compatible value for the full-detail inspector."""
+    """Render only the bounded JSON prefix needed by the full-detail inspector."""
     if isinstance(value, str):
         try:
             parsed = strict_json_loads(value)
         except (RecursionError, TypeError, ValueError):
             return bounded(value)
         try:
-            return bounded(json.dumps(parsed, ensure_ascii=False, allow_nan=False, indent=2))
+            return _bounded_json(parsed)
         except (RecursionError, TypeError, ValueError):
             return bounded(value)
     try:
-        return bounded(json.dumps(value, ensure_ascii=False, allow_nan=False, indent=2))
+        return _bounded_json(value)
     except (RecursionError, TypeError, ValueError):
-        return bounded(str(value))
+        # Non-JSON fallback must not expand a complete large or cyclic container either.
+        return bounded(reprlib.repr(value))
 
 
 def content_text(content: Any) -> str:

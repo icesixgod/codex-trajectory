@@ -10,16 +10,20 @@ import re
 import stat
 import tempfile
 from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, BinaryIO, cast
 
+from .filesystem import is_link_or_reparse_point as _is_link_or_reparse_point
 from .json_support import strict_json_loads
 
 JsonEntry = tuple[int, dict[str, Any]]
 MAX_DIAGNOSTICS = 100
 MAX_JSONL_LINE_BYTES = 16 * 1024 * 1024
 MAX_JSONL_TOTAL_BYTES = 512 * 1024 * 1024
+MAX_OPT_IN_READ_BYTES = 64 * 1_000_000_000
 MAX_JSONL_LINES = 1_000_000
 MAX_SESSION_HEADER_BYTES = MAX_JSONL_LINE_BYTES
 MAX_SESSION_HEADER_LINES = 10
@@ -43,7 +47,82 @@ _UUID_TEXT = (
 )
 _UUID_PATTERN = re.compile(_UUID_TEXT)
 _ROLLOUT_IDENTITY_PATTERN = re.compile(rf"(?P<thread>{_UUID_TEXT})(?:_(?P<rollout>{_UUID_TEXT}))?$")
-_WINDOWS_REPARSE_POINT = 0x400
+_SCAN_INDEX: ContextVar[dict[str, dict[str, Path | None]] | None] = ContextVar(
+    "codex_trajectory_scan_index", default=None
+)
+_READ_LIMIT: ContextVar[int | None] = ContextVar("codex_trajectory_read_limit", default=None)
+
+
+_JSONL_POSITION: ContextVar[tuple[Path, int, int] | None] = ContextVar(
+    "codex_trajectory_jsonl_position", default=None
+)
+
+
+def current_jsonl_position() -> tuple[Path, int, int] | None:
+    """Internal source position of the last validated JSONL object."""
+    return _JSONL_POSITION.get()
+
+
+def jsonl_byte_limit() -> int:
+    """Return this request's explicit byte budget, or the default budget."""
+    override = _READ_LIMIT.get()
+    return MAX_JSONL_TOTAL_BYTES if override is None else override
+
+
+@contextmanager
+def session_read_limit(max_read_bytes: Any = None) -> Iterator[None]:
+    """Keep a user-selected read budget local to one request."""
+    if max_read_bytes is not None:
+        if isinstance(max_read_bytes, bool) or not isinstance(max_read_bytes, int):
+            raise ValueError("maxReadBytes must be an integer.")
+        if not 1 <= max_read_bytes <= MAX_OPT_IN_READ_BYTES:
+            raise ValueError(f"maxReadBytes must be between 1 and {MAX_OPT_IN_READ_BYTES}.")
+    token = _READ_LIMIT.set(max_read_bytes)
+    try:
+        yield
+    finally:
+        _READ_LIMIT.reset(token)
+
+
+class ReadLimitExceeded(ValueError):
+    """Expose only byte counts when a task needs a larger explicit read budget."""
+
+    def __init__(
+        self, required_bytes: int, *, at_least: bool = False, compressed_source: bool = False
+    ) -> None:
+        self.required_bytes = required_bytes
+        self.limit_bytes = jsonl_byte_limit()
+        self.at_least = at_least
+        self.session_id: str | None = None
+        self.session_id_verified = False
+        message = (
+            "Compressed Codex rollout exceeds the source byte limit."
+            if compressed_source
+            else "Codex rollout exceeds the total JSONL byte limit."
+        )
+        super().__init__(message)
+
+
+def _enforce_read_limit(
+    required_bytes: int, *, at_least: bool = False, compressed_source: bool = False
+) -> None:
+    if required_bytes > jsonl_byte_limit():
+        raise ReadLimitExceeded(
+            required_bytes, at_least=at_least, compressed_source=compressed_source
+        )
+
+
+@contextmanager
+def session_scan() -> Iterator[None]:
+    """Reuse discovery only within one request; never cache filesystem trust decisions."""
+    if _SCAN_INDEX.get() is not None:
+        yield
+        return
+    token = _SCAN_INDEX.set({})
+    try:
+        yield
+    finally:
+        _SCAN_INDEX.reset(token)
 
 
 class _FormatProbeLimit(ValueError):
@@ -96,11 +175,6 @@ def _absolute_path(path: Path) -> Path:
 
 def _file_identity(file_stat: os.stat_result) -> tuple[int, int, int]:
     return file_stat.st_dev, file_stat.st_ino, stat.S_IFMT(file_stat.st_mode)
-
-
-def _is_link_or_reparse_point(file_stat: os.stat_result) -> bool:
-    attributes = getattr(file_stat, "st_file_attributes", 0)
-    return stat.S_ISLNK(file_stat.st_mode) or bool(attributes & _WINDOWS_REPARSE_POINT)
 
 
 def _validate_regular_file(file_stat: os.stat_result) -> None:
@@ -284,8 +358,7 @@ def _is_compressed_rollout(path: Path) -> bool:
 
 def _write_decompressed_chunk(spool: BinaryIO, chunk: bytes, total: int) -> int:
     next_total = total + len(chunk)
-    if next_total > MAX_JSONL_TOTAL_BYTES:
-        raise ValueError("Codex rollout exceeds the total JSONL byte limit.")
+    _enforce_read_limit(next_total, at_least=True)
     spool.write(chunk)
     return next_total
 
@@ -365,8 +438,7 @@ def _open_rollout_binary(path: Path) -> BinaryIO:
     if not _is_compressed_rollout(path):
         return source
     try:
-        if os.fstat(source.fileno()).st_size > MAX_JSONL_TOTAL_BYTES:
-            raise ValueError("Compressed Codex rollout exceeds the source byte limit.")
+        _enforce_read_limit(os.fstat(source.fileno()).st_size, compressed_source=True)
         return _decompress_rollout(source)
     except EOFError as error:
         raise ValueError("Compressed Codex rollout is not a valid zstd stream.") from error
@@ -507,6 +579,43 @@ def session_files(include_archived: bool) -> list[Path]:
     return sorted(paths, key=modified, reverse=True)
 
 
+def recent_rate_limit_entries(
+    path: Path, previous_signature: tuple[int, ...] | None = None
+) -> tuple[tuple[int, ...], list[dict[str, Any]] | None]:
+    """Read quota events from a bounded plain-log tail without scanning tool bodies."""
+    if _is_compressed_rollout(path):
+        return (), []
+    with _open_regular_binary(path) as handle:
+        file_stat = os.fstat(handle.fileno())
+        signature = (
+            file_stat.st_dev,
+            file_stat.st_ino,
+            file_stat.st_size,
+            file_stat.st_mtime_ns,
+            file_stat.st_ctime_ns,
+        )
+        if signature == previous_signature:
+            return signature, None
+        start = max(0, file_stat.st_size - 256 * 1024)
+        handle.seek(start)
+        tail = handle.read(256 * 1024)
+    lines = tail.split(b"\n")
+    if start:
+        lines = lines[1:]
+    entries = []
+    # The final split item is incomplete (or empty) while Codex appends a line.
+    for line in lines[:-1]:
+        if len(line) > 64 * 1024 or b'"rate_limits"' not in line:
+            continue
+        try:
+            entry = strict_json_loads(line.decode("utf-8"))
+        except (UnicodeError, ValueError, RecursionError):
+            continue
+        if isinstance(entry, dict):
+            entries.append(entry)
+    return signature, entries
+
+
 def iter_jsonl(
     path: Path,
     warnings: list[dict[str, Any]] | None = None,
@@ -531,8 +640,9 @@ def iter_jsonl(
         if end_byte_offset is not None and end_byte_offset > opened_size:
             raise ValueError("Paginated history byte boundary is past the source rollout.")
         read_end = opened_size if end_byte_offset is None else end_byte_offset
-        if read_end > MAX_JSONL_TOTAL_BYTES:
-            raise ValueError("Codex rollout exceeds the total JSONL byte limit.")
+        # A bounded header probe can identify a large plain file without reading it.
+        if _scan_byte_limit is None:
+            _enforce_read_limit(read_end)
         line_number = 0
         while True:
             line_start = handle.tell()
@@ -551,8 +661,7 @@ def iter_jsonl(
             line_number += 1
             budget.lines_read += 1
             budget.bytes_read += len(encoded_line)
-            if budget.bytes_read > MAX_JSONL_TOTAL_BYTES:
-                raise ValueError("Codex rollout exceeds the total JSONL byte limit.")
+            _enforce_read_limit(budget.bytes_read, at_least=True)
             if _scan_byte_limit is not None and handle.tell() > _scan_byte_limit:
                 raise _FormatProbeLimit("Codex session header exceeds the format-probe byte limit.")
             if len(encoded_line) > MAX_JSONL_LINE_BYTES:
@@ -562,8 +671,7 @@ def iter_jsonl(
                     chunk_size = min(MAX_JSONL_LINE_BYTES + 1, read_end - handle.tell())
                     encoded_line = handle.readline(chunk_size)
                     budget.bytes_read += len(encoded_line)
-                    if budget.bytes_read > MAX_JSONL_TOTAL_BYTES:
-                        raise ValueError("Codex rollout exceeds the total JSONL byte limit.")
+                    _enforce_read_limit(budget.bytes_read, at_least=True)
                     if _scan_byte_limit is not None and handle.tell() > _scan_byte_limit:
                         raise _FormatProbeLimit(
                             "Codex session header exceeds the format-probe byte limit."
@@ -636,7 +744,11 @@ def iter_jsonl(
                     )
                 continue
             if isinstance(value, dict):
-                yield line_number, value
+                position_token = _JSONL_POSITION.set((path, line_start, line_end - line_start))
+                try:
+                    yield line_number, value
+                finally:
+                    _JSONL_POSITION.reset(position_token)
             else:
                 if _state is not None:
                     _state.pending_rejected_lines += 1
@@ -712,6 +824,12 @@ def rollout_id_from_path(path: Path) -> str | None:
     return identity[1] if identity is not None else None
 
 
+def thread_id_from_path(path: Path) -> str | None:
+    """Extract the task identity for reporting an unreadable canonical rollout."""
+    identity = _rollout_identity_from_path(path)
+    return identity[0] if identity is not None else None
+
+
 def _history_position(value: Any) -> tuple[str, int, int]:
     if not isinstance(value, dict):
         raise ValueError("Paginated history base must be an object.")
@@ -729,6 +847,9 @@ def _history_position(value: Any) -> tuple[str, int, int]:
 
 def _rollout_index() -> dict[str, Path | None]:
     """Index authorized physical rollout IDs once for one lineage walk."""
+    scan = _SCAN_INDEX.get()
+    if scan is not None and "rollouts" in scan:
+        return scan["rollouts"]
     result: dict[str, Path | None] = {}
     for candidate in session_files(True):
         rollout_id = rollout_id_from_path(candidate)
@@ -738,6 +859,8 @@ def _rollout_index() -> dict[str, Path | None]:
             result[rollout_id] = None
         else:
             result[rollout_id] = candidate
+    if scan is not None:
+        scan["rollouts"] = result
     return result
 
 
@@ -824,6 +947,14 @@ def iter_session_jsonl(
     diagnostics = warnings if warnings is not None else []
     segments = rollout_lineage(path)
     budget = _JsonlBudget()
+    if all(not _is_compressed_rollout(segment.path) for segment in segments):
+        required_bytes = sum(
+            segment.end_byte_offset
+            if segment.end_byte_offset is not None
+            else _safe_file_stat(segment.path).st_size
+            for segment in segments
+        )
+        _enforce_read_limit(required_bytes)
     if len(segments) == 1 and segments[0].start_ordinal == 0:
         for line_number, entry in iter_jsonl(path, diagnostics, _budget=budget):
             payload = entry.get("payload")
@@ -890,28 +1021,43 @@ def _iter_search_lines(
     path: Path,
     *,
     end_byte_offset: int | None = None,
+    _budget: _JsonlBudget | None = None,
 ) -> Iterator[tuple[int, bytes]]:
     """Yield bounded complete lines that may contain searchable session metadata."""
-    if end_byte_offset is not None:
-        if isinstance(end_byte_offset, bool) or end_byte_offset < 0:
-            raise ValueError("Invalid paginated history byte boundary.")
-        if end_byte_offset > path.stat().st_size:
+    if end_byte_offset is not None and (
+        isinstance(end_byte_offset, bool)
+        or not isinstance(end_byte_offset, int)
+        or end_byte_offset < 0
+    ):
+        raise ValueError("Invalid paginated history byte boundary.")
+    budget = _budget if _budget is not None else _JsonlBudget()
+    with _open_rollout_binary(path) as handle:
+        opened_size = _rollout_stream_size(handle, path)
+        if end_byte_offset is not None and end_byte_offset > opened_size:
             raise ValueError("Paginated history byte boundary is past the source rollout.")
-    with path.open("rb") as handle:
+        read_end = opened_size if end_byte_offset is None else end_byte_offset
+        _enforce_read_limit(read_end)
         line_number = 0
         while True:
             line_start = handle.tell()
-            if end_byte_offset is not None and line_start >= end_byte_offset:
+            if line_start >= read_end:
                 break
+            if budget.lines_read >= MAX_JSONL_LINES:
+                raise ValueError("Codex rollout exceeds the total JSONL line limit.")
             encoded_line = handle.readline(MAX_JSONL_LINE_BYTES + 1)
             if not encoded_line:
                 break
             line_number += 1
+            budget.lines_read += 1
+            budget.bytes_read += len(encoded_line)
+            _enforce_read_limit(budget.bytes_read, at_least=True)
             if len(encoded_line) > MAX_JSONL_LINE_BYTES:
                 while encoded_line and not encoded_line.endswith(b"\n"):
                     if end_byte_offset is not None and handle.tell() >= end_byte_offset:
                         break
                     encoded_line = handle.readline(MAX_JSONL_LINE_BYTES + 1)
+                    budget.bytes_read += len(encoded_line)
+                    _enforce_read_limit(budget.bytes_read, at_least=True)
                 if end_byte_offset is not None and handle.tell() > end_byte_offset:
                     raise ValueError("Paginated history byte boundary splits a JSONL record.")
                 continue
@@ -939,8 +1085,9 @@ def _decode_search_entry(encoded_line: bytes) -> dict[str, Any] | None:
 def iter_session_search_jsonl(path: Path) -> Iterator[JsonEntry]:
     """Yield only records needed to build a lightweight searchable session index."""
     segments = rollout_lineage(path)
+    budget = _JsonlBudget()
     if len(segments) == 1 and segments[0].start_ordinal == 0:
-        for line_number, encoded_line in _iter_search_lines(path):
+        for line_number, encoded_line in _iter_search_lines(path, _budget=budget):
             entry = _decode_search_entry(encoded_line)
             if entry is not None:
                 yield line_number, entry
@@ -958,6 +1105,7 @@ def iter_session_search_jsonl(path: Path) -> Iterator[JsonEntry]:
         for line_number, encoded_line in _iter_search_lines(
             segment.path,
             end_byte_offset=segment.end_byte_offset,
+            _budget=budget,
         ):
             entry = _decode_search_entry(encoded_line)
             if entry is None:

@@ -48,12 +48,9 @@ jobs:
           uv run mypy --no-incremental --platform win32
           uv run pytest --cov --cov-report=term-missing
           uv run coverage report --include='plugins/codex-trajectory/scripts/codex_trajectory/*.py' --fail-under=85
-          uv run coverage report --include='plugins/codex-trajectory/scripts/codex_trajectory/browser_view.py' --fail-under=90
-          uv run coverage report --include='plugins/codex-trajectory/scripts/codex_trajectory/cdp_peer.py' --fail-under=45
-          uv run coverage report --include='plugins/codex-trajectory/scripts/codex_trajectory/cdp_settings.py' --fail-under=80
-          uv run coverage report --include='plugins/codex-trajectory/scripts/codex_trajectory_cdp.py' --fail-under=50
+          uv run coverage report --include='plugins/codex-trajectory/scripts/codex_trajectory/native_view.py,plugins/codex-trajectory/scripts/codex_trajectory/tools.py' --fail-under=90
           uv run coverage report --include='plugins/codex-trajectory/scripts/codex_trajectory_mcp.py' --fail-under=85
-          RUN_UI_TESTS=1 uv run pytest plugins/codex-trajectory/tests/test_ui.py plugins/codex-trajectory/tests/test_cdp_transport.py -q
+          RUN_UI_TESTS=1 uv run pytest plugins/codex-trajectory/tests/test_ui.py -q
           uv run python scripts/smoke_mcp.py
           mkdir -p dist
           git archive --format=zip --prefix="codex-trajectory-$version/" --output="dist/codex-trajectory-v$version.zip" HEAD
@@ -63,8 +60,8 @@ jobs:
           tar_root="$(mktemp -d)"
           unzip -q "dist/codex-trajectory-v$version.zip" -d "$zip_root"
           tar -xzf "dist/codex-trajectory-v$version.tar.gz" -C "$tar_root"
-          uv run --no-project python "$zip_root/codex-trajectory-$version/scripts/smoke_mcp.py"
-          uv run --no-project python "$tar_root/codex-trajectory-$version/scripts/smoke_mcp.py"
+          uv run --no-project --script "$zip_root/codex-trajectory-$version/scripts/smoke_mcp.py"
+          uv run --no-project --script "$tar_root/codex-trajectory-$version/scripts/smoke_mcp.py"
           cd dist
           sha256sum codex-trajectory-v* > SHA256SUMS
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

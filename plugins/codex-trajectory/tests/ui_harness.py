@@ -5,25 +5,20 @@ from __future__ import annotations
 import argparse
 import json
 import threading
-from base64 import b64encode
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from codex_trajectory.pricing import estimate_usage_cost, merge_cost_estimates
+from codex_trajectory.projection import ui_html
 
 ASSET_DIRECTORY = Path(__file__).parents[1] / "assets"
 
 
 def app_resource_html() -> str:
     """Inline the production sprite asset exactly as the MCP resource does."""
-    content = (ASSET_DIRECTORY / "trajectory.html").read_text(encoding="utf-8")
-    sprite = b64encode((ASSET_DIRECTORY / "whale-girl-mining-32f.png").read_bytes()).decode("ascii")
-    return content.replace(
-        "__WHALE_MINING_SPRITE_DATA_URI__",
-        f"data:image/png;base64,{sprite}",
-    )
+    return ui_html()
 
 
 def _record(
@@ -33,7 +28,7 @@ def _record(
     event: str,
     summary: str,
     offset_ms: int,
-    duration_ms: int | None = 0,
+    duration_ms: int | None = None,
     *,
     status: str = "complete",
     call_id: str | None = None,
@@ -475,19 +470,33 @@ def wrapper_html(
     *,
     host_display: bool = False,
     native_pip_unavailable: bool = False,
-    dead_watcher: bool = False,
-    browser_shortcut_available: bool = False,
-    cdp_recovery_delay_ms: int = 0,
-    cdp_status_failures: int = 0,
-    cdp_injected: bool | None = None,
+    native_host: bool = False,
+    selector_reason: str | None = None,
+    initial_session: str = "session-alpha",
+    initial_display_mode: str = "inline",
+    read_limit_bytes: int | None = None,
 ) -> str:
     """Create a parent page that emulates the Codex app-resource bridge."""
     payload = json.dumps(demo_trajectories(), ensure_ascii=False).replace("</", "<\\/")
-    requested_language = "zh-CN" if language == "zh" else "en"
+    requested_language = "" if native_host else ("zh-CN" if language == "zh" else "en")
     trajectory_path = (
         f"/trajectory.html?lang={requested_language}"
-        f"&hostDisplay={int(host_display)}"
+        f"&hostDisplay={int(host_display and not native_host)}"
         f"&nativePipUnavailable={int(native_pip_unavailable)}"
+    )
+    initial_result = (
+        "readLimitFailure()"
+        if read_limit_bytes is not None
+        else json.dumps({"viewerState": "select-session", "reason": selector_reason})
+        if selector_reason
+        else f"trajectory({json.dumps(initial_session)})"
+    )
+    available_modes = (
+        ["fullscreen"]
+        if initial_display_mode == "fullscreen"
+        else ["inline", "fullscreen"]
+        if native_host
+        else ["inline"]
     )
     return f"""<!doctype html>
 <html lang="{language}">
@@ -507,26 +516,33 @@ window.__trajectoryCalls = [];
 window.__trajectoryToolNames = [];
 window.__trajectoryDisplayModes = [];
 window.__trajectoryFollowUps = [];
-window.__trajectoryFollowUpFailures = 0;
-window.__trajectoryDirectStops = [];
-window.__trajectoryDirectStopFailures = 0;
-window.__trajectoryWidgetStates = [];
-window.__trajectoryCdpRecoveryDelayMs = {cdp_recovery_delay_ms};
-window.__trajectoryCdpStatusFailures = {cdp_status_failures};
-window.__trajectoryCdpStatusDelayMs = 0;
-window.__trajectoryCdpToolbar = {{
-  schemaVersion: 1,
-  enabled: {str(host_display or dead_watcher).lower()},
-  port: 9222,
-  cdpAvailable: true,
-  browserShortcutAvailable: {str(browser_shortcut_available).lower()},
-  daemonRunning: {str(host_display).lower()},
-  connected: {str(host_display).lower()},
-  injected: {str(host_display if cdp_injected is None else cdp_injected).lower()},
-  viewerServing: {str(host_display if cdp_injected is None else cdp_injected).lower()},
-  lastError: null,
+window.__trajectoryProtocol = [];
+const preferenceKey = new URLSearchParams(location.search).get("preferencesKey");
+let defaultFullDetails = preferenceKey ? localStorage.getItem(preferenceKey) === "true" : false;
+window.__failPreferenceWrites = false;
+let requiredReadBytes = {json.dumps(read_limit_bytes)};
+window.__setRequiredReadBytes = value => {{ requiredReadBytes = value; liveVersion += 1; }};
+const readLimitFailure = () => ({{
+  viewerState: "read-limit-exceeded", sessionId: "session-alpha",
+  readLimit: {{requiredBytes: requiredReadBytes, currentBytes: 536870912,
+    suggestedBytes: Math.ceil(requiredReadBytes / 1000000000) * 1000000000,
+    maximumBytes: 64000000000, atLeast: false}},
+}});
+window.__trajectoryHostContext = {{
+  theme: {json.dumps("dark" if host_display else "light")},
+  locale: {json.dumps("zh-CN" if language == "zh" else "en")},
+  displayMode: {json.dumps(initial_display_mode)},
+  availableDisplayModes: {json.dumps(available_modes)},
+}};
+window.__setHostContext = patch => {{
+  Object.assign(window.__trajectoryHostContext, patch);
+  viewer.contentWindow.postMessage({{
+    jsonrpc: "2.0", method: "ui/notifications/host-context-changed", params: patch,
+  }}, "*");
 }};
 let liveVersion = 1;
+let accountQuota = null;
+window.__setAccountQuota = quota => {{ accountQuota = structuredClone(quota); }};
 const currentLiveRevision = () => liveVersion.toString(16).padStart(64, "0");
 window.__setTrajectoryRemaining = remaining => {{
   const value = Number(remaining);
@@ -663,26 +679,49 @@ function trajectory(
   delete copy.recentSessions;
   return copy;
 }}
-function notify(value) {{
+function notify(value, revision = currentLiveRevision()) {{
   viewer.contentWindow.postMessage(
-    {{jsonrpc:"2.0",method:"ui/notifications/tool-result",params:{{structuredContent:value}}}},
+    {{jsonrpc:"2.0",method:"ui/notifications/tool-result",params:{{structuredContent:value,
+      _meta:revision ? {{"codex-trajectory/revision":revision}} : {{}}}}}},
     "*"
   );
 }}
-viewer.addEventListener("load", () => notify(trajectory()));
+const initialResult = () => ({initial_result});
+if ({str(host_display and not native_host).lower()}) {{
+  viewer.addEventListener("load", () => notify(initialResult()));
+}}
 viewer.src = {json.dumps(trajectory_path)};
-window.addEventListener("message", event => {{
+window.addEventListener("message", async event => {{
   if (event.source !== viewer.contentWindow) return;
+  if (event.data?.method === "trajectory/display-mode") {{
+    window.__trajectoryDisplayModes.push(event.data.params?.mode);
+    return;
+  }}
   if (event.data?.method === "trajectory/follow-up") {{
     window.__trajectoryFollowUps.push(structuredClone(event.data.params));
     return;
   }}
-  if (event.data?.method === "trajectory/widget-state") {{
-    window.__trajectoryWidgetStates.push(structuredClone(event.data.params));
+  const message = event.data;
+  if (message?.jsonrpc !== "2.0") return;
+  window.__trajectoryProtocol.push(message.method);
+  const respondRpc = result => viewer.contentWindow.postMessage({{
+    jsonrpc: "2.0", id: message.id, result,
+  }}, "*");
+  if (message.method === "ui/initialize") {{
+    respondRpc({{
+      protocolVersion: "2026-01-26",
+      hostInfo: {{name: "Codex test host", version: "1.0.0"}},
+      hostCapabilities: {{serverTools: {{}}, serverResources: {{}}}},
+      hostContext: structuredClone(window.__trajectoryHostContext),
+    }});
     return;
   }}
-  if (event.data?.method === "trajectory/display-mode") {{
-    window.__trajectoryDisplayModes.push(event.data.params?.mode);
+  if (message.method === "ui/notifications/initialized") {{ notify(initialResult()); return; }}
+  if (message.method === "ui/request-display-mode") {{
+    const mode = message.params.mode;
+    window.__trajectoryDisplayModes.push(mode);
+    respondRpc({{ mode }});
+    window.__setHostContext({{displayMode: mode}});
     return;
   }}
   if (event.data?.method !== "tools/call") return;
@@ -696,52 +735,33 @@ window.addEventListener("message", event => {{
     return;
   }}
   let result;
-  if (name === "list_codex_sessions") {{
+  if (name === "get_codex_trajectory_preferences") {{
+    if (preferenceKey) defaultFullDetails = localStorage.getItem(preferenceKey) === "true";
+    result = {{structuredContent: {{defaultFullDetails}}}};
+  }} else if (name === "set_codex_trajectory_preferences") {{
+    if (window.__failPreferenceWrites) {{
+      result = {{isError: true, content: [
+        {{type: "text", text: "Could not save viewer preferences."}}
+      ]}};
+    }} else {{
+      defaultFullDetails = args.defaultFullDetails;
+      if (preferenceKey) localStorage.setItem(preferenceKey, String(defaultFullDetails));
+      result = {{structuredContent: {{defaultFullDetails}}}};
+    }}
+  }} else if (name === "list_codex_sessions") {{
     const sessions = structuredClone(trajectories["session-alpha"].recentSessions || []);
     result = {{structuredContent: {{sessions, count: sessions.length}}}};
-  }} else if (name === "get_codex_toolbar_injection_status") {{
-    if (window.__trajectoryCdpStatusFailures > 0) {{
-      window.__trajectoryCdpStatusFailures -= 1;
-      result = {{
-        isError: true,
-        content: [{{type: "text", text: "Temporary CDP status failure"}}],
-      }};
-    }} else {{
-      result = {{structuredContent: structuredClone(window.__trajectoryCdpToolbar)}};
-    }}
-  }} else if (name === "set_codex_toolbar_injection") {{
-    const reconcileMatches = args.reconcileOnly !== true || (
-      args.enabled === true
-      && window.__trajectoryCdpToolbar.enabled === true
-      && window.__trajectoryCdpToolbar.port === args.port
-    );
-    if (reconcileMatches) {{
-      const browserShortcutAvailable =
-        window.__trajectoryCdpToolbar.browserShortcutAvailable === true;
-      window.__trajectoryCdpToolbar = {{
-        ...window.__trajectoryCdpToolbar,
-        enabled: args.reconcileOnly === true || args.enabled === true,
-        port: Number.isInteger(args.port) ? args.port : 9222,
-        daemonRunning: args.enabled === true && browserShortcutAvailable,
-        connected: args.enabled === true && browserShortcutAvailable,
-        injected: args.enabled === true && browserShortcutAvailable,
-        viewerServing: args.enabled === true && browserShortcutAvailable,
-        lastError: null,
-      }};
-    }}
-    result = {{structuredContent: structuredClone(window.__trajectoryCdpToolbar)}};
-  }} else if (name === "request_codex_task_stop") {{
-    window.__trajectoryDirectStops.push(structuredClone(args));
-    if (window.__trajectoryDirectStopFailures > 0) {{
-      window.__trajectoryDirectStopFailures -= 1;
-      result = {{structuredContent: {{sent: false, error: "Temporary direct stop failure"}}}};
-    }} else {{
-      result = {{structuredContent: {{sent: true}}}};
-    }}
+  }} else if (name === "open_codex_trajectory") {{
+    result = {{structuredContent: initialResult()}};
+  }} else if (requiredReadBytes !== null && args.sessionId === "session-alpha"
+      && (args.maxReadBytes || 536870912) < requiredReadBytes) {{
+    result = {{isError: true, structuredContent: readLimitFailure()}};
+    result.structuredContent.readLimit.currentBytes = args.maxReadBytes || 536870912;
   }} else if (name === "get_codex_trajectory_update") {{
     const revision = currentLiveRevision();
     const unchanged = args.revision === revision;
     const update = {{schemaVersion: 2, unchanged, revision}};
+    if (accountQuota) update.quota = structuredClone(accountQuota);
     if (!unchanged) {{
       update.trajectory = trajectory(args.sessionId, "summary", 50, null);
       delete update.trajectory.recentSessions;
@@ -757,16 +777,36 @@ window.addEventListener("message", event => {{
       )
     }};
   }}
-  const respond = () => viewer.contentWindow.postMessage(
-    {{jsonrpc:"2.0",id:event.data.id,result}}, "*"
-  );
-  const delay = name === "get_codex_toolbar_injection_status"
-    ? window.__trajectoryCdpStatusDelayMs
-    : name === "set_codex_toolbar_injection" && args.reconcileOnly === true
-      ? window.__trajectoryCdpRecoveryDelayMs
-      : 0;
-  if (delay > 0) setTimeout(respond, delay);
-  else respond();
+  if (result.structuredContent?.session) {{
+    result._meta = {{"codex-trajectory/revision":currentLiveRevision()}};
+    if (window.__summaryIdentityOverride && args.detailLevel !== "full") {{
+      result.structuredContent.session.id = window.__summaryIdentityOverride;
+    }}
+  }}
+  if (args.maxReadBytes && window.__retryReadLimitIdentityOverride) {{
+    result = {{isError: true, structuredContent: readLimitFailure()}};
+    result.structuredContent.sessionId = window.__retryReadLimitIdentityOverride;
+  }}
+  if (args.beforeRecord && args.detailLevel !== "full"
+      && window.__historyRevisionOverride !== undefined) {{
+    result._meta = window.__historyRevisionOverride
+      ? {{"codex-trajectory/revision":window.__historyRevisionOverride}} : {{}};
+  }}
+  if (args.detailLevel === "full") {{
+    if (window.__fullDetailOverride) {{
+      result.structuredContent = structuredClone(window.__fullDetailOverride);
+    }}
+    if (window.__detailRevisionOverride) {{
+      result._meta["codex-trajectory/revision"] = window.__detailRevisionOverride;
+    }}
+    if (window.__failDetailReads) {{
+      result = {{isError: true, content: [{{type: "text", text: "Detail read failed"}}]}};
+    }}
+    if (window.__fullDetailDelayMs) {{
+      await new Promise(resolve => setTimeout(resolve, window.__fullDetailDelayMs));
+    }}
+  }}
+  viewer.contentWindow.postMessage({{jsonrpc:"2.0",id:event.data.id,result}}, "*");
 }});
 </script></body></html>"""
 
@@ -782,9 +822,13 @@ class HarnessHandler(BaseHTTPRequestHandler):
         if route in {"/", "/en"}:
             self._send(wrapper_html("en"), "text/html; charset=utf-8")
             return
-        if route == "/en-dock":
+        if route in {"/en-dock", "/zh-dock"}:
             self._send(
-                wrapper_html("en", host_display=True, native_pip_unavailable=True),
+                wrapper_html(
+                    "zh" if route == "/zh-dock" else "en",
+                    host_display=True,
+                    native_pip_unavailable=True,
+                ),
                 "text/html; charset=utf-8",
             )
             return
@@ -794,62 +838,38 @@ class HarnessHandler(BaseHTTPRequestHandler):
                 "text/html; charset=utf-8",
             )
             return
-        if route == "/en-dead-watcher":
-            self._send(
-                wrapper_html("en", dead_watcher=True, cdp_recovery_delay_ms=500),
-                "text/html; charset=utf-8",
-            )
-            return
-        if route == "/en-browser-shortcut":
-            self._send(
-                wrapper_html("en", browser_shortcut_available=True),
-                "text/html; charset=utf-8",
-            )
-            return
-        if route == "/en-dead-watcher-browser":
+        if route in {
+            "/en-native",
+            "/zh-native",
+            "/en-native-selector",
+            "/en-native-missing",
+            "/en-native-fullscreen",
+            "/en-native-read-limit",
+            "/zh-native-read-limit",
+        }:
             self._send(
                 wrapper_html(
-                    "en",
-                    dead_watcher=True,
-                    browser_shortcut_available=True,
-                    cdp_recovery_delay_ms=500,
-                ),
-                "text/html; charset=utf-8",
-            )
-            return
-        if route == "/en-cdp-status-retry":
-            self._send(
-                wrapper_html("en", host_display=True, cdp_status_failures=1),
-                "text/html; charset=utf-8",
-            )
-            return
-        if route == "/en-cdp-status-race":
-            self._send(
-                wrapper_html(
-                    "en",
+                    "zh" if route.startswith("/zh-") else "en",
                     host_display=True,
-                    browser_shortcut_available=True,
-                    cdp_injected=False,
+                    native_host=True,
+                    native_pip_unavailable=True,
+                    initial_display_mode=(
+                        "fullscreen" if route == "/en-native-fullscreen" else "inline"
+                    ),
+                    selector_reason=(
+                        "missing-context"
+                        if route == "/en-native-selector"
+                        else "task-unavailable"
+                        if route == "/en-native-missing"
+                        else None
+                    ),
+                    read_limit_bytes=2_835_303_913 if route.endswith("-read-limit") else None,
                 ),
                 "text/html; charset=utf-8",
             )
             return
         if route == "/zh":
             self._send(wrapper_html("zh"), "text/html; charset=utf-8")
-            return
-        if route == "/toolbar-fixture":
-            self._send(
-                """<!doctype html><html><head><meta charset="utf-8"></head><body>
-                <div data-app-action-sidebar-thread-active="true"
-                  data-app-action-sidebar-thread-id="local:session-alpha"></div>
-                <form id="composer"><button id="access" type="button">Full access</button>
-                <textarea role="textbox"></textarea>
-                <button id="send" type="submit" aria-label="Send message">Send</button></form>
-                <script>window.__submitted=[];document.querySelector('form').addEventListener(
-                'submit',event=>{event.preventDefault();window.__submitted.push(
-                document.querySelector('textarea').value);});</script></body></html>""",
-                "text/html; charset=utf-8",
-            )
             return
         if route in {"/trajectory.html", "/trajectory.zh.html"}:
             content = app_resource_html()
@@ -881,18 +901,6 @@ window.openai = {
       params: { name, arguments: args },
     }, "*");
   }),
-  setWidgetState: state => {
-    window.openai.widgetState = structuredClone(state);
-    window.parent.postMessage({method:"trajectory/widget-state",params:state}, "*");
-  },
-  sendFollowUpMessage: async value => {
-    if (window.__trajectoryFollowUpFailures > 0) {
-      window.__trajectoryFollowUpFailures -= 1;
-      throw new Error("Temporary follow-up failure");
-    }
-    window.parent.postMessage({method:"trajectory/follow-up",params:value}, "*");
-    return {};
-  },
   requestDisplayMode: async ({ mode }) => {
     if (mode !== "inline" && mode !== "fullscreen") throw new Error("Unsupported mode");
     window.openai.displayMode = mode;
@@ -903,7 +911,6 @@ window.openai = {
     return { mode };
   },
 };
-window.__trajectoryFollowUpFailures = 0;
 window.__setOpenAITheme = theme => {
   window.openai.theme = theme;
   window.dispatchEvent(new CustomEvent("openai:set_globals", {
