@@ -63,7 +63,8 @@ def test_tool_definitions_scope_reads_and_native_panel() -> None:
     )
     assert tools["show_codex_trajectory"]["_meta"]["ui"]["resourceUri"] == UI_URI
     assert tools["open_codex_trajectory"]["_meta"]["openai/ui"]["entrypoints"] == [
-        {"type": "thread"}
+        {"type": "global"},
+        {"type": "thread"},
     ]
     update = tools["get_codex_trajectory_update"]
     assert update["_meta"]["ui"]["visibility"] == ["app"]

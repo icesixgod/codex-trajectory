@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from base64 import b64encode
+from functools import cache
+from pathlib import Path
 from typing import Any
 
 from . import projection
@@ -15,6 +18,13 @@ from .projection import (
 )
 from .sessions import MAX_JSONL_TOTAL_BYTES, MAX_OPT_IN_READ_BYTES, ReadLimitExceeded
 from .viewer_preferences import default_full_details, set_default_full_details
+
+
+@cache
+def _viewer_icon_uri() -> str:
+    """Embed the packaged icon for native hosts that cannot load local paths."""
+    icon = Path(__file__).parents[2] / "assets" / "icon.png"
+    return "data:image/png;base64," + b64encode(icon.read_bytes()).decode("ascii")
 
 
 def current_trajectory_result(metadata: dict[str, Any] | None) -> dict[str, Any]:
@@ -162,14 +172,16 @@ def tool_definitions() -> list[dict[str, Any]]:
         {
             "name": "open_codex_trajectory",
             "title": "Codex Trajectory",
+            "icons": [{"src": _viewer_icon_uri(), "mimeType": "image/png"}],
             "description": (
-                "Open the calling Codex task's safe trajectory in the native side panel."
+                "Open the native trajectory viewer from the sidebar or task side panel. "
+                "Show the calling task's safe summary, or a task selector without task context."
             ),
             "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
             "annotations": read_only,
             "_meta": {
                 "ui": {"resourceUri": UI_URI, "visibility": ["app"]},
-                "openai/ui": {"entrypoints": [{"type": "thread"}]},
+                "openai/ui": {"entrypoints": [{"type": "global"}, {"type": "thread"}]},
                 "openai/visibility": "private",
                 "openai/outputTemplate": UI_URI,
             },
