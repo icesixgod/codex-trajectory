@@ -844,6 +844,8 @@ class HarnessHandler(BaseHTTPRequestHandler):
             "/en-native-selector",
             "/en-native-missing",
             "/en-native-fullscreen",
+            "/en-native-sidebar",
+            "/zh-native-sidebar",
             "/en-native-read-limit",
             "/zh-native-read-limit",
         }:
@@ -854,11 +856,13 @@ class HarnessHandler(BaseHTTPRequestHandler):
                     native_host=True,
                     native_pip_unavailable=True,
                     initial_display_mode=(
-                        "fullscreen" if route == "/en-native-fullscreen" else "inline"
+                        "fullscreen"
+                        if route == "/en-native-fullscreen" or route.endswith("-sidebar")
+                        else "inline"
                     ),
                     selector_reason=(
                         "missing-context"
-                        if route == "/en-native-selector"
+                        if route == "/en-native-selector" or route.endswith("-sidebar")
                         else "task-unavailable"
                         if route == "/en-native-missing"
                         else None

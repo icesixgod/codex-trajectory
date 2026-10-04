@@ -10,7 +10,7 @@
 
 See what happened in a Codex task, where time went, and how many tokens it used.
 
-Codex Trajectory is a plugin that turns local Codex logs into a searchable event ledger and interactive timeline. Open it directly in the Codex desktop side panel.
+Codex Trajectory is a plugin that turns local Codex logs into a searchable event ledger and interactive timeline. Open it from the app list under **…** in Codex's left toolbar for a fullscreen viewer, or from a task's right panel.
 
 ![Codex Trajectory: English viewer](plugins/codex-trajectory/assets/screenshots/overview-en.png)
 
@@ -39,11 +39,11 @@ Open a new Codex task to load the plugin. After updating an existing installatio
 
 ## Use
 
-1. In the task's right panel, select **+ → More tools… → Plugins and MCPs → Codex Trajectory**.
+1. Open **…** in Codex's left toolbar and choose **Codex Trajectory** for a fullscreen viewer; you can pin it to the toolbar. You can also select **+ → More tools… → Plugins and MCPs → Codex Trajectory** in the task's right panel.
 2. Browse the timeline and event ledger. Use search and filters to find a record; select it to inspect it.
 3. Click **Live window** to follow activity, or **Load earlier records** to browse history.
 
-The native entry opens the current task without a model turn. If the host cannot identify that task, it shows a local task selector.
+Both native entries open without a model turn. With valid task context, the viewer opens that exact task; without available task context, it shows a local task selector.
 
 You can also ask Codex:
 

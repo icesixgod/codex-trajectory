@@ -2083,6 +2083,39 @@ def test_native_unavailable_task_can_retry_and_select(page: Page, harness_url: s
     expect(frame.locator("#refresh")).to_be_visible()
 
 
+@pytest.mark.parametrize("language", ["en", "zh"])
+def test_sidebar_fullscreen_selects_a_task_and_returns_from_live_view(
+    page: Page, harness_url: str, language: str
+) -> None:
+    page.goto(f"{harness_url}/{language}-native-sidebar")
+    frame = viewer(page)
+    select = frame.locator("#sessionSelect")
+    expect(select.locator('option[value="session-beta"]')).to_have_count(1)
+    expect(select).to_have_value("")
+    assert frame.locator("#ledger").count() == 0
+    assert set(page.evaluate("window.__trajectoryToolNames")) == {
+        "list_codex_sessions",
+        "get_codex_trajectory_preferences",
+    }
+
+    select.select_option("session-beta")
+    expect(frame.locator("#refresh")).to_be_visible()
+    expect(select).to_have_value("session-beta")
+    calls = page.evaluate("window.__trajectoryCalls")
+    assert any(
+        call.get("sessionId") == "session-beta" and call.get("detailLevel") == "summary"
+        for call in calls
+    )
+    frame.locator("#openPip").click()
+    expect(frame.locator("#liveDock")).to_have_attribute("data-session-id", "session-beta")
+    frame.locator("#closeDock").click()
+    expect(frame.locator("#refresh")).to_be_visible()
+    expect(select).to_have_value("session-beta")
+    assert page.evaluate("window.__trajectoryDisplayModes") == []
+    assert "ui/message" not in page.evaluate("window.__trajectoryProtocol")
+    assert frame.get_by_role("alert").count() == 0
+
+
 def test_native_host_context_controls_theme_locale_and_colors(page: Page, harness_url: str) -> None:
     page.goto(f"{harness_url}/zh-native")
     frame = viewer(page)

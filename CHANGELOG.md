@@ -4,6 +4,10 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## [Unreleased]
 
+### Added
+
+- Register a fullscreen viewer in the app list under **…** in Codex's left toolbar, where users can pin it, alongside the existing task right-panel entry. Both use the same app-only tool, open the exact task when valid context is available, and show a local task selector when it is unavailable.
+
 ## [1.0.0] - 2026-10-02
 
 ### Added

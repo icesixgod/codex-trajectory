@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from base64 import b64decode
 from pathlib import Path
 from typing import Any
 
@@ -24,11 +25,40 @@ def test_native_entrypoint_is_app_only_and_read_only() -> None:
     tool = next(
         item for item in projection.tool_definitions() if item["name"] == "open_codex_trajectory"
     )
-    assert tool["_meta"]["openai/ui"]["entrypoints"] == [{"type": "thread"}]
+    assert tool["_meta"]["openai/ui"]["entrypoints"] == [{"type": "global"}, {"type": "thread"}]
     assert tool["_meta"]["ui"] == {"resourceUri": projection.UI_URI, "visibility": ["app"]}
     assert tool["_meta"]["openai/visibility"] == "private"
     assert tool["annotations"]["readOnlyHint"] is True
     assert tool["inputSchema"]["additionalProperties"] is False
+
+
+def test_native_entrypoint_embeds_the_packaged_icon() -> None:
+    tool = next(
+        item for item in projection.tool_definitions() if item["name"] == "open_codex_trajectory"
+    )
+    icon = tool["icons"][0]
+    prefix, data = icon["src"].split(",", 1)
+    assert prefix == "data:image/png;base64"
+    assert icon["mimeType"] == "image/png"
+    assert (
+        b64decode(data, validate=True)
+        == (Path(__file__).parents[1] / "assets" / "icon.png").read_bytes()
+    )
+
+
+def test_sidebar_without_context_selects_before_reading_a_trajectory(
+    codex_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def unexpected_read(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        pytest.fail("A sidebar entry without task context must wait for explicit selection.")
+
+    monkeypatch.setattr(projection, "trajectory_result", unexpected_read)
+    result = open_panel()
+    assert result["structuredContent"] == {
+        "viewerState": "select-session",
+        "reason": "missing-context",
+    }
+    assert result["_meta"]["ui"]["resourceUri"] == projection.UI_URI
 
 
 def test_native_panel_binds_exact_caller_instead_of_latest(codex_home: Path) -> None:

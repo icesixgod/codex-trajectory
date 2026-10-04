@@ -302,12 +302,19 @@ def main() -> None:
         "Live update tool is not app-only.",
     )
     native_tool = tools["open_codex_trajectory"]
+    native_icons = native_tool.get("icons", [])
+    require(
+        len(native_icons) == 1
+        and native_icons[0].get("mimeType") == "image/png"
+        and native_icons[0].get("src", "").startswith("data:image/png;base64,"),
+        "Native entrypoint is missing its embedded plugin icon.",
+    )
     require(
         native_tool.get("_meta", {}).get("ui", {}).get("visibility") == ["app"]
         and native_tool.get("_meta", {}).get("openai/ui", {}).get("entrypoints")
-        == [{"type": "thread"}]
+        == [{"type": "global"}, {"type": "thread"}]
         and native_tool.get("annotations", {}).get("readOnlyHint") is True,
-        "Native panel entrypoint is not app-only and read-only.",
+        "Native sidebar and panel entrypoints are not app-only and read-only.",
     )
     require(
         by_id[3]["result"]["resources"][0]["uri"].startswith("ui://"),

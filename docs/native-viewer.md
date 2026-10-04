@@ -1,6 +1,6 @@
 # Native viewer migration
 
-The viewer now uses Codex's native conversation-panel extension. Open the right panel's **+ → More tools… → Plugins and MCPs → Codex Trajectory** entry. It opens the current task's safe summary without a model turn. A missing or unavailable task context shows a selector, so the viewer never guesses another task from recent activity.
+The viewer uses Codex's native global and conversation-panel extensions. Open **…** in Codex's left toolbar and choose **Codex Trajectory** for a fullscreen viewer; you can pin it to the toolbar. The existing right-panel **+ → More tools… → Plugins and MCPs → Codex Trajectory** entry remains available. Both entries use the same app-only tool and open without a model turn. Valid task context opens that exact task's safe summary. A missing or unavailable task context shows a local task selector, so the viewer never guesses another task from recent activity. After updating an existing installation, fully quit and reopen Codex to load the new entries. Toolbar pinning is controlled by Codex, and the plugin manifest cannot request automatic pinning.
 
 The public session-list, trajectory-read, and interactive-show tools retain their defaults. Live Token/cost/quota views, compressed and paginated history, bounded full-detail confirmation, and the frozen v1/v2 schemas are preserved. Task status reflects the selected task; live account quota uses the newest valid sample found in recent local active-task logs, updates independently of task revisions, and shows its sample time in the tooltip. Both can lag the service. Manual stopping and quota-triggered automatic stopping have been removed.
 
@@ -8,7 +8,7 @@ After **Load full details**, leave **Default to full details for all tasks on th
 
 ## Structure
 
-- `tools.py` owns MCP descriptors, argument dispatch, and native opening.
+- `tools.py` owns MCP descriptors, argument dispatch, and native opening. The native tool embeds the packaged plugin icon as a PNG data URI for the toolbar and panel entries.
 - `native_view.py` validates per-call context and defines selection responses.
 - `protocol.py` transports request metadata without shared task identity.
 - `projection.py` projects bounded local rollouts and loads the self-contained UI resource.

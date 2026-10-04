@@ -10,7 +10,7 @@
 
 看清 Codex 任务做了什么、时间花在哪里、用了多少 Token。
 
-Codex Trajectory 将本地 Codex 日志整理成可搜索的事件账本和交互时间轴，直接在 Codex 桌面端侧栏中打开。
+Codex Trajectory 将本地 Codex 日志整理成可搜索的事件账本和交互时间轴，可从 Codex 左侧工具栏 **…** 中的应用列表全屏打开，也可在任务右侧面板中打开。
 
 ![Codex Trajectory 中文查看器](plugins/codex-trajectory/assets/screenshots/desktop-zh-CN.png)
 
@@ -39,11 +39,11 @@ codex plugin add codex-trajectory@icesixgod
 
 ## 使用
 
-1. 在任务右侧面板中选择 **+ → More tools… → Plugins and MCPs → Codex Trajectory**。
+1. 在 Codex 左侧工具栏的 **…** 应用列表中打开 **Codex Trajectory**，进入全屏查看器，并可将其固定到工具栏。也可在任务右侧面板中选择 **+ → More tools… → Plugins and MCPs → Codex Trajectory**。
 2. 浏览时间轴和事件账本，用搜索与筛选定位记录，点击记录查看详情。
 3. 点击 **实时小窗**跟随任务活动，或点击**加载更早记录**浏览历史。
 
-原生入口直接打开当前任务，不触发模型对话。宿主无法识别当前任务时，会显示本地任务选择器。
+两个原生入口都不触发模型对话。有有效任务上下文时，查看器精确打开该任务；任务上下文不可用时，显示本地任务选择器。
 
 也可以直接对 Codex 说：
 
