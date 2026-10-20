@@ -9,6 +9,7 @@ from typing import Any
 
 from . import projection
 from .native_view import calling_thread_id, read_limit_result, session_selection_result
+from .project_timing import project_timing_result
 from .projection import (
     DEFAULT_MAX_RECORDS,
     MAX_RECORDS,
@@ -137,6 +138,26 @@ def tool_definitions() -> list[dict[str, Any]]:
             "annotations": {**read_only, "readOnlyHint": False},
         },
         {
+            "name": "get_codex_project_timing",
+            "title": "Read current task timing distribution",
+            "description": (
+                "Read only the explicitly selected task's timing. Partition its active time "
+                "into local/tool execution, estimated model/token time, and unattributed time. "
+                "Does not aggregate other tasks. The tool name is retained for compatibility."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "sessionId": trajectory_properties["sessionId"],
+                    "includeArchived": {"type": "boolean", "default": True},
+                    "maxReadBytes": trajectory_properties["maxReadBytes"],
+                },
+                "required": ["sessionId"],
+                "additionalProperties": False,
+            },
+            "annotations": read_only,
+        },
+        {
             "name": "get_codex_trajectory",
             "title": "Read a Codex trajectory",
             "description": (
@@ -174,14 +195,14 @@ def tool_definitions() -> list[dict[str, Any]]:
             "title": "Codex Trajectory",
             "icons": [{"src": _viewer_icon_uri(), "mimeType": "image/png"}],
             "description": (
-                "Open the native trajectory viewer from the sidebar or task side panel. "
+                "Open the native trajectory viewer from the task side panel. "
                 "Show the calling task's safe summary, or a task selector without task context."
             ),
             "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
             "annotations": read_only,
             "_meta": {
                 "ui": {"resourceUri": UI_URI, "visibility": ["app"]},
-                "openai/ui": {"entrypoints": [{"type": "global"}, {"type": "thread"}]},
+                "openai/ui": {"entrypoints": [{"type": "thread"}]},
                 "openai/visibility": "private",
                 "openai/outputTemplate": UI_URI,
             },
@@ -292,6 +313,8 @@ def call_tool(
             }
         if name == "get_codex_trajectory":
             return projection.trajectory_result(args, with_ui=False)
+        if name == "get_codex_project_timing":
+            return project_timing_result(args)
         if name == "show_codex_trajectory":
             return projection.trajectory_result(args, with_ui=True)
         if name == "get_codex_trajectory_update":

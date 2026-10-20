@@ -41,6 +41,7 @@ def test_tool_definitions_scope_reads_and_native_panel() -> None:
     assert set(tools) == {
         "list_codex_sessions",
         "get_codex_trajectory",
+        "get_codex_project_timing",
         "show_codex_trajectory",
         "open_codex_trajectory",
         "get_codex_trajectory_update",
@@ -63,9 +64,13 @@ def test_tool_definitions_scope_reads_and_native_panel() -> None:
     )
     assert tools["show_codex_trajectory"]["_meta"]["ui"]["resourceUri"] == UI_URI
     assert tools["open_codex_trajectory"]["_meta"]["openai/ui"]["entrypoints"] == [
-        {"type": "global"},
         {"type": "thread"},
     ]
+    assert all(
+        entry["type"] != "global"
+        for tool in tools.values()
+        for entry in tool.get("_meta", {}).get("openai/ui", {}).get("entrypoints", [])
+    )
     update = tools["get_codex_trajectory_update"]
     assert update["_meta"]["ui"]["visibility"] == ["app"]
     assert update["_meta"]["openai/visibility"] == "private"
@@ -131,7 +136,7 @@ def test_protocol_methods_and_resource(codex_home: Path) -> None:
     extended["capabilities"] = {"futureCapability": {"enabled": True}}
     assert handle("initialize", extended)["protocolVersion"] == "2025-06-18"
     assert handle("ping", {}) == {}
-    assert len(handle("tools/list", {})["tools"]) == 7
+    assert len(handle("tools/list", {})["tools"]) == 8
     listed_resources = handle("resources/list", {})["resources"]
     assert listed_resources[0]["uri"] == UI_URI
     assert LEGACY_UI_URI not in {item["uri"] for item in listed_resources}

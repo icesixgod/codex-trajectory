@@ -141,6 +141,14 @@ def local_task_smoke(command: list[str], cwd: Path, session_id: str) -> None:
                 "_meta": {"thread_id": session_id, "threadId": session_id},
             },
         ),
+        request(
+            3,
+            "tools/call",
+            {
+                "name": "get_codex_project_timing",
+                "arguments": {"sessionId": session_id, "includeArchived": True},
+            },
+        ),
     ]
     completed = subprocess.run(
         command,
@@ -171,6 +179,21 @@ def local_task_smoke(command: list[str], cwd: Path, session_id: str) -> None:
         "Local-task smoke exposed full details.",
     )
     print(f"Local task native MCP smoke passed ({trajectory['stats']['records']} records).")
+    timing = results.get(3, {}).get("structuredContent", {})
+    require(
+        timing.get("scope") == "session"
+        and timing.get("selectedSessionId") == session_id
+        and len(timing.get("sessions", [])) == 1
+        and timing["sessions"][0].get("id") == session_id,
+        "Installed MCP could not calculate timing for the exact selected local task.",
+    )
+    durations = timing["timing"]
+    require(
+        durations["localMs"] + durations["modelMs"] + durations["unattributedMs"]
+        == durations["totalMs"],
+        "Local-task timing categories do not partition active time.",
+    )
+    print(f"Local task timing MCP smoke passed ({durations['totalMs']} ms active time).")
 
 
 def main() -> None:
@@ -255,6 +278,14 @@ def main() -> None:
                     },
                 ),
                 request(8, "tools/call", {"name": "open_codex_trajectory", "arguments": {}}),
+                request(
+                    9,
+                    "tools/call",
+                    {
+                        "name": "get_codex_project_timing",
+                        "arguments": {"sessionId": "smoke-session"},
+                    },
+                ),
             ]
         )
         environment = os.environ.copy()
@@ -287,6 +318,7 @@ def main() -> None:
         == {
             "list_codex_sessions",
             "get_codex_trajectory",
+            "get_codex_project_timing",
             "show_codex_trajectory",
             "get_codex_trajectory_update",
             "open_codex_trajectory",
@@ -312,9 +344,9 @@ def main() -> None:
     require(
         native_tool.get("_meta", {}).get("ui", {}).get("visibility") == ["app"]
         and native_tool.get("_meta", {}).get("openai/ui", {}).get("entrypoints")
-        == [{"type": "global"}, {"type": "thread"}]
+        == [{"type": "thread"}]
         and native_tool.get("annotations", {}).get("readOnlyHint") is True,
-        "Native sidebar and panel entrypoints are not app-only and read-only.",
+        "Native entrypoint must be task-panel-only, app-only, and read-only.",
     )
     require(
         by_id[3]["result"]["resources"][0]["uri"].startswith("ui://"),
@@ -346,7 +378,18 @@ def main() -> None:
         by_id[8]["result"]["structuredContent"]["viewerState"] == "select-session",
         "Missing context silently substituted another task.",
     )
-    print("MCP stdio smoke passed, including native task binding and selection fallback.")
+    project = by_id[9]["result"]["structuredContent"]
+    require(
+        project["sessionCount"] == 1
+        and project["scope"] == "session"
+        and project["aggregation"] == "task-active-time"
+        and project["selectedSessionId"] == "smoke-session"
+        and project["timing"]["timedTurns"] == 0,
+        "Current-task timing did not preserve the untimed compressed task.",
+    )
+    print(
+        "MCP stdio smoke passed, including native binding, task selection, and current-task timing."
+    )
     if options.local_session:
         local_task_smoke(command, command_cwd, options.local_session)
 

@@ -6,7 +6,16 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ### Added
 
-- Register a fullscreen viewer in the app list under **…** in Codex's left toolbar, where users can pin it, alongside the existing task right-panel entry. Both use the same app-only tool, open the exact task when valid context is available, and show a local task selector when it is unavailable.
+- Add current-task timing distribution with durations and percentages for local/tool execution, estimated model/token time, and unattributed time. Read only the selected task's complete history and reuse its loaded source/index; retain `get_codex_project_timing` for compatibility, preserve unknown timing, and report incomplete coverage.
+
+### Removed
+
+- Remove the global left-toolbar viewer registration. Keep the native task-panel entry and the `show_codex_trajectory` MCP page, both with current-task timing distribution.
+
+### Fixed
+
+- Load task timing with the MCP dispatcher so in-place updates cannot lazily mix new timing code with an older parser. Detect incompatible running modules before task reads, preserve host error codes, and show plugin reload guidance for timing failures after updates.
+- Distinguish missing, invalid, zero, and sub-millisecond tool timing in task attribution. Keep uncertainty within each tool's possible execution window instead of suppressing model estimates for an entire turn; preserve precision evidence through cached pages and late results and show separate coverage counts without changing public trajectory records.
 
 ## [1.0.0] - 2026-10-02
 

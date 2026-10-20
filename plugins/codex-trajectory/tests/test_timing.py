@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from typing import Any
 
 import pytest
-from codex_trajectory.projection import duration_milliseconds, elapsed_milliseconds, parse_session
+from codex_trajectory import projection
+from codex_trajectory.projection import (
+    duration_milliseconds,
+    duration_timing_status,
+    elapsed_milliseconds,
+    parse_session,
+)
 from conftest import write_rollout
 
 
@@ -15,6 +23,28 @@ def test_submillisecond_durations_are_not_inflated_to_one_ms(nanos: int) -> None
     assert duration_milliseconds({"secs": 0, "nanos": nanos}) == 0
     assert duration_milliseconds(nanos / 1_000_000_000) == 0
     assert duration_milliseconds({"secs": 0, "nanos": 1_000_000}) == 1
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (None, "missing"),
+        (0, "zero"),
+        ({"secs": 0}, "zero"),
+        ({"secs": 0, "nanos": 0}, "zero"),
+        (0.000009375, "submillisecond"),
+        ({"secs": 0, "nanos": 999_999}, "submillisecond"),
+        (0.001, "measured"),
+        ("invalid", "invalid"),
+        (False, "invalid"),
+        (-1, "invalid"),
+        ({"secs": 0, "nanos": True}, "invalid"),
+    ],
+)
+def test_duration_evidence_distinguishes_missing_zero_precision_and_invalid(
+    value: object, expected: str
+) -> None:
+    assert duration_timing_status(value) == expected
 
 
 @pytest.mark.parametrize(
@@ -246,3 +276,272 @@ def test_completion_only_turn_does_not_invent_a_zero_duration(
 
     assert result["turns"][0]["status"] == "complete"
     assert result["turns"][0]["durationMs"] == expected
+
+
+@pytest.mark.parametrize("compressed", [False, True])
+@pytest.mark.parametrize("paginated", [False, True])
+@pytest.mark.parametrize(
+    ("raw_duration", "quality"),
+    [
+        (0, "zero"),
+        ({"secs": 0, "nanos": 9_375}, "submillisecond"),
+        (None, "missing"),
+        (False, "invalid"),
+        ("absent", "measured"),
+    ],
+)
+def test_timing_evidence_survives_indexes_without_changing_public_records(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    compressed: bool,
+    paginated: bool,
+    raw_duration: object,
+    quality: str,
+) -> None:
+    from test_sessions import _zstd_compress
+
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+    identity = "11111111-1111-4111-8111-111111111111"
+    base = 1_786_665_600_000
+
+    def event(offset: int, kind: str, payload: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "timestamp": projection.iso_timestamp(base + offset),
+            "type": kind,
+            "payload": payload,
+        }
+
+    events = [
+        event(
+            0,
+            "session_meta",
+            {"id": identity, "history_mode": "paginated"} if paginated else {"id": identity},
+        ),
+        event(0, "event_msg", {"type": "turn_started", "turn_id": "turn"}),
+    ]
+    duration = {} if raw_duration == "absent" else {"duration": raw_duration}
+    if paginated:
+        events.extend(
+            [
+                event(
+                    1_000,
+                    "event_msg",
+                    {
+                        "type": "item_completed",
+                        "turn_id": "turn",
+                        "started_at_ms": base,
+                        "completed_at_ms": base + 1_000,
+                        "item": {"type": "Reasoning", "id": "reason", "summary_text": []},
+                    },
+                ),
+                event(
+                    3_000,
+                    "event_msg",
+                    {
+                        "type": "item_completed",
+                        "turn_id": "turn",
+                        "started_at_ms": base + 2_000,
+                        "completed_at_ms": base + 3_000,
+                        "item": {
+                            "type": "CommandExecution",
+                            "id": "call",
+                            "status": "completed",
+                            "command": ["private-command"],
+                            **duration,
+                        },
+                    },
+                ),
+            ]
+        )
+    else:
+        events.extend(
+            [
+                event(1_000, "response_item", {"type": "reasoning", "id": "reason", "summary": []}),
+                event(
+                    2_000,
+                    "response_item",
+                    {
+                        "type": "function_call",
+                        "call_id": "call",
+                        "name": "exec",
+                        "arguments": '{"cmd":"private-command"}',
+                    },
+                ),
+                event(
+                    3_000,
+                    "event_msg",
+                    {
+                        "type": "mcp_tool_call_end",
+                        "call_id": "call",
+                        "invocation": {"tool": "exec"},
+                        "result": {"Ok": {}},
+                        **duration,
+                    },
+                ),
+                event(
+                    4_000,
+                    "response_item",
+                    {"type": "function_call_output", "call_id": "call", "output": "private-output"},
+                ),
+            ]
+        )
+    events.append(
+        event(
+            10_000, "event_msg", {"type": "turn_complete", "turn_id": "turn", "duration_ms": 10_000}
+        )
+    )
+    if paginated:
+        for ordinal, entry in enumerate(events):
+            entry["ordinal"] = ordinal
+    path = write_rollout(tmp_path / "sessions" / f"rollout-{identity}.jsonl", events)
+    if compressed:
+        encoded = _zstd_compress(path.read_bytes())
+        path.unlink()
+        path = path.with_suffix(".jsonl.zst")
+        path.write_bytes(encoded)
+
+    cold = projection.session_timing_summary(path)
+    assert cold["totalMs"] == 10_000
+    assert cold["localMs"] == (1_000 if quality == "measured" else 0)
+    assert cold["unattributedMs"] == (1_000 if quality in {"missing", "invalid"} else 0)
+    assert cold["modelMs"] == 10_000 - cold["localMs"] - cold["unattributedMs"]
+    assert cold["untimedTools"] == (quality in {"missing", "invalid"})
+    for field, status in (
+        ("missingTimingTools", "missing"),
+        ("invalidTimingTools", "invalid"),
+        ("zeroDurationTools", "zero"),
+        ("submillisecondTools", "submillisecond"),
+    ):
+        assert cold[field] == (quality == status)
+
+    summary = projection.cached_trajectory(path, 50)
+    tool = next(record for record in summary["records"] if record["kind"] == "tool")
+    assert tool["durationMs"] == (1_000 if quality == "measured" else None)
+    assert "_timingStatus" not in json.dumps(summary)
+    assert "private-command" not in json.dumps(summary)
+    assert "private-output" not in json.dumps(summary)
+
+    def no_scan(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("timing must reuse the summary's private evidence")
+
+    monkeypatch.setattr(projection, "iter_session_jsonl", no_scan)
+    assert projection.session_timing_summary(path) == cold
+
+
+@pytest.mark.parametrize(
+    ("item", "has_start", "quality", "unattributed"),
+    [
+        ({"type": "CommandExecution"}, False, "missingTimingTools", 2_000),
+        ({"type": "CommandExecution"}, True, "submillisecondTools", 0),
+        ({"type": "CommandExecution", "duration": 0}, False, "zeroDurationTools", 0),
+        ({"type": "CommandExecution", "duration": False}, False, "invalidTimingTools", 2_000),
+        (
+            {"type": "extension", "kind": "clock.sleep", "durationMs": 0.75},
+            False,
+            "submillisecondTools",
+            0,
+        ),
+    ],
+)
+def test_a_completion_point_is_not_mistaken_for_a_measured_zero(
+    tmp_path: Path, item: dict[str, Any], has_start: bool, quality: str, unattributed: int
+) -> None:
+    base = 1_786_665_600_000
+    identity = "11111111-1111-4111-8111-111111111111"
+    payloads = [
+        ("session_meta", {"id": identity, "history_mode": "paginated"}),
+        ("event_msg", {"type": "turn_started", "turn_id": "turn", "started_at": base / 1000}),
+        (
+            "event_msg",
+            {
+                "type": "item_completed",
+                "turn_id": "turn",
+                "started_at_ms": base,
+                "completed_at_ms": base + 1_000,
+                "item": {"type": "Reasoning", "id": "reason", "summary_text": []},
+            },
+        ),
+        (
+            "event_msg",
+            {
+                "type": "item_completed",
+                "turn_id": "turn",
+                "completed_at_ms": base + 3_000,
+                **({"started_at_ms": base + 3_000} if has_start else {}),
+                "item": {"id": "call", "status": "completed", **item},
+            },
+        ),
+        ("event_msg", {"type": "turn_complete", "turn_id": "turn", "duration_ms": 10_000}),
+    ]
+    offsets = [0, 0, 1_000, 3_000, 10_000]
+    events = [
+        {
+            "timestamp": projection.iso_timestamp(base + offset),
+            "ordinal": ordinal,
+            "type": kind,
+            "payload": payload,
+        }
+        for ordinal, ((kind, payload), offset) in enumerate(zip(payloads, offsets, strict=True))
+    ]
+    path = write_rollout(tmp_path / f"rollout-{identity}.jsonl", events)
+    timing = projection.session_timing_summary(path)
+    assert timing[quality] == 1
+    assert timing["unattributedMs"] == unattributed
+    assert timing["localMs"] == 0
+    assert timing["modelMs"] == 10_000 - unattributed
+
+
+def test_late_result_preserves_precision_after_original_record_leaves_page(tmp_path: Path) -> None:
+    base = 1_786_665_600_000
+    events = [
+        {
+            "timestamp": projection.iso_timestamp(base),
+            "type": "session_meta",
+            "payload": {"id": "late-precision"},
+        },
+        {
+            "timestamp": projection.iso_timestamp(base),
+            "type": "event_msg",
+            "payload": {"type": "turn_started", "turn_id": "turn"},
+        },
+        {
+            "timestamp": projection.iso_timestamp(base + 1_000),
+            "type": "response_item",
+            "payload": {"type": "function_call", "call_id": "call", "name": "exec"},
+        },
+    ]
+    events.extend(
+        {
+            "timestamp": projection.iso_timestamp(base + 2_000 + number),
+            "type": "response_item",
+            "payload": {"type": "reasoning", "id": f"reason-{number}", "summary": []},
+        }
+        for number in range(60)
+    )
+    events.extend(
+        [
+            {
+                "timestamp": projection.iso_timestamp(base + 9_000),
+                "type": "event_msg",
+                "payload": {
+                    "type": "mcp_tool_call_end",
+                    "call_id": "call",
+                    "invocation": {"tool": "exec"},
+                    "duration": 0,
+                },
+            },
+            {
+                "timestamp": projection.iso_timestamp(base + 10_000),
+                "type": "event_msg",
+                "payload": {"type": "turn_complete", "turn_id": "turn", "duration_ms": 10_000},
+            },
+        ]
+    )
+    path = write_rollout(tmp_path / "rollout-late-precision.jsonl", events)
+    summary = projection.cached_trajectory(path, 50)
+    assert summary["pagination"]["hasEarlier"]
+    assert any(record["id"].startswith("tool-result-") for record in summary["records"])
+    timing = projection.session_timing_summary(path)
+    assert timing["zeroDurationTools"] == 1
+    assert timing["untimedTools"] == timing["unattributedMs"] == timing["localMs"] == 0
+    assert timing["modelMs"] == timing["totalMs"] == 10_000

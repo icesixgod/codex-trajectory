@@ -40,6 +40,7 @@ from .sessions import (
     ReadLimitExceeded,
     first_session_metadata,
     is_archived_session,
+    is_safe_session_file,
     iter_session_jsonl,
     iter_session_search_jsonl,
     jsonl_byte_limit,
@@ -47,6 +48,7 @@ from .sessions import (
     rollout_id_from_path,
     session_files,
     session_read_limit,
+    session_roots,
     session_scan,
     session_signature,
     thread_id_from_path,
@@ -214,6 +216,19 @@ def elapsed_milliseconds(started_at: int | None, completed_at: int | None) -> in
         return None
     elapsed = completed_at - started_at
     return elapsed if 1 <= elapsed <= MAX_SAFE_INTEGER else None
+
+
+def duration_timing_status(value: Any) -> str:
+    """Retain why an explicit tool duration cannot be displayed in milliseconds."""
+    duration = duration_milliseconds(value)
+    if duration is None:
+        return "missing" if value is None else "invalid"
+    if duration > 0:
+        return "measured"
+    zero = (
+        value.get("secs") == value.get("nanos", 0) == 0 if isinstance(value, dict) else value == 0
+    )
+    return "zero" if zero else "submillisecond"
 
 
 def attachment_count(value: Any) -> int:
@@ -1055,6 +1070,7 @@ def parse_session(
             "_countsAsTool": counts_as_tool,
             "_failedCounted": state["failedCounted"] if state is not None else False,
             "_durationAuthoritative": False,
+            "_timingStatus": "missing",
             "_outputAuthoritative": False,
             "_hasStartBoundary": has_start_boundary and timestamp is not None,
         }
@@ -1126,6 +1142,7 @@ def parse_session(
             "durationMs",
             "completedAt",
             "_durationAuthoritative",
+            "_timingStatus",
             "_outputAuthoritative",
             "_hasStartBoundary",
             "_commandActivity",
@@ -1173,6 +1190,7 @@ def parse_session(
         failed: bool = False,
         error_message: str = "Tool result reported an error.",
         duration_ms: int | None = None,
+        timing_status: str | None = None,
         authoritative: bool = False,
     ) -> None:
         """Apply a terminal tool event without losing an earlier authoritative result."""
@@ -1188,12 +1206,21 @@ def parse_session(
             record["completedAt"] = iso_timestamp(completed_at)
         if duration_ms is not None and (authoritative or not record.get("_durationAuthoritative")):
             record["durationMs"] = duration_ms if duration_ms >= 1 else None
+            record["_timingStatus"] = timing_status or ("measured" if duration_ms >= 1 else "zero")
             if authoritative:
                 record["_durationAuthoritative"] = True
         elif not record.get("_durationAuthoritative"):
             elapsed = elapsed_milliseconds(started_at, completed_at)
             if elapsed is not None or record.get("durationMs") is None:
                 record["durationMs"] = elapsed
+                if elapsed is not None:
+                    record["_timingStatus"] = "measured"
+                elif started_at is None or completed_at is None:
+                    record["_timingStatus"] = "missing"
+                else:
+                    record["_timingStatus"] = (
+                        "submillisecond" if started_at == completed_at else "invalid"
+                    )
             if authoritative:
                 record["_durationAuthoritative"] = True
         if include_details and output is not None and not record.get("_outputAuthoritative"):
@@ -1217,6 +1244,7 @@ def parse_session(
         output_value: Any = None,
         failed: bool = False,
         duration_ms: int | None = None,
+        timing_status: str | None = None,
         metadata_detail: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Create or finish a tool record from an authoritative terminal event."""
@@ -1296,6 +1324,7 @@ def parse_session(
                 output=output_value,
                 failed=failed,
                 duration_ms=duration_ms,
+                timing_status=timing_status,
                 authoritative=True,
                 error_message="Tool completion event reported an error.",
             )
@@ -1306,6 +1335,7 @@ def parse_session(
             output=output_value,
             failed=failed,
             duration_ms=duration_ms,
+            timing_status=timing_status,
             authoritative=True,
             error_message="Tool completion event reported an error.",
         )
@@ -1521,6 +1551,7 @@ def parse_session(
         status = safe_text(item.get("status"), 80) or "completed"
         failed = status.casefold() in {"failed", "declined", "incomplete", "error"}
         duration = duration_milliseconds(item.get("duration"))
+        timing_status = duration_timing_status(item["duration"]) if "duration" in item else None
         if duration is None and "duration" in item:
             # An explicitly unconfirmed duration must not be replaced by a guessed interval.
             duration = 0
@@ -1588,6 +1619,14 @@ def parse_session(
                 event = "Sleep"
                 raw_duration = item.get("durationMs")
                 duration = epoch_milliseconds(raw_duration)
+                if duration is not None:
+                    if isinstance(raw_duration, (int, float)) and 0 <= raw_duration < 1:
+                        duration = 0
+                        timing_status = "zero" if raw_duration == 0 else "submillisecond"
+                    else:
+                        timing_status = "measured" if duration >= 1 else "invalid"
+                else:
+                    timing_status = "missing" if raw_duration is None else "invalid"
                 if duration is None and "durationMs" in item:
                     duration = 0
                 input_value = {"durationMs": raw_duration}
@@ -1631,6 +1670,7 @@ def parse_session(
             output_value=output_value,
             failed=failed,
             duration_ms=duration,
+            timing_status=timing_status,
             metadata_detail=metadata_detail,
         )
 
@@ -2175,6 +2215,9 @@ def parse_session(
             completion_output: Any = None
             failed = False
             duration = duration_milliseconds(payload.get("duration"))
+            timing_status = (
+                duration_timing_status(payload["duration"]) if "duration" in payload else None
+            )
             if duration is None and "duration" in payload:
                 duration = 0
             if payload_type == "mcp_tool_call_end":
@@ -2228,6 +2271,7 @@ def parse_session(
                 output_value=completion_output,
                 failed=failed,
                 duration_ms=duration,
+                timing_status=timing_status,
                 metadata_detail={"protocolType": payload_type},
             )
             continue
@@ -2599,6 +2643,88 @@ def cached_trajectory(
             for old_key in _TRAJECTORY_CACHE_SIZES.keys() - _TRAJECTORY_CACHE.keys():
                 del _TRAJECTORY_CACHE_SIZES[old_key]
     return deepcopy(trajectory)
+
+
+@session_scan()
+def resolve_timing_session(session_id: str, include_archived: bool) -> Path:
+    """Reuse the open task's validated source before any historical-task lookup."""
+    requested = session_id.strip()
+    if not requested or len(requested) > 240:
+        raise ValueError("sessionId must contain between 1 and 240 characters.")
+    if "/" in requested or "\\" in requested:
+        raise ValueError("sessionId must be an identifier, not a filesystem path.")
+    with _PAGE_INDEX_LOCK:
+        candidates = [
+            key[0]
+            for key, index in reversed(_PAGE_INDEXES.items())
+            if index.template.get("session", {}).get("id") == requested
+        ]
+    with _TRAJECTORY_CACHE_LOCK:
+        candidates.extend(
+            key[0]
+            for key, value in reversed(_TRAJECTORY_CACHE.items())
+            if value["session"]["id"] == requested
+        )
+
+    roots = session_roots(include_archived)
+
+    def matching_path(paths: list[Path]) -> Path | None:
+        for path in dict.fromkeys(paths):
+            try:
+                if not any(is_safe_session_file(path, root) for root in roots):
+                    continue
+                if metadata_identity(first_session_metadata(path), path) == requested:
+                    return path
+            except (OSError, ValueError):
+                continue
+        return None
+
+    if found := matching_path(candidates):
+        return found
+    # Modern rollout names identify the exact thread without reading other logs.
+    paths = session_files(include_archived)
+    named = [path for path in paths if thread_id_from_path(path) == requested.casefold()]
+    if found := matching_path(named):
+        return found
+    # Legacy names and prefix selectors retain the bounded existing resolver.
+    return resolve_session(requested, include_archived)
+
+
+def session_timing_summary(path: Path) -> dict[str, Any]:
+    """Read all indexed timing boundaries without exposing or loading tool bodies."""
+    from .project_timing import summarize_timing
+
+    signature = session_signature(path)
+    with _PAGE_INDEX_LOCK:
+        index = _PAGE_INDEXES.get((path, signature, jsonl_byte_limit()))
+        owned = index is None
+        try:
+            if index is None:
+                index = PageIndex()
+                summary = parse_session(path, MIN_RECORDS, "summary", _index=index)
+                index.finish(summary)
+            if not index.enabled:
+                raise ValueError("Task timing exceeds the temporary summary index limit.")
+            if session_signature(path) != signature:
+                raise ValueError("Task log changed during timing read; retry the task summary.")
+            timing = summarize_timing(
+                (json.loads(row[0]) for row in index.db.execute("SELECT data FROM turns")),
+                index.timing_records(),
+            )
+            session = index.template["session"]
+            result = {
+                "id": session["id"],
+                "title": session["title"],
+                "cwd": first_session_metadata(path).get("cwd"),
+                "archived": session["archived"],
+                **timing,
+            }
+            if session_signature(path) != signature:
+                raise ValueError("Task log changed during timing read; retry the task summary.")
+            return result
+        finally:
+            if owned and index is not None:
+                index.close()
 
 
 def prewarm_caches() -> None:

@@ -13,7 +13,7 @@ import pytest
 from codex_trajectory.projection import parse_session, ui_html
 from conftest import write_rollout
 from playwright.sync_api import FrameLocator, Page, expect, sync_playwright
-from ui_harness import demo_trajectories, start_server
+from ui_harness import demo_project_timings, demo_trajectories, start_server
 
 pytestmark = [
     pytest.mark.ui,
@@ -107,6 +107,163 @@ def page() -> Iterator[Page]:
 def viewer(page: Page) -> FrameLocator:
     """Return the app-resource iframe locator."""
     return page.frame_locator("#viewer")
+
+
+@pytest.mark.parametrize("locale", ["en", "zh"])
+@pytest.mark.parametrize("width", [400, 1280])
+@pytest.mark.parametrize("surface", ["panel", "mcp"])
+def test_project_timing_is_explicit_localized_and_keeps_task_details_safe(
+    page: Page, harness_url: str, locale: str, width: int, surface: str
+) -> None:
+    page.set_viewport_size({"width": width, "height": 900})
+    try:
+        route = f"{locale}-native" if surface == "panel" else locale
+        page.goto(f"{harness_url}/{route}")
+        frame = viewer(page)
+        panel = frame.locator("#projectTimingPanel")
+        expect(panel).to_contain_text(
+            "当前任务耗时分布" if locale == "zh" else "Current task timing distribution"
+        )
+        assert (
+            page.evaluate(
+                "window.__trajectoryToolNames.filter("
+                "name => name === 'get_codex_project_timing').length"
+            )
+            == 0
+        )
+        frame.locator("#calculateProjectTiming").click()
+        expect(panel.locator(".timing-metric")).to_have_count(4)
+        expect(panel.locator(".timing-bar")).to_be_visible()
+        expect(panel).to_contain_text("估算" if locale == "zh" else "tokens (estimated)")
+        assert page.evaluate(
+            """window.__trajectoryCalls[window.__trajectoryToolNames.indexOf(
+              'get_codex_project_timing'
+            )]"""
+        ) == {"sessionId": "session-alpha", "includeArchived": True}
+        assert not page.evaluate(
+            "window.__trajectoryCalls.some(args => args.detailLevel === 'full')"
+        )
+        assert panel.evaluate("element => element.scrollWidth <= element.clientWidth")
+        expect(panel.locator(".timing-task-name")).to_contain_text("Inspect the latest task")
+        expect(panel.locator(".timing-tasks")).to_have_count(0)
+        frame.locator("#refresh").click()
+        expect(panel.locator(".timing-metric")).to_have_count(0)
+    finally:
+        page.set_viewport_size({"width": 1280, "height": 900})
+
+
+def test_project_timing_retries_errors_and_discards_results_after_task_switch(
+    page: Page, harness_url: str
+) -> None:
+    page.goto(f"{harness_url}/en-native")
+    frame = viewer(page)
+    page.evaluate("window.__failTimingReads = true")
+    frame.locator("#calculateProjectTiming").click()
+    expect(frame.locator("#projectTimingPanel [role=alert]")).to_contain_text(
+        "Could not calculate task timing"
+    )
+    expect(frame.locator("#calculateProjectTiming")).to_be_enabled()
+    page.evaluate("window.__failTimingReads = false")
+    frame.locator("#calculateProjectTiming").click()
+    expect(frame.locator(".timing-metric")).to_have_count(4)
+    frame.locator("#refresh").click()
+    expect(frame.locator(".timing-metric")).to_have_count(0)
+    page.evaluate("window.__timingDelayMs = 400")
+    frame.locator("#calculateProjectTiming").click()
+    expect(frame.locator("#calculateProjectTiming")).to_be_disabled()
+    frame.locator("#sessionSelect").select_option("session-beta")
+    expect(frame.locator("h1")).to_have_text("Review the documentation")
+    page.wait_for_timeout(600)
+    expect(frame.locator(".timing-metric")).to_have_count(0)
+    page.evaluate("window.__timingDelayMs = 0")
+    frame.locator("#calculateProjectTiming").click()
+    expect(frame.locator(".timing-metric")).to_have_count(4)
+    expect(frame.locator(".timing-value")).to_have_text(["-", "-", "-", "-"])
+    expect(frame.locator("#projectTimingPanel")).to_contain_text("Turns without timing")
+
+
+def test_project_timing_escapes_task_metadata_and_reports_incomplete_coverage(
+    page: Page, harness_url: str
+) -> None:
+    page.goto(f"{harness_url}/en-native")
+    frame = viewer(page)
+    snapshot = demo_project_timings()["session-alpha"]
+    hostile = '<img src=x onerror="window.__timingXss=true">'
+    snapshot["sessions"][0]["title"] = hostile
+    snapshot["project"]["cwd"] = hostile
+    snapshot["timing"]["untimedTools"] = 2
+    snapshot["timing"].update(
+        missingTimingTools=1, invalidTimingTools=1, zeroDurationTools=3, submillisecondTools=4
+    )
+    page.evaluate("value => window.__timingResultOverride = value", snapshot)
+    frame.locator("#calculateProjectTiming").click()
+    expect(frame.locator("#projectTimingPanel")).to_contain_text("Tools without timing: 2")
+    coverage = frame.locator(".timing-coverage")
+    expect(coverage).to_contain_text("Tools with missing timing: 1")
+    expect(coverage).to_contain_text("Tools with invalid timing: 1")
+    expect(coverage).to_contain_text("Tools with zero duration: 3")
+    expect(coverage).to_contain_text("Tools below 1 ms: 4")
+    expect(frame.locator(".timing-task-name")).to_contain_text(hostile)
+    expect(frame.locator("#projectTimingPanel img")).to_have_count(0)
+    assert not frame.locator("body").evaluate("() => Boolean(window.__timingXss)")
+    page.evaluate("window.__setHostContext({locale: 'zh-CN', theme: 'dark'})")
+    expect(frame.locator("#projectTimingPanel")).to_contain_text("当前任务耗时分布")
+    expect(coverage).to_contain_text("计时缺失的工具: 1")
+    expect(coverage).to_contain_text("计时无效的工具: 1")
+    expect(coverage).to_contain_text("零值耗时工具: 3")
+    expect(coverage).to_contain_text("低于 1 毫秒的工具: 4")
+    expect(frame.locator(".timing-metric")).to_have_count(4)
+
+
+def test_old_cross_task_timing_response_requires_plugin_reload(
+    page: Page, harness_url: str
+) -> None:
+    page.goto(f"{harness_url}/en-native")
+    frame = viewer(page)
+    snapshot = demo_project_timings()["session-alpha"]
+    snapshot.pop("scope")
+    page.evaluate("value => window.__timingResultOverride = value", snapshot)
+    frame.locator("#calculateProjectTiming").click()
+    expect(frame.locator("#projectTimingPanel [role=alert]")).to_contain_text(
+        "Fully quit and reopen Codex"
+    )
+    expect(frame.locator(".timing-metric")).to_have_count(0)
+    expect(frame.locator("#calculateProjectTiming")).to_be_enabled()
+
+
+@pytest.mark.parametrize("route", ["en-native", "en-dock"])
+@pytest.mark.parametrize("message", ["Internal server error.", "Private backend diagnostics"])
+def test_project_timing_internal_error_explains_plugin_reload_and_can_retry(
+    page: Page, harness_url: str, route: str, message: str
+) -> None:
+    page.goto(f"{harness_url}/{route}")
+    frame = viewer(page)
+    page.evaluate("message => window.__timingRpcError = {code: -32603, message}", message)
+    frame.locator("#calculateProjectTiming").click()
+    alert = frame.locator("#projectTimingPanel [role=alert]")
+    expect(alert).to_contain_text("internal error")
+    expect(alert).to_contain_text("fully quit and reopen Codex")
+    expect(alert).not_to_contain_text(message)
+    expect(frame.locator(".timing-metric")).to_have_count(0)
+    expect(frame.locator("#calculateProjectTiming")).to_be_enabled()
+    page.evaluate("window.__timingRpcError = null")
+    frame.locator("#calculateProjectTiming").click()
+    expect(frame.locator(".timing-metric")).to_have_count(4)
+
+
+@pytest.mark.parametrize("locale", ["en", "zh"])
+def test_project_timing_mixed_runtime_shows_reload_instruction(
+    page: Page, harness_url: str, locale: str
+) -> None:
+    page.goto(f"{harness_url}/{locale}-native")
+    frame = viewer(page)
+    page.evaluate("window.__timingResultOverride = {viewerState: 'plugin-reload-required'}")
+    frame.locator("#calculateProjectTiming").click()
+    expect(frame.locator("#projectTimingPanel [role=alert]")).to_contain_text(
+        "完整退出并重新打开 Codex" if locale == "zh" else "Fully quit and reopen Codex"
+    )
+    expect(frame.locator(".timing-metric")).to_have_count(0)
+    expect(frame.locator("#calculateProjectTiming")).to_be_enabled()
 
 
 @pytest.mark.parametrize("width", [400, 600, 800, 1280])
@@ -2084,10 +2241,10 @@ def test_native_unavailable_task_can_retry_and_select(page: Page, harness_url: s
 
 
 @pytest.mark.parametrize("language", ["en", "zh"])
-def test_sidebar_fullscreen_selects_a_task_and_returns_from_live_view(
+def test_fullscreen_panel_selects_a_task_and_returns_from_live_view(
     page: Page, harness_url: str, language: str
 ) -> None:
-    page.goto(f"{harness_url}/{language}-native-sidebar")
+    page.goto(f"{harness_url}/{language}-native-fullscreen-selector")
     frame = viewer(page)
     select = frame.locator("#sessionSelect")
     expect(select.locator('option[value="session-beta"]')).to_have_count(1)
