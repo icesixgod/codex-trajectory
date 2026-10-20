@@ -11,6 +11,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from codex_trajectory.pricing import estimate_usage_cost, merge_cost_estimates
+from codex_trajectory.project_timing import TIMING_FIELDS, summarize_timing
 from codex_trajectory.projection import ui_html
 
 ASSET_DIRECTORY = Path(__file__).parents[1] / "assets"
@@ -465,6 +466,37 @@ def _trajectory(
     }
 
 
+def demo_project_timings() -> dict[str, dict[str, Any]]:
+    """Derive timing fixtures independently for each synthetic task."""
+    trajectories = demo_trajectories()
+    result = {}
+    for identity, source in trajectories.items():
+        rows = [
+            {
+                "id": identity,
+                "title": source["session"]["title"],
+                "archived": False,
+                **summarize_timing(source["turns"], source["records"]),
+            }
+        ]
+        result[identity] = {
+            "schemaVersion": 1,
+            "scope": "session",
+            "generatedAt": "2026-10-20T04:00:00Z",
+            "project": {"cwd": source["session"]["cwd"], "match": "selected-session"},
+            "selectedSessionId": identity,
+            "includeArchived": True,
+            "aggregation": "task-active-time",
+            "timing": {key: sum(row[key] for row in rows) for key in TIMING_FIELDS},
+            "sessionCount": len(rows),
+            "skippedSessions": 0,
+            "unreadableMetadata": 0,
+            "omittedSessions": 0,
+            "sessions": rows,
+        }
+    return result
+
+
 def wrapper_html(
     language: str,
     *,
@@ -478,6 +510,7 @@ def wrapper_html(
 ) -> str:
     """Create a parent page that emulates the Codex app-resource bridge."""
     payload = json.dumps(demo_trajectories(), ensure_ascii=False).replace("</", "<\\/")
+    timing_payload = json.dumps(demo_project_timings(), ensure_ascii=False).replace("</", "<\\/")
     requested_language = "" if native_host else ("zh-CN" if language == "zh" else "en")
     trajectory_path = (
         f"/trajectory.html?lang={requested_language}"
@@ -511,6 +544,7 @@ def wrapper_html(
     ></iframe>
 <script>
 const trajectories = {payload};
+const projectTimings = {timing_payload};
 const viewer = document.getElementById("viewer");
 window.__trajectoryCalls = [];
 window.__trajectoryToolNames = [];
@@ -748,6 +782,24 @@ window.addEventListener("message", async event => {{
       if (preferenceKey) localStorage.setItem(preferenceKey, String(defaultFullDetails));
       result = {{structuredContent: {{defaultFullDetails}}}};
     }}
+  }} else if (name === "get_codex_project_timing") {{
+    if (window.__timingRpcError) {{
+      viewer.contentWindow.postMessage({{
+        jsonrpc: "2.0", id: message.id, error: structuredClone(window.__timingRpcError),
+      }}, "*");
+      return;
+    }}
+    if (window.__timingDelayMs) {{
+      await new Promise(resolve => setTimeout(resolve, window.__timingDelayMs));
+    }}
+    result = window.__failTimingReads
+      ? {{isError: true, content: [{{type: "text", text: "Timing read failed"}}]}}
+      : {{structuredContent: structuredClone(
+        window.__timingResultOverride || projectTimings[args.sessionId]
+      )}};
+    if (result.structuredContent?.viewerState === "plugin-reload-required") {{
+      result.isError = true;
+    }}
   }} else if (name === "list_codex_sessions") {{
     const sessions = structuredClone(trajectories["session-alpha"].recentSessions || []);
     result = {{structuredContent: {{sessions, count: sessions.length}}}};
@@ -844,8 +896,8 @@ class HarnessHandler(BaseHTTPRequestHandler):
             "/en-native-selector",
             "/en-native-missing",
             "/en-native-fullscreen",
-            "/en-native-sidebar",
-            "/zh-native-sidebar",
+            "/en-native-fullscreen-selector",
+            "/zh-native-fullscreen-selector",
             "/en-native-read-limit",
             "/zh-native-read-limit",
         }:
@@ -857,12 +909,13 @@ class HarnessHandler(BaseHTTPRequestHandler):
                     native_pip_unavailable=True,
                     initial_display_mode=(
                         "fullscreen"
-                        if route == "/en-native-fullscreen" or route.endswith("-sidebar")
+                        if route == "/en-native-fullscreen"
+                        or route.endswith("-fullscreen-selector")
                         else "inline"
                     ),
                     selector_reason=(
                         "missing-context"
-                        if route == "/en-native-selector" or route.endswith("-sidebar")
+                        if route == "/en-native-selector" or route.endswith("-fullscreen-selector")
                         else "task-unavailable"
                         if route == "/en-native-missing"
                         else None

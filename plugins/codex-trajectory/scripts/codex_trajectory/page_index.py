@@ -28,6 +28,8 @@ class PageIndex:
             self.db.executescript(
                 "PRAGMA journal_mode=OFF; PRAGMA synchronous=OFF;"
                 "CREATE TABLE records (id INTEGER PRIMARY KEY, turn INTEGER, data TEXT);"
+                "CREATE TABLE record_timing "
+                "(id INTEGER PRIMARY KEY, status TEXT, has_start INTEGER);"
                 "CREATE TABLE turns (id INTEGER PRIMARY KEY, data TEXT);"
                 "CREATE TABLE sources (event INTEGER PRIMARY KEY, line INTEGER, path TEXT, "
                 "offset INTEGER, length INTEGER);"
@@ -115,6 +117,15 @@ class PageIndex:
                 "INSERT OR REPLACE INTO records VALUES (?,?,?)",
                 (index, record["turn"], json.dumps(safe, ensure_ascii=True)),
             )
+            if record.get("kind") == "tool":
+                self.db.execute(
+                    "INSERT OR REPLACE INTO record_timing VALUES (?,?,?)",
+                    (
+                        index,
+                        record.get("_timingStatus", "missing"),
+                        bool(record.get("_hasStartBoundary")),
+                    ),
+                )
         self.pending.clear()
         if self.current_event % 256 == 0 and self.size > MAX_INDEX_BYTES:
             self.enabled = False
@@ -126,6 +137,19 @@ class PageIndex:
             "INSERT OR REPLACE INTO turn_errors VALUES (?,?,?)",
             (turn["index"], self.current_event, kind),
         )
+
+    def timing_records(self) -> Iterator[dict[str, Any]]:
+        """Join private timing evidence without adding fields to public summary pages."""
+        rows = self.db.execute(
+            "SELECT records.data,record_timing.status,record_timing.has_start FROM records "
+            "LEFT JOIN record_timing ON records.id=record_timing.id ORDER BY records.id"
+        )
+        for data, status, has_start in rows:
+            record = json.loads(data)
+            if status is not None:
+                record["_timingStatus"] = status
+                record["_hasStartBoundary"] = bool(has_start)
+            yield record
 
     def hydrate_turn_errors(self, turns: list[dict[str, Any]]) -> None:
         from .privacy import safe_text

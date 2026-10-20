@@ -1,10 +1,44 @@
 # Interface reference
 
-Codex Trajectory exposes three user-facing session MCP tools, four app-only helpers, and one `text/html;profile=mcp-app` resource at `ui://codex-trajectory/trajectory-v2.html`. The viewer uses the native MCP Apps host and exposes no task-control actions. `list_codex_sessions` updates a private derived index and advertises `readOnlyHint: false`; it never edits source task logs.
+Codex Trajectory exposes four user-facing MCP tools, four app-only helpers, and one `text/html;profile=mcp-app` resource at `ui://codex-trajectory/trajectory-v2.html`. The viewer uses the native MCP Apps host and exposes no task-control actions. `list_codex_sessions` updates a private derived index and advertises `readOnlyHint: false`; it never edits source task logs.
 
-## Native viewer entrypoints
+## Current task timing
 
-`open_codex_trajectory` has an empty input schema and app-only visibility. Its descriptor declares `_meta.ui.resourceUri` and `_meta["openai/ui"].entrypoints: [{"type": "global"}, {"type": "thread"}]`. The global entry registers the viewer in the app list under **…** in Codex's left toolbar for fullscreen opening. Users can pin it to the toolbar; pinning is controlled by Codex rather than the plugin manifest. The thread entry retains the conversation's right-panel tools menu. Both use the same tool and open without a model turn. Valid task context opens that exact task; unavailable context shows a local task selector. After updating an existing installation, fully quit and reopen Codex to load the new registrations.
+`get_codex_project_timing` keeps its original name for compatibility but now reads only the explicitly selected task. It requires `sessionId` (no omitted/latest selection), accepts `includeArchived` (default `true`, allowing the selected task to be archived), and optional `maxReadBytes`. A project directory is not required.
+
+```json
+{"sessionId": "EXACT_TASK_ID", "includeArchived": true}
+```
+
+The separate version-1 response sets `scope: "session"` and `aggregation: "task-active-time"`. It retains `selectedSessionId`, `generatedAt`, `includeArchived`, `project` (display-safe directory metadata only), `timing`, and a one-row `sessions` list. Compatibility counters are fixed at `sessionCount: 1`, `skippedSessions: 0`, `unreadableMetadata: 0`, and `omittedSessions: 0`. This does not extend the frozen trajectory v1/v2 schemas. `timing` and the task row include:
+
+| Field | Meaning |
+| --- | --- |
+| `totalMs` | Union of confirmed active turn intervals in the selected task. |
+| `localMs` | Union of confirmed tool intervals clipped to their active turn; includes external tools and call waits. |
+| `modelRecordedMs` | Recorded assistant/reasoning intervals, excluding overlap with tools. |
+| `modelEstimatedMs` | Remaining intervals in turns with model activity, excluding measured activity and possible execution windows of tools with missing/invalid timing. |
+| `modelMs` | `modelRecordedMs + modelEstimatedMs`; includes network, queueing, and scheduling waits, not pure token-generation time. |
+| `unattributedMs` | `totalMs - localMs - modelMs`. |
+| `turns`, `timedTurns`, `untimedTools` | Coverage counters; untimed turns contribute no invented duration. `untimedTools` counts missing/invalid timing, excluding confirmed zero/sub-millisecond durations. |
+| `missingTimingTools`, `invalidTimingTools` | Distinct calls whose duration evidence is missing or invalid; their sum equals `untimedTools`. |
+| `zeroDurationTools`, `submillisecondTools` | Distinct calls with an explicit zero or a positive duration below 1 ms. Equal, genuine call/result boundaries also count as below timestamp precision. These contribute 0 ms at the current precision and do not block model estimation. |
+
+The task row adds bounded `id`, `title`, and `archived`. Zero known time with `timedTurns: 0` means unavailable timing, displayed as `-` rather than a confirmed zero. A failed selected-task read returns an error, never a partial aggregate.
+
+Tool duration quality is retained separately in the private temporary index, including through history pages, cache reuse, and late-result markers. Public trajectory v1/v2 records retain their existing `durationMs: null` display contract for zero, below-precision, missing, and invalid durations. Null or absent explicit durations are missing; malformed, negative, and boolean durations are invalid. Genuine paired timestamps can measure an interval when no explicit duration was supplied; a completion-only timestamp never confirms a zero duration.
+
+A missing/invalid tool protects its observed call-to-completion interval from model estimation. When its start is absent, the conservative window begins at the preceding model boundary for its tool batch (or the turn start if unavailable) and ends at completion; parallel calls in the same model step share that anchor. A running tool protects through the latest confirmed active-turn boundary. Without usable bounds, or with conflicting clocks, the window may still cover the turn. Measured model intervals are retained, overlapping windows count once, and other time with model evidence can still be estimated. These windows bound uncertainty; they are not invented tool execution durations. Calls deduplicate by turn and call ID.
+
+The resolver first reuses the open task's source from existing projection caches, checking it against the current authorized active/archive roots before reading metadata. This path performs no session discovery. For a cold exact UUID, only matching rollout filenames receive metadata reads; legacy filenames and prefix selectors retain bounded metadata lookup. Timing projection never aggregates other tasks. Calculations inspect the selected task's complete safe-summary index, not its returned record/turn page. Existing indexes are reused; otherwise a bounded temporary index is created and closed after the read. Up to 256 compact timing results are cached against validated lineage signatures and the task read budget.
+
+The viewer calculates after **Calculate task timing**, uses the normal sixty-second timeout (ten minutes only for an explicitly raised large-log budget), and offers retry/recalculation. Refresh, task changes, and teardown discard outstanding results. An older backend response without `scope: "session"` prompts a plugin restart. Summary/full-detail consent is unaffected.
+
+**中文：**工具名 `get_codex_project_timing` 保留以兼容已有调用，统计范围改为当前选定任务。优先复用已打开任务的来源与摘要索引，只计算本任务完整历史中的活跃时间，排除轮次间空档，合并并行工具的重叠时间。目录缺失不影响统计；模型／Token 时间包含有依据的记录区间和剩余时间估算，不能代表纯生成耗时。工具计时区分缺失、无效、零值和低于 1 毫秒；零值和低于精度的工具不阻塞模型估算。缺失／无效计时只将可能执行区间保留为未归因，缺开始边界时从同批工具之前的模型边界保守划定，不把另一并行工具的完成时间当作开始。无可用边界或时钟冲突时仍可能保留整轮。公开轨迹格式与源日志保持不变。
+
+## Native viewer entrypoint
+
+`open_codex_trajectory` has an empty input schema and app-only visibility. Its descriptor declares `_meta.ui.resourceUri` and `_meta["openai/ui"].entrypoints: [{"type": "thread"}]`, registering only the conversation's right-panel tools menu. No global/left-toolbar entry is registered. The panel opens without a model turn. Valid task context opens that exact task; unavailable context shows a local task selector. The panel and `show_codex_trajectory` use the same UI resource, with **Current task timing distribution** below the top statistics on both pages. After updating an existing installation, fully quit and reopen Codex to reload the registration.
 
 The dispatcher passes request `_meta` to this tool without storing task context in global state. On the tested Codex desktop client, `thread_id` and `threadId` contain the calling task ID. Either alias is accepted; both must match when present. Values must be bounded identifiers and resolve to the exact local task, including an archived task. Both successful reads and read-limit errors require an actual matching `session_meta.id` or legacy `session_meta.session_id`; missing or invalid metadata identities return task selection, even when the filename matches. Prefixes, file aliases, process `CODEX_THREAD_ID`, and anonymized `openai/session` metadata never substitute for native caller identity. The same exact-ID check applies to read-limit errors before offering an increased-budget retry; a mismatched or unavailable error identity returns task selection. When compressed metadata cannot be decoded within the current budget, filename-derived identities remain unverified and the native entry returns task selection. Increased-budget retries verify the returned session ID before displaying any trajectory. Missing, invalid, conflicting, or unavailable context returns `{viewerState: "select-session", reason}` with the same UI resource; the user explicitly chooses a task before any trajectory is displayed. This initialization envelope is separate from the frozen trajectory schemas.
 

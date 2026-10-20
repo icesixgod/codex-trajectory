@@ -10,7 +10,7 @@
 
 See what happened in a Codex task, where time went, and how many tokens it used.
 
-Codex Trajectory is a plugin that turns local Codex logs into a searchable event ledger and interactive timeline. Open it from the app list under **…** in Codex's left toolbar for a fullscreen viewer, or from a task's right panel.
+Codex Trajectory is a plugin that turns local Codex logs into a searchable event ledger and interactive timeline. Open it from a task's right panel or through the `show_codex_trajectory` MCP tool.
 
 ![Codex Trajectory: English viewer](plugins/codex-trajectory/assets/screenshots/overview-en.png)
 
@@ -20,6 +20,7 @@ Codex Trajectory is a plugin that turns local Codex logs into a searchable event
 
 - **Task history:** messages, saved reasoning summaries, tool calls, subagent activity, and context compaction.
 - **Timing and failures:** event durations, execution status, and a timeline to locate slow calls.
+- **Current task timing:** active time for the open task, split into local/tool execution, estimated model/token time, and unattributed time, with percentages.
 - **Tokens and cost:** task and turn totals, cache usage, and estimated cost.
 - **Live activity:** a scrolling event stream, token totals, cost estimates, and the latest available local quota sample.
 - **History browsing:** search, event filters, task switching, and earlier records, including compressed and paginated logs.
@@ -39,11 +40,14 @@ Open a new Codex task to load the plugin. After updating an existing installatio
 
 ## Use
 
-1. Open **…** in Codex's left toolbar and choose **Codex Trajectory** for a fullscreen viewer; you can pin it to the toolbar. You can also select **+ → More tools… → Plugins and MCPs → Codex Trajectory** in the task's right panel.
+1. Select **+ → More tools… → Plugins and MCPs → Codex Trajectory** in the task's right panel, or ask Codex to show the task trajectory using `show_codex_trajectory`.
 2. Browse the timeline and event ledger. Use search and filters to find a record; select it to inspect it.
 3. Click **Live window** to follow activity, or **Load earlier records** to browse history.
+4. In either opened page, find **Current task timing distribution** below the top statistics and click **Calculate task timing**. Use **Recalculate** for a new snapshot of this task.
 
-Both native entries open without a model turn. With valid task context, the viewer opens that exact task; without available task context, it shows a local task selector.
+Timing reads the selected task's complete history, independently of loaded pages, and reuses its loaded summary index when available. It excludes gaps between turns and counts overlapping tools once. Tool time includes local commands, external tools, and call waits. Model/token time is an estimate that includes network, queueing, and scheduling waits, rather than a measurement of pure token generation. Missing and invalid tool timing are reported separately from zero and sub-millisecond durations. Only a missing/invalid tool's possible execution window remains unattributed; other time can still be estimated. Zero and below-precision durations count as 0 ms in this breakdown without blocking the rest of a turn.
+
+The native task-panel entry opens without a model turn. With valid task context, the viewer opens that exact task; without available task context, it shows a local task selector. The plugin panel and MCP show tool use the same viewer, including current-task timing.
 
 You can also ask Codex:
 
@@ -64,6 +68,7 @@ See [PRIVACY.md](PRIVACY.md) for the complete privacy model.
 | Tool | Use |
 | --- | --- |
 | `list_codex_sessions` | Find recent local tasks. |
+| `get_codex_project_timing` | Read timing for the selected task only; original tool name retained for compatibility. |
 | `get_codex_trajectory` | Read structured trajectory data. |
 | `show_codex_trajectory` | Open the interactive viewer. |
 

@@ -61,8 +61,11 @@
         const handler = pending.get(message.id);
         pending.delete(message.id);
         clearTimeout(handler.timer);
-        if (message.error) handler.reject(new Error(message.error.message || "Host request failed."));
-        else handler.resolve(message.result);
+        if (message.error) {
+          const error = new Error(message.error.message || "Host request failed.");
+          if (Number.isInteger(message.error.code)) error.code = message.error.code;
+          handler.reject(error);
+        } else handler.resolve(message.result);
         return;
       }
       if (message.method === "ui/notifications/tool-result") onResult(message.params);
@@ -124,7 +127,7 @@
       start: () => connect().catch(() => {}),
       async callTool(name, args) {
         await connect();
-        const largeRead = ["get_codex_trajectory", "show_codex_trajectory", "get_codex_trajectory_update"].includes(name)
+        const largeRead = ["get_codex_trajectory", "show_codex_trajectory", "get_codex_trajectory_update", "get_codex_project_timing"].includes(name)
           && Number.isSafeInteger(args?.maxReadBytes) && args.maxReadBytes > 512 * 1024 * 1024;
         const timeoutMs = largeRead ? LARGE_LOG_TIMEOUT_MS : REQUEST_TIMEOUT_MS;
         if (legacy) return withTimeout(window.openai.callTool(name, args), timeoutMs);

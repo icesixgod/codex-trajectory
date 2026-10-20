@@ -148,6 +148,20 @@
     .stat-label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
     .stat-value { margin-top: 4px; font-size: 20px; font-weight: 750; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
     .token-panel { padding: 13px 18px 15px; border-bottom: 1px solid var(--line); }
+    .timing-panel { padding: 14px 18px; border-bottom: 1px solid var(--line); }
+    .timing-panel .section-head { align-items: flex-start; flex-wrap: wrap; }
+    .timing-panel .section-head > div { min-width: 0; flex: 1 1 220px; }
+    .timing-project { overflow-wrap: anywhere; }
+    .timing-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); gap: 8px; margin-top: 12px; }
+    .timing-metric { border: 1px solid var(--line); border-radius: 9px; padding: 10px; min-width: 0; }
+    .timing-value { font-size: 19px; font-weight: 750; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+    .timing-share { color: var(--muted); font-size: 12px; }
+    .timing-bar { display: flex; height: 12px; border-radius: 999px; overflow: hidden; background: var(--panel-2); margin-top: 12px; }
+    .timing-local { background: var(--tool); }
+    .timing-model { background: var(--assistant); }
+    .timing-unknown { background: var(--compaction); }
+    .timing-note { color: var(--muted); font-size: 12px; margin-top: 9px; }
+    .timing-warning { color: var(--tool); }
     .token-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
     .token-badges { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
     .token-badge { padding: 3px 7px; border-radius: 999px; color: var(--muted); background: var(--panel-2); font-size: 12px; white-space: nowrap; }
@@ -738,6 +752,10 @@
       let recentSessions = [];
       let recentSessionsRequested = false;
       let recentSessionsBusy = false;
+      let projectTiming = null;
+      let projectTimingBusy = false;
+      let projectTimingError = null;
+      let projectTimingGeneration = 0;
       let fullConfirmationOpen = false;
       let rememberFullChoice = true;
       let defaultFullDetails = false;
@@ -797,6 +815,13 @@
         search: "搜索事件、摘要、输入或输出…", all: "全部类型", refresh: "刷新", reset: "重置视图",
         index: "索引", step: "步骤", event: "事件", summary: "内容", time: "耗时",
         timingNote: "日志记录的耗时；无法确认的计时显示 -。缺失、零值和低于毫秒精度的计时不显示数值。工具启动、排队或异步执行可能不在日志计时内。",
+        projectTiming: "当前任务耗时分布", calculateTiming: "统计当前任务耗时", recalculateTiming: "重新统计", calculatingTiming: "正在统计当前任务…",
+        projectTimingIntro: "仅统计当前打开的任务，展示本地工具与模型处理的耗时占比。",
+        activeTime: "累计活跃耗时", localTime: "本地／工具执行", modelTime: "模型／Token（估算）", unknownTime: "未归因",
+        timingMethod: "累计当前任务各轮次的活跃时间，排除轮次间空档；并行工具的重叠时间只计算一次。工具侧包含本地命令、外部工具与调用等待。",
+        timingEstimate: "模型时间使用已记录的分析／回复区间，并估算有模型活动的其余时间。缺失或无效的工具计时仅保留其可能执行区间为未归因；零值和低于 1 毫秒的耗时按当前精度计为 0，不阻塞其余估算。模型时间包含网络、排队和调度等待，不能代表纯 Token 生成耗时。",
+        missingTimingTools: "计时缺失的工具", invalidTimingTools: "计时无效的工具", zeroDurationTools: "零值耗时工具", submillisecondTools: "低于 1 毫秒的工具",
+        recordedModelTime: "已记录模型区间", estimatedModelTime: "其余估算区间", timingTask: "当前任务", untimedTurns: "缺少计时的轮次", untimedTools: "缺少计时的工具", timingFailed: "无法统计当前任务耗时，请重试。", timingReload: "插件后台需要重新加载。请完整退出并重新打开 Codex 后重试。", timingBackendFailed: "耗时统计服务发生内部错误。若刚更新过插件，请完整退出并重新打开 Codex 后重试。", timingEmpty: "尚无可确认的活跃耗时。", timingSnapshot: "统计快照",
         inspect: "选择一条记录查看详情", recordDetails: "记录详情", backToRecords: "返回记录", input: "输入", output: "输出", metadata: "元数据",
         reasoningEvent: "分析与决策", reasoningWhat: "这条记录在做什么", reasoningSource: "日志摘要（原文）", reasoningFullSource: "更长的日志摘要",
         reasoningMeaning: "模型结合你的要求和已有信息，考虑接下来该查什么、怎么改或如何回答。这条分析记录本身不代表相关操作已经执行。",
@@ -867,6 +892,13 @@
         search: "Search events, summaries, input, or output…", all: "All types", refresh: "Refresh", reset: "Reset view",
         index: "Index", step: "Step", event: "Event", summary: "Content", time: "Time",
         timingNote: "Recorded duration: - means undetermined. Missing, zero, and sub-millisecond timing is withheld. Tool timing may exclude startup, queueing, or asynchronous work.",
+        projectTiming: "Current task timing distribution", calculateTiming: "Calculate task timing", recalculateTiming: "Recalculate", calculatingTiming: "Calculating current task…",
+        projectTimingIntro: "Timing for the currently open task, with local/tool and model processing shares.",
+        activeTime: "Cumulative active time", localTime: "Local / tool execution", modelTime: "Model / tokens (estimated)", unknownTime: "Unattributed",
+        timingMethod: "Sums active turns in this task, excluding gaps between turns. Overlapping parallel tools count once. Tools include local commands, external tools, and call waits.",
+        timingEstimate: "Model time uses recorded analysis/message intervals and estimates other time with model activity. Missing or invalid tool timing reserves only the possible execution window as unattributed. Zero and sub-millisecond durations count as 0 ms at this precision and do not block other estimates. Includes network, queueing, and scheduling waits; cannot isolate pure token generation.",
+        missingTimingTools: "Tools with missing timing", invalidTimingTools: "Tools with invalid timing", zeroDurationTools: "Tools with zero duration", submillisecondTools: "Tools below 1 ms",
+        recordedModelTime: "Recorded model intervals", estimatedModelTime: "Remaining estimated intervals", timingTask: "Current task", untimedTurns: "Turns without timing", untimedTools: "Tools without timing", timingFailed: "Could not calculate task timing. Please retry.", timingReload: "The plugin runtime needs to reload. Fully quit and reopen Codex, then retry.", timingBackendFailed: "The timing service returned an internal error. If you updated the plugin, fully quit and reopen Codex, then retry.", timingEmpty: "No confirmed active time is available yet.", timingSnapshot: "Snapshot",
         inspect: "Select a record to inspect its details", recordDetails: "Record details", backToRecords: "Back to records", input: "Input", output: "Output", metadata: "Metadata",
         reasoningEvent: "Analysis & decision", reasoningWhat: "What this record is about", reasoningSource: "Recorded summary (original)", reasoningFullSource: "Longer recorded summary",
         reasoningMeaning: "The model is considering your request and available information to decide what to check, change, or answer next. This analysis record does not establish that an operation was performed.",
@@ -1156,7 +1188,7 @@
       }
 
       function callTool(name, args) {
-        if (["get_codex_trajectory", "show_codex_trajectory", "get_codex_trajectory_update"].includes(name) && taskReadLimits.has(args?.sessionId)) {
+        if (["get_codex_trajectory", "show_codex_trajectory", "get_codex_trajectory_update", "get_codex_project_timing"].includes(name) && taskReadLimits.has(args?.sessionId)) {
           args = { ...args, maxReadBytes: taskReadLimits.get(args.sessionId) };
         }
         return host.callTool(name, args);
@@ -1266,6 +1298,7 @@
 
       function showSessionSelection(reason = "missing-context", load = true) {
         resetRecordDetails();
+        resetProjectTiming();
         fullDetailsEnabled = false;
         readLimitPrompt = null;
         stopLiveLoop();
@@ -2250,7 +2283,10 @@
           recentSessionsRequested = true;
         }
         const previousSessionId = data?.session?.id;
-        if (!options.prepend) resetRecordDetails();
+        if (!options.prepend) {
+          resetRecordDetails();
+          resetProjectTiming();
+        }
         dataRevision = options.revision || null;
         if (previousSessionId !== next.session.id && !options.keepDetailMode) fullDetailsEnabled = next.detailLevel === "full";
         else if (next.detailLevel === "full") fullDetailsEnabled = true;
@@ -2286,6 +2322,99 @@
       function stat(label, value) {
         const formatted = String(value);
         return `<div class="stat"><div class="stat-label">${escapeHtml(label)}</div><div class="stat-value ${numberFitClass(formatted)}">${escapeHtml(formatted)}</div></div>`;
+      }
+
+      function resetProjectTiming() {
+        projectTimingGeneration += 1;
+        projectTiming = null;
+        projectTimingBusy = false;
+        projectTimingError = null;
+      }
+
+      function timingDuration(ms) {
+        return ms === 0 ? "0 ms" : duration(ms);
+      }
+
+      function projectTimingMarkup() {
+        const result = projectTiming;
+        const timing = result?.timing;
+        const available = timing?.timedTurns > 0;
+        const categories = [
+          ["localMs", labels.localTime, "timing-local"],
+          ["modelMs", labels.modelTime, "timing-model"],
+          ["unattributedMs", labels.unknownTime, "timing-unknown"],
+        ];
+        const metric = (label, value, share = "", className = "") => `<div class="timing-metric"><div class="token-metric-label">${className ? `<span class="token-legend-dot ${className}" aria-hidden="true" style="display:inline-block"></span> ` : ""}${escapeHtml(label)}</div><div class="timing-value">${available ? escapeHtml(timingDuration(value)) : "-"}</div>${share ? `<div class="timing-share">${escapeHtml(share)}</div>` : ""}</div>`;
+        const warnings = result ? [
+          [labels.untimedTurns, timing.turns - timing.timedTurns],
+          [labels.untimedTools, timing.untimedTools],
+        ].filter(([, count]) => count > 0).map(([label, count]) => `${label}: ${number(count)}`).join(" · ") : "";
+        const coverage = result ? [
+          [labels.missingTimingTools, timing.missingTimingTools],
+          [labels.invalidTimingTools, timing.invalidTimingTools],
+          [labels.zeroDurationTools, timing.zeroDurationTools],
+          [labels.submillisecondTools, timing.submillisecondTools],
+        ].filter(([, count]) => count > 0).map(([label, count]) => `${label}: ${number(count)}`).join(" · ") : "";
+        return `<div class="section-head"><div><div class="section-title">${labels.projectTiming}</div><div class="section-note timing-project">${escapeHtml(data?.session?.title || data?.session?.id)}</div></div><button id="calculateProjectTiming" type="button" ${projectTimingBusy || !data?.session?.id ? "disabled" : ""}>${projectTimingBusy ? labels.calculatingTiming : result ? labels.recalculateTiming : labels.calculateTiming}</button></div>
+          <div class="section-note">${labels.projectTimingIntro}</div>
+          ${projectTimingBusy ? `<div class="timing-note" role="status">${labels.calculatingTiming}</div>` : ""}
+          ${projectTimingError ? `<div class="timing-note timing-warning" role="alert">${escapeHtml(projectTimingError)}</div>` : ""}
+          ${result ? `<div class="timing-note timing-task-name">${labels.timingTask}: ${escapeHtml(result.sessions[0].title || result.selectedSessionId)}</div><div class="timing-note" role="status">${labels.timingSnapshot}: ${escapeHtml(new Date(result.generatedAt).toLocaleString(zh ? "zh-CN" : "en"))}</div>
+            <div class="timing-metrics">${metric(labels.activeTime, timing.totalMs)}${categories.map(([key, label, className]) => metric(label, timing[key], available ? percentage(timing[key], timing.totalMs) : "-", className)).join("")}</div>
+            ${available ? `<div class="timing-bar" aria-hidden="true">${categories.map(([key, , className]) => `<span class="${className}" style="width:${Math.max(0, Math.min(100, 100 * timing[key] / timing.totalMs))}%"></span>`).join("")}</div>` : `<div class="timing-note">${labels.timingEmpty}</div>`}
+            <div class="timing-note">${labels.timingMethod}</div><div class="timing-note">${labels.timingEstimate}</div>
+            <div class="timing-note">${labels.recordedModelTime}: ${timingDuration(timing.modelRecordedMs)} · ${labels.estimatedModelTime}: ${timingDuration(timing.modelEstimatedMs)}</div>
+            ${coverage ? `<div class="timing-note timing-coverage">${escapeHtml(coverage)}</div>` : ""}
+            ${warnings ? `<div class="timing-note timing-warning" role="status">${escapeHtml(warnings)}</div>` : ""}
+            ` : ""}`;
+      }
+
+      function bindProjectTiming() {
+        document.getElementById("calculateProjectTiming")?.addEventListener("click", loadProjectTiming);
+      }
+
+      function drawProjectTiming() {
+        const panel = document.getElementById("projectTimingPanel");
+        if (!panel) return;
+        panel.innerHTML = projectTimingMarkup();
+        panel.setAttribute("aria-busy", String(projectTimingBusy));
+        bindProjectTiming();
+      }
+
+      async function loadProjectTiming() {
+        if (projectTimingBusy || !data?.session?.id) return;
+        const sessionId = data.session.id;
+        const generation = ++projectTimingGeneration;
+        projectTimingBusy = true;
+        projectTimingError = null;
+        projectTiming = null;
+        drawProjectTiming();
+        try {
+          const result = await callTool("get_codex_project_timing", { sessionId, includeArchived: true });
+          if (generation !== projectTimingGeneration || data?.session?.id !== sessionId) return;
+          const snapshot = result?.structuredContent;
+          if (snapshot?.viewerState === "plugin-reload-required") {
+            projectTimingError = labels.timingReload;
+            return;
+          }
+          if (result?.isError || snapshot?.selectedSessionId !== sessionId || !isPlainObject(snapshot.timing) || !Array.isArray(snapshot.sessions)) {
+            throw new Error(labels.timingFailed);
+          }
+          if (snapshot.scope !== "session" || snapshot.sessions.length !== 1 || snapshot.sessions[0].id !== sessionId) {
+            projectTimingError = labels.timingReload;
+            return;
+          }
+          projectTiming = snapshot;
+        } catch (error) {
+          if (generation !== projectTimingGeneration) return;
+          projectTimingError = error?.code === -32603 || error?.message === "Internal server error."
+            ? labels.timingBackendFailed : labels.timingFailed;
+        } finally {
+          if (generation === projectTimingGeneration) {
+            projectTimingBusy = false;
+            drawProjectTiming();
+          }
+        }
       }
 
       function numberFitClass(formatted) {
@@ -2673,6 +2802,7 @@
               ${stat(labels.turns, number(stats.turns))}${stat(labels.records, number(stats.records))}${stat(labels.tools, number(stats.toolCalls))}
               ${stat(labels.failures, number(stats.failedTools))}${stat(labels.tokens, number(tokenTotal))}${stat(labels.estimatedCost, totalCost)}${stat(stats.omittedTurns ? (zh ? "已加载轮次耗时" : "Loaded duration") : labels.duration, duration(totalDuration))}
             </div>
+            <section class="timing-panel" id="projectTimingPanel" aria-busy="${projectTimingBusy}">${projectTimingMarkup()}</section>
             ${tokenDetailsPanel(stats, turns)}
             <section class="overview">
               <div class="section-head"><div><span class="section-title">${labels.overview}</span> <span class="section-note">${labels.hint}</span></div><button id="resetView" type="button">${labels.reset}</button></div>
@@ -2742,6 +2872,7 @@
       }
 
       function bindControls() {
+        bindProjectTiming();
         document.getElementById("costMode")?.addEventListener("change", event => {
           taskCostModes.set(data.session.id, event.target.value === "fast" ? "fast" : "auto");
           const turnsOpen = document.querySelector("details.token-turns")?.open;
@@ -3295,6 +3426,7 @@
         onError: error => { if (!data) showLoadError(error); },
         onTeardown: () => {
           resetRecordDetails();
+          resetProjectTiming();
           stopLiveLoop();
           livePresentation = "none";
           pipStream?.getTracks().forEach(track => track.stop());

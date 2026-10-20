@@ -25,7 +25,7 @@ def test_native_entrypoint_is_app_only_and_read_only() -> None:
     tool = next(
         item for item in projection.tool_definitions() if item["name"] == "open_codex_trajectory"
     )
-    assert tool["_meta"]["openai/ui"]["entrypoints"] == [{"type": "global"}, {"type": "thread"}]
+    assert tool["_meta"]["openai/ui"]["entrypoints"] == [{"type": "thread"}]
     assert tool["_meta"]["ui"] == {"resourceUri": projection.UI_URI, "visibility": ["app"]}
     assert tool["_meta"]["openai/visibility"] == "private"
     assert tool["annotations"]["readOnlyHint"] is True
@@ -46,11 +46,11 @@ def test_native_entrypoint_embeds_the_packaged_icon() -> None:
     )
 
 
-def test_sidebar_without_context_selects_before_reading_a_trajectory(
+def test_panel_without_context_selects_before_reading_a_trajectory(
     codex_home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def unexpected_read(*args: Any, **kwargs: Any) -> dict[str, Any]:
-        pytest.fail("A sidebar entry without task context must wait for explicit selection.")
+        pytest.fail("A panel without task context must wait for explicit selection.")
 
     monkeypatch.setattr(projection, "trajectory_result", unexpected_read)
     result = open_panel()
@@ -59,6 +59,19 @@ def test_sidebar_without_context_selects_before_reading_a_trajectory(
         "reason": "missing-context",
     }
     assert result["_meta"]["ui"]["resourceUri"] == projection.UI_URI
+
+
+def test_panel_and_mcp_show_share_the_project_timing_page(codex_home: Path) -> None:
+    panel = open_panel({"thread_id": "session-alpha"})
+    shown = handle(
+        "tools/call",
+        {"name": "show_codex_trajectory", "arguments": {"sessionId": "session-alpha"}},
+    )
+    assert panel["_meta"]["ui"] == shown["_meta"]["ui"] == {"resourceUri": projection.UI_URI}
+    assert panel["structuredContent"] == shown["structuredContent"]
+    resource = handle("resources/read", {"uri": projection.UI_URI})
+    assert 'id="projectTimingPanel"' in resource["contents"][0]["text"]
+    assert 'id="calculateProjectTiming"' in resource["contents"][0]["text"]
 
 
 def test_native_panel_binds_exact_caller_instead_of_latest(codex_home: Path) -> None:

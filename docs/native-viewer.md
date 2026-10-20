@@ -1,6 +1,6 @@
 # Native viewer migration
 
-The viewer uses Codex's native global and conversation-panel extensions. Open **…** in Codex's left toolbar and choose **Codex Trajectory** for a fullscreen viewer; you can pin it to the toolbar. The existing right-panel **+ → More tools… → Plugins and MCPs → Codex Trajectory** entry remains available. Both entries use the same app-only tool and open without a model turn. Valid task context opens that exact task's safe summary. A missing or unavailable task context shows a local task selector, so the viewer never guesses another task from recent activity. After updating an existing installation, fully quit and reopen Codex to load the new entries. Toolbar pinning is controlled by Codex, and the plugin manifest cannot request automatic pinning.
+The viewer uses Codex's native conversation-panel extension. Open **+ → More tools… → Plugins and MCPs → Codex Trajectory** in the task's right panel. This app-only entry opens without a model turn. Valid task context opens that exact task's safe summary. A missing or unavailable task context shows a local task selector, so the viewer never guesses another task from recent activity. The `show_codex_trajectory` MCP tool opens the same page. Both provide **Current task timing distribution** below the top statistics. The plugin registers no global/left-toolbar entry. After updating an existing installation, fully quit and reopen Codex to reload the registration.
 
 The public session-list, trajectory-read, and interactive-show tools retain their defaults. Live Token/cost/quota views, compressed and paginated history, bounded full-detail confirmation, and the frozen v1/v2 schemas are preserved. Task status reflects the selected task; live account quota uses the newest valid sample found in recent local active-task logs, updates independently of task revisions, and shows its sample time in the tooltip. Both can lag the service. Manual stopping and quota-triggered automatic stopping have been removed.
 
@@ -8,7 +8,7 @@ After **Load full details**, leave **Default to full details for all tasks on th
 
 ## Structure
 
-- `tools.py` owns MCP descriptors, argument dispatch, and native opening. The native tool embeds the packaged plugin icon as a PNG data URI for the toolbar and panel entries.
+- `tools.py` owns MCP descriptors, argument dispatch, and native opening. The native tool embeds the packaged plugin icon as a PNG data URI for the task-panel entry.
 - `native_view.py` validates per-call context and defines selection responses.
 - `protocol.py` transports request metadata without shared task identity.
 - `projection.py` projects bounded local rollouts and loads the self-contained UI resource.
@@ -72,6 +72,16 @@ A watcher launched by an older installed version can outlive its MCP process. Di
 After reinstalling, an existing task can still use the old MCP process while the menu advertises the new `open_codex_trajectory` tool. The desktop log then reports `Unknown tool name.` for that tool. Reading the UI resource can also report `Internal server error.` if the old process's plugin directory was retired during installation.
 
 Confirm the running plugin process's working directory, rather than relying only on installed files or a successful smoke test started in a new process. Fully quit Codex with **Cmd+Q**, reopen it, and return to the task before clicking the native entry again. Local plugin reload guidance is also covered in [OpenAI Docs](https://developers.openai.com/plugins/build/plugins).
+
+### Timing fails after an in-place plugin update
+
+An existing task can retain a Python MCP process from before the update. Previously, the timing reader was imported only on the first timing request: updated timing code could then call interfaces missing from the already loaded parser, raising an exception that appeared as `-32603 Internal server error.` A successful read from a new task did not test that older process.
+
+The timing reader now loads with the tool dispatcher at startup. A mixed runtime missing the required timing interfaces returns `viewerState: "plugin-reload-required"` before reading task data. The viewer shows a restart instruction for that state and preserves JSON-RPC error codes so internal failures receive useful guidance instead of the generic retry message. Fully quit and reopen Codex to replace processes that were already running during the update; installing new files or reopening only the panel cannot replace their loaded Python modules.
+
+原聊天可能仍保留更新前启动的 Python MCP 进程。此前统计模块在首次点击时才导入，可能把磁盘上的新版统计代码与内存中的旧解析模块混用，随后报出 `-32603 Internal server error.`；在新聊天中统计成功，并不能证明原进程已更新。
+
+统计模块现在随工具分发模块一起加载。检测到缺少新版计时接口时，后端会在读取任务数据前返回重新加载状态，界面明确提示完整退出并重新打开 Codex；内部错误也有对应说明。已经驻留的旧进程需要通过 **⌘Q 完全退出并重开 Codex** 替换，仅重开面板无法替换其内存中的 Python 模块。
 
 ## 本机验证记录（2026-09-30）
 
