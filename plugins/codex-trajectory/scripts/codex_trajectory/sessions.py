@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import errno
 import importlib
+import io
 import json
 import os
 import re
@@ -450,6 +451,42 @@ def _open_rollout_binary(path: Path) -> BinaryIO:
         source.close()
 
 
+@contextmanager
+def _open_rollout_probe(path: Path) -> Iterator[BinaryIO]:
+    """Stream a compressed header without spooling or validating its unread body.
+
+    Only bounded format/metadata probes use this reader. Complete trajectory reads
+    still use _open_rollout_binary to validate every frame and logical byte offset.
+    """
+    with _open_regular_binary(path) as source:
+        try:
+            try:
+                zstd = importlib.import_module("compression.zstd")
+            except ModuleNotFoundError:
+                try:
+                    zstd = importlib.import_module("zstandard")
+                except ModuleNotFoundError:
+                    raise ValueError(
+                        "Compressed Codex rollouts require compression.zstd or zstandard."
+                    ) from None
+                raw = zstd.ZstdDecompressor(max_window_size=ZSTD_MAX_WINDOW_BYTES).stream_reader(
+                    source,
+                    read_size=ZSTD_COMPRESSED_CHUNK_BYTES,
+                    read_across_frames=True,
+                    closefd=False,
+                )
+                reader = cast(BinaryIO, io.BufferedReader(raw))
+            else:
+                options = {zstd.DecompressionParameter.window_log_max: 27}
+                reader = cast(BinaryIO, zstd.open(source, "rb", options=options))
+            with reader:
+                yield reader
+        except (OSError, ValueError):
+            raise
+        except Exception as error:
+            raise ValueError("Compressed Codex rollout is not a valid zstd stream.") from error
+
+
 def _rollout_stream_size(handle: BinaryIO, path: Path) -> int:
     if not _is_compressed_rollout(path):
         return os.fstat(handle.fileno()).st_size
@@ -635,8 +672,17 @@ def iter_jsonl(
         or end_byte_offset < 0
     ):
         raise ValueError("Invalid paginated history byte boundary.")
-    with _open_rollout_binary(path) as handle:
-        opened_size = _rollout_stream_size(handle, path)
+    compressed_probe = (
+        _scan_byte_limit is not None and end_byte_offset is None and _is_compressed_rollout(path)
+    )
+    stream = _open_rollout_probe(path) if compressed_probe else _open_rollout_binary(path)
+    with stream as handle:
+        if compressed_probe and _scan_byte_limit is not None:
+            # A header probe must not seek to EOF, which would decode the whole log.
+            # One extra byte lets the existing probe checks reject an overlong line.
+            opened_size = min(_scan_byte_limit, jsonl_byte_limit()) + 1
+        else:
+            opened_size = _rollout_stream_size(handle, path)
         if end_byte_offset is not None and end_byte_offset > opened_size:
             raise ValueError("Paginated history byte boundary is past the source rollout.")
         read_end = opened_size if end_byte_offset is None else end_byte_offset

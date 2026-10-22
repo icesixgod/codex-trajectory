@@ -18,6 +18,8 @@ After **Load full details**, leave **Default to full details for all tasks on th
 
 The runtime contains no debugging-port client, DOM injector, watcher, loopback HTTP viewer, or task-control RPC. The portable Windows no-console launcher remains because MCP still needs inherited stdio.
 
+MCP startup serves the protocol without scanning or prewarming any task. Metadata discovery streams bounded compressed headers without creating decompression temporary files. Complete selected-history reads retain their validated, bounded decompression spool and summary pagination index. After installing this fix, fully quit and reopen Codex so existing MCP processes stop using the old startup and metadata readers.
+
 ## Client compatibility
 
 The integration was developed against macOS Codex desktop **26.928.20755** and its bundled CLI **0.159.0**. That client declares conversation entrypoints from tool `_meta["openai/ui"]` and forwards the calling task through `_meta.thread_id` and `_meta.threadId`. These client metadata aliases are validated per request; anonymized `openai/session` and process environment are not task bindings. Older clients without the native extension can still use `show_codex_trajectory` with an explicit session ID.

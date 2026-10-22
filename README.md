@@ -38,6 +38,8 @@ codex plugin add codex-trajectory@icesixgod
 
 Open a new Codex task to load the plugin. After updating an existing installation, fully quit and reopen Codex.
 
+Startup does not scan or prewarm task history. Logs are loaded when a viewer or tool requests them. Metadata discovery streams only bounded headers from compressed archives without creating decompression temporary files; viewing a selected compressed task still validates its complete history within the chosen read budget.
+
 ## Use
 
 1. Select **+ → More tools… → Plugins and MCPs → Codex Trajectory** in the task's right panel, or ask Codex to show the task trajectory using `show_codex_trajectory`.

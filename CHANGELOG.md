@@ -14,6 +14,7 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ### Fixed
 
+- Eliminate startup history prewarming and stream bounded compressed metadata/format probes without disk spools. Preserve full compressed-history validation, pagination, filesystem checks, and task-local read budgets for requested trajectory reads.
 - Load task timing with the MCP dispatcher so in-place updates cannot lazily mix new timing code with an older parser. Detect incompatible running modules before task reads, preserve host error codes, and show plugin reload guidance for timing failures after updates.
 - Distinguish missing, invalid, zero, and sub-millisecond tool timing in task attribution. Keep uncertainty within each tool's possible execution window instead of suppressing model estimates for an entire turn; preserve precision evidence through cached pages and late results and show separate coverage counts without changing public trajectory records.
 
