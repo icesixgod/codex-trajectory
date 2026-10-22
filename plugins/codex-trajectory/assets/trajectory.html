@@ -874,7 +874,7 @@
         detailsOnDemand: "此记录的完整详情尚未加载。", loadRecordDetails: "加载此记录详情", retryDetails: "重试加载详情",
         loadFull: "加载完整详情", confirmFull: "完整详情可能包含源代码、命令输出和敏感信息。仅在你信任当前任务内容时继续。", confirmLoadFull: "继续加载", cancel: "取消", loading: "正在加载轨迹…", loadError: "无法加载轨迹", requestTimeout: "请求超时。", warnings: "读取警告",
         rememberFull: "以后默认加载所有任务的完整详情（本机）", fullDefaultDescription: "已记住：本机允许完整详情，点击记录时按需加载。", useSummary: "恢复安全摘要默认值", preferenceSaveError: "无法保存默认设置，请重试。",
-        tokenDetails: "Token 详情", tokenDetailsNote: "累计用量；缓存属于输入，推理属于输出", totalTokens: "总 Token", inputTokens: "输入",
+        tokenDetails: "Token 详情", tokenDetailsNote: "任务累计包含当前代理及所有子代理；轮次仅显示当前代理。缓存属于输入，推理属于输出。", totalTokens: "总 Token", inputTokens: "输入",
         cachedInput: "缓存读取", uncachedInput: "非缓存输入", outputTokens: "输出", reasoningTokens: "推理输出", visibleOutput: "可见输出",
         cacheHit: "缓存命中", modelRequests: "模型请求", contextWindow: "上下文窗口", inputBreakdown: "输入构成", outputBreakdown: "输出构成",
         byTurn: "按轮次", calls: "请求数", noTokenData: "此任务没有记录 Token 用量。", expandTurn: "展开轮次", collapseTurn: "折叠轮次", modelLabel: "模型",
@@ -951,7 +951,7 @@
         detailsOnDemand: "This record's full details have not been loaded.", loadRecordDetails: "Load this record's details", retryDetails: "Retry loading details",
         loadFull: "Load full details", confirmFull: "Full details may contain source code, command output, and sensitive data. Continue only if you trust this task's contents.", confirmLoadFull: "Continue loading", cancel: "Cancel", loading: "Loading trajectory…", loadError: "Could not load trajectory", requestTimeout: "Request timed out.", warnings: "Read warnings",
         rememberFull: "Default to full details for all tasks on this device", fullDefaultDescription: "Remembered: full details are enabled on this device and load when you select a record.", useSummary: "Restore safe summary default", preferenceSaveError: "Could not save the default. Please try again.",
-        tokenDetails: "Token details", tokenDetailsNote: "Cumulative usage; cache is part of input and reasoning is part of output", totalTokens: "Total tokens", inputTokens: "Input",
+        tokenDetails: "Token details", tokenDetailsNote: "Task totals include this agent and all descendants; turns show this agent only. Cache is part of input and reasoning is part of output.", totalTokens: "Total tokens", inputTokens: "Input",
         cachedInput: "Cache reads", uncachedInput: "Uncached input", outputTokens: "Output", reasoningTokens: "Reasoning output", visibleOutput: "Visible output",
         cacheHit: "Cache hit", modelRequests: "Model requests", contextWindow: "Context window", inputBreakdown: "Input breakdown", outputBreakdown: "Output breakdown",
         byTurn: "By turn", calls: "Requests", noTokenData: "No token usage was recorded for this task.", expandTurn: "Expand turn", collapseTurn: "Collapse turn", modelLabel: "Model",
@@ -2604,12 +2604,13 @@
         }
         const total = usageView(rawTotal);
         const cost = hasCostEstimate(stats.cost) ? stats.cost : null;
-        const modelRequests = turns.every(turn => Number.isFinite(turn.modelCalls))
-          ? turns.reduce((sum, turn) => sum + turn.modelCalls, 0) : undefined;
+        const modelRequests = cost ? cost.pricedModelCalls + cost.unpricedModelCalls
+          : turns.every(turn => Number.isFinite(turn.modelCalls))
+            ? turns.reduce((sum, turn) => sum + turn.modelCalls, 0) : undefined;
         const contextBadge = Number.isFinite(stats.contextWindow) ? `<span class="token-badge">${labels.contextWindow} ${number(stats.contextWindow)}</span>` : "";
         const costCoverage = cost ? `<span class="token-badge ${escapeHtml(cost.coverage)}">${labels.costCoverage} ${escapeHtml(costCoverageLabel(cost))}</span>` : "";
         return `<section class="token-panel" id="tokenDetails" aria-labelledby="tokenDetailsTitle">
-          <div class="token-head"><div><div class="section-title" id="tokenDetailsTitle">${labels.tokenDetails}</div><div class="section-note">${labels.tokenDetailsNote}</div></div><div class="token-badges"><span class="token-badge">${labels.cacheHit} ${percentage(total.cached, total.input)}</span><span class="token-badge">${stats.omittedTurns ? (zh ? "已加载轮次 · " : "Loaded turns · ") : ""}${labels.modelRequests} ${number(modelRequests)}</span>${costCoverage}${contextBadge}</div></div>
+          <div class="token-head"><div><div class="section-title" id="tokenDetailsTitle">${labels.tokenDetails}</div><div class="section-note">${labels.tokenDetailsNote}</div></div><div class="token-badges"><span class="token-badge">${labels.cacheHit} ${percentage(total.cached, total.input)}</span><span class="token-badge">${!cost && stats.omittedTurns ? (zh ? "已加载轮次 · " : "Loaded turns · ") : ""}${labels.modelRequests} ${number(modelRequests)}</span>${costCoverage}${contextBadge}</div></div>
           ${costModeControls()}
           <div class="token-metrics">${tokenMetric("total", labels.totalTokens, total.total)}${tokenMetric("input", labels.inputTokens, total.input)}${tokenMetric("cached", labels.cachedInput, total.cached)}${tokenMetric("uncached", labels.uncachedInput, total.uncached)}${tokenMetric("output", labels.outputTokens, total.output)}${tokenMetric("reasoning", labels.reasoningTokens, total.reasoning)}${costMetric(cost)}</div>
           <div class="token-bars">${tokenBreakdown(labels.inputBreakdown, total.input, [{ className: "token-new", label: labels.uncachedInput, value: total.uncached }, { className: "token-cached", label: labels.cachedInput, value: total.cached }])}${tokenBreakdown(labels.outputBreakdown, total.output, [{ className: "token-visible", label: labels.visibleOutput, value: total.visible }, { className: "token-reasoning", label: labels.reasoningTokens, value: total.reasoning }])}</div>

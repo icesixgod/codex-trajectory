@@ -1116,7 +1116,7 @@ def test_safe_summary_search_filter_keyboard_and_detail_inspector(
     )
     assert token_panel.locator(".token-metric[title]").count() == 0
     assert frame.locator(".stat[title]").count() == 0
-    assert "cache is part of input and reasoning is part of output" in token_panel.inner_text()
+    assert "Cache is part of input and reasoning is part of output" in token_panel.inner_text()
     assert "Cache hit 75%" in token_panel.locator(".token-badges").inner_text()
     assert "Pricing coverage Complete" in token_panel.locator(".token-badges").inner_text()
     assert "not a Codex subscription bill" in token_panel.locator(".cost-note").inner_text()
@@ -2635,6 +2635,46 @@ def test_manual_fast_cost_mode_updates_all_surfaces_and_is_task_scoped(
         expect(metric).to_have_text("≈$0.001672")
     finally:
         page.set_viewport_size({"width": 1280, "height": 900})
+
+
+@pytest.mark.parametrize("language", ["en", "zh"])
+def test_task_totals_include_descendants_while_turns_show_current_agent(
+    page: Page, harness_url: str, language: str
+) -> None:
+    page.goto(f"{harness_url}/{language}-native")
+    frame = viewer(page)
+    frame.locator("#refresh").wait_for()
+    page.evaluate(
+        """() => {
+          const stats = trajectories['session-alpha'].stats;
+          for (const name of Object.keys(stats.tokens)) stats.tokens[name] *= 2;
+          for (const name of ['totalUsd', 'uncachedInputUsd', 'cachedInputUsd', 'outputUsd']) {
+            stats.cost[name] *= 2;
+          }
+          stats.cost.pricedModelCalls = 5;
+        }"""
+    )
+    frame.locator("#refresh").click()
+    expect(frame.locator('[data-token-metric="total"] .token-metric-value')).to_have_text("1,280")
+    expect(frame.locator('[data-token-metric="cost"] .token-metric-value')).to_have_text(
+        "≈$0.002976"
+    )
+    expect(frame.locator("#tokenDetails .section-note").first).to_contain_text(
+        "所有子代理" if language == "zh" else "all descendants"
+    )
+    expect(frame.locator("#tokenDetails .token-badges")).to_contain_text(
+        "模型请求 5" if language == "zh" else "Model requests 5"
+    )
+    frame.locator("details.token-turns summary").click()
+    expect(frame.locator(".token-turn-row")).to_have_count(2)
+    assert frame.locator('.token-turn-row [data-token-column="cost"]').all_inner_texts() == [
+        "≈$0.000832",
+        "≈$0.000656",
+    ]
+    frame.locator("#openPip").click()
+    expect(frame.locator("#liveDock")).to_have_attribute("data-total-cost", "≈$0.002976")
+    expect(frame.locator("#liveDock")).to_have_attribute("data-turn-cost", "≈$0.000656")
+    expect(frame.locator("#liveDock")).to_have_attribute("data-tokens", "1280,256,768,256,80")
 
 
 def test_logged_fast_costs_override_manual_mode_without_double_multiplication(

@@ -21,11 +21,13 @@ Codex Trajectory is a plugin that turns local Codex logs into a searchable event
 - **Task history:** messages, saved reasoning summaries, tool calls, subagent activity, and context compaction.
 - **Timing and failures:** event durations, execution status, and a timeline to locate slow calls.
 - **Current task timing:** active time for the open task, split into local/tool execution, estimated model/token time, and unattributed time, with percentages.
-- **Tokens and cost:** task and turn totals, cache usage, and estimated cost.
+- **Tokens and cost:** task totals include the main agent and all descendant subagents, with cache usage and estimated cost; turn details show the selected agent's own usage.
 - **Live activity:** a scrolling event stream, token totals, cost estimates, and the latest available local quota sample.
 - **History browsing:** search, event filters, task switching, and earlier records, including compressed and paginated logs.
 
 Steps are approximate, and reasoning summaries appear only when saved in the log. Cost figures are estimates based on bundled API prices, not a Codex subscription bill. Local quota samples may lag the account service.
+
+Task token and cost totals recursively include related active and archived subagent logs, counting each agent once. Each agent uses its recorded model and Fast mode for pricing. Live totals refresh when a subagent changes, even if the main agent is idle. Missing or unreadable subagent logs produce a warning that totals are incomplete; an oversized related log requires a larger explicit read budget. The event ledger, turn details, timing distribution, context window, and quota sample remain scoped to the selected agent or account as labeled.
 
 ## Install
 

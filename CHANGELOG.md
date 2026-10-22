@@ -6,6 +6,7 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ### Added
 
+- Include the selected agent and all recursively related active/archived subagents in task Token and cost totals. Deduplicate logical agent IDs, retain per-agent model/Fast pricing and selected-agent turn details, refresh totals on child-only changes, and warn about incomplete subagent logs.
 - Add current-task timing distribution with durations and percentages for local/tool execution, estimated model/token time, and unattributed time. Read only the selected task's complete history and reuse its loaded source/index; retain `get_codex_project_timing` for compatibility, preserve unknown timing, and report incomplete coverage.
 
 ### Removed

@@ -40,7 +40,7 @@ def test_index_matches_canonical_projection(
 ) -> None:
     path = codex_home / "sessions/2026/rollout-alpha.jsonl"
     expected = projection.parse_session(path, 50, detail, before)  # type: ignore[arg-type]
-    actual = projection.cached_trajectory(path, 50, detail, before)  # type: ignore[arg-type]
+    actual = projection._cached_session_trajectory(path, 50, detail, before)  # type: ignore[arg-type]
     assert comparable(actual) == comparable(expected)
 
 
@@ -187,7 +187,7 @@ def test_index_size_cap_falls_back_without_leaking_tempfiles(
     monkeypatch.setattr(page_index, "MAX_INDEX_BYTES", 1)
     path = codex_home / "sessions/2026/rollout-alpha.jsonl"
     expected = projection.parse_session(path, 50)
-    actual = projection.cached_trajectory(path, 50)
+    actual = projection._cached_session_trajectory(path, 50)
     assert comparable(actual) == comparable(expected)
     assert not projection._PAGE_INDEXES
 
@@ -445,7 +445,7 @@ def test_unavailable_optional_index_falls_back_to_streaming(
     path = codex_home / "sessions/2026/rollout-alpha.jsonl"
     expected = projection.parse_session(path, 50)
     monkeypatch.setattr(projection, "PageIndex", unavailable)
-    assert comparable(projection.cached_trajectory(path, 50)) == comparable(expected)
+    assert comparable(projection._cached_session_trajectory(path, 50)) == comparable(expected)
 
 
 @pytest.mark.parametrize("before", [None, 51, 40])
