@@ -1174,37 +1174,6 @@ def test_trajectory_cache_invalidates_after_append(
     assert refreshed["stats"]["turns"] == first["stats"]["turns"] + 1
 
 
-def test_prewarm_only_loads_latest_active_summary(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    path = tmp_path / "latest.jsonl"
-    calls: list[tuple[object, ...]] = []
-    monkeypatch.setattr(
-        projection,
-        "list_session_overviews",
-        lambda **kwargs: calls.append(("list", kwargs)) or [],
-    )
-    monkeypatch.setattr(
-        projection,
-        "resolve_session",
-        lambda session_id, include_archived: (
-            calls.append(("resolve", session_id, include_archived)) or path
-        ),
-    )
-    monkeypatch.setattr(
-        projection,
-        "cached_trajectory",
-        lambda *args: calls.append(("trajectory", *args)) or {},
-    )
-
-    projection.prewarm_caches()
-
-    assert calls == [
-        ("resolve", None, False),
-        ("trajectory", path, projection.DEFAULT_MAX_RECORDS, "summary"),
-    ]
-
-
 @pytest.mark.parametrize(
     ("value", "expected"),
     [

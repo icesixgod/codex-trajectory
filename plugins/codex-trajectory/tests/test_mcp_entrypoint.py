@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from types import SimpleNamespace
 
 import codex_trajectory_mcp
 import pytest
+from codex_trajectory import projection, sessions
 
 
 def test_mcp_config_uses_the_portable_windowless_launcher() -> None:
@@ -27,18 +27,20 @@ def test_mcp_config_uses_the_portable_windowless_launcher() -> None:
     assert launcher.with_suffix(".exe").is_file()
 
 
-def test_mcp_starts_optional_initialization_before_serving(
+def test_mcp_serves_without_reading_or_indexing_history(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[str] = []
-    monkeypatch.setattr(
-        codex_trajectory_mcp,
-        "_start_background_initialization",
-        lambda: (
-            calls.append("initialize"),
-            SimpleNamespace(join=lambda: calls.append("join")),
-        )[1],
-    )
+
+    def unexpected(*args: object, **kwargs: object) -> None:
+        calls.append("history")
+        pytest.fail("MCP startup must not discover, decompress, or index task history")
+
+    monkeypatch.setattr(sessions, "session_files", unexpected)
+    monkeypatch.setattr(sessions, "_decompress_rollout", unexpected)
+    monkeypatch.setattr(projection, "resolve_session", unexpected)
+    monkeypatch.setattr(projection, "cached_trajectory", unexpected)
+    monkeypatch.setattr(projection, "PageIndex", unexpected)
     monkeypatch.setattr(
         codex_trajectory_mcp,
         "protocol_main",
@@ -47,43 +49,15 @@ def test_mcp_starts_optional_initialization_before_serving(
 
     codex_trajectory_mcp.main()
 
-    assert calls == ["initialize", "serve", "join"]
+    assert calls == ["serve"]
 
 
-def test_mcp_joins_initialization_when_protocol_exits_with_error(
+def test_mcp_propagates_protocol_errors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    joined: list[bool] = []
-    monkeypatch.setattr(
-        codex_trajectory_mcp,
-        "_start_background_initialization",
-        lambda: SimpleNamespace(join=lambda: joined.append(True)),
-    )
-
     def fail() -> None:
         raise RuntimeError("disconnected")
 
     monkeypatch.setattr(codex_trajectory_mcp, "protocol_main", fail)
     with pytest.raises(RuntimeError, match="disconnected"):
         codex_trajectory_mcp.main()
-    assert joined == [True]
-
-
-def test_background_initialization_only_prewarms(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[str] = []
-    monkeypatch.setattr(codex_trajectory_mcp, "prewarm_caches", lambda: calls.append("prewarm"))
-    codex_trajectory_mcp._initialize_in_background()
-    assert calls == ["prewarm"]
-
-
-@pytest.mark.parametrize(
-    "error", [OSError("unavailable"), RuntimeError("busy"), ValueError("no logs")]
-)
-def test_background_prewarm_failure_does_not_break_stdio(
-    monkeypatch: pytest.MonkeyPatch, error: Exception
-) -> None:
-    def fail() -> None:
-        raise error
-
-    monkeypatch.setattr(codex_trajectory_mcp, "prewarm_caches", fail)
-    codex_trajectory_mcp._initialize_in_background()

@@ -181,6 +181,73 @@ def test_compressed_rollouts_support_multiple_frames_and_reject_bad_tails(
         list(iter_jsonl(compressed))
 
 
+def test_compressed_metadata_streams_only_the_header_without_spooling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    metadata = {"type": "session_meta", "payload": {"id": "header-only"}}
+    header = json.dumps(metadata).encode() + b"\n"
+    # An incompressible prefix makes an accidental whole-source read observable;
+    # the large body would also exceed the normal disk-spool threshold.
+    body = json.dumps({"padding": os.urandom(256 * 1024).hex() + "x" * (9 * 1024 * 1024)})
+    path = tmp_path / "rollout.jsonl.zst"
+    path.write_bytes(_zstd_compress(header + body.encode() + b"\n"))
+    positions: list[int] = []
+    original_open = sessions._open_regular_binary
+
+    class TrackingSource(io.BufferedReader):
+        def close(self) -> None:
+            if not self.closed:
+                positions.append(self.tell())
+            super().close()
+
+    def unexpected_spool(*args: object, **kwargs: object) -> None:
+        pytest.fail("A metadata probe must never spool decompressed history")
+
+    monkeypatch.setattr(
+        sessions, "_open_regular_binary", lambda path: TrackingSource(original_open(path))
+    )
+    monkeypatch.setattr(sessions.tempfile, "SpooledTemporaryFile", unexpected_spool)
+
+    assert first_session_metadata(path) == metadata["payload"]
+    assert len(positions) == 1
+    assert 0 < positions[0] < path.stat().st_size
+
+
+def test_compressed_metadata_probe_crosses_frames_and_closes_sources(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "rollout.jsonl.zst"
+    metadata = {"type": "session_meta", "payload": {"id": "second-frame"}}
+    path.write_bytes(
+        _zstd_compress(b"{}\n") + _zstd_compress(json.dumps(metadata).encode() + b"\n")
+    )
+
+    assert first_session_metadata(path) == metadata["payload"]
+    # Windows cannot replace a source that the streaming decoder left open.
+    path.write_bytes(b"invalid zstd stream")
+    with pytest.raises(ValueError, match="valid zstd stream"):
+        first_session_metadata(path)
+
+
+@pytest.mark.parametrize("compressed", [False, True])
+@pytest.mark.parametrize("bound", ["bytes", "lines", "request"])
+def test_metadata_probes_preserve_byte_line_and_request_limits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, compressed: bool, bound: str
+) -> None:
+    raw = b"{}\n" * 3 + b'{"type":"session_meta","payload":{"id":"bounded"}}\n'
+    path = tmp_path / ("rollout.jsonl.zst" if compressed else "rollout.jsonl")
+    path.write_bytes(_zstd_compress(raw) if compressed else raw)
+    if bound == "bytes":
+        monkeypatch.setattr(sessions, "MAX_SESSION_HEADER_BYTES", len(raw) - 1)
+        assert first_session_metadata(path) == {}
+    elif bound == "lines":
+        monkeypatch.setattr(sessions, "MAX_SESSION_HEADER_LINES", 3)
+        assert first_session_metadata(path) == {}
+    else:
+        with sessions.session_read_limit(len(raw) - 1), pytest.raises(sessions.ReadLimitExceeded):
+            first_session_metadata(path)
+
+
 @pytest.mark.parametrize(
     ("budget_name", "expected"),
     [

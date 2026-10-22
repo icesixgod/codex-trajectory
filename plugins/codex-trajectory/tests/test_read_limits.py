@@ -102,12 +102,11 @@ def test_compressed_log_retains_limit_error_and_supports_explicit_budget(
     monkeypatch.setattr(sessions, "MAX_JSONL_TOTAL_BYTES", len(raw) - 1)
 
     native = open_task()
-    # The decoder cannot verify metadata within this budget. Filename hints
-    # support explicit public reads, but cannot bind the native caller.
-    assert native["structuredContent"] == {
-        "viewerState": "select-session",
-        "reason": "task-unavailable",
-    }
+    # A bounded header can now verify the task before the full read exceeds its
+    # budget, so the native panel can offer a retry just like a large plain log.
+    assert native["structuredContent"]["viewerState"] == "read-limit-exceeded"
+    assert native["structuredContent"]["sessionId"] == TASK_ID
+    assert native["structuredContent"]["readLimit"]["currentBytes"] == len(raw) - 1
     refused = call_tool("get_codex_trajectory", {"sessionId": TASK_ID})
     assert refused["structuredContent"]["viewerState"] == "read-limit-exceeded"
     assert refused["structuredContent"]["sessionId"] == TASK_ID
@@ -116,8 +115,9 @@ def test_compressed_log_retains_limit_error_and_supports_explicit_budget(
 
 
 @pytest.mark.parametrize("metadata_id", [TASK_ID, "20202020-2020-4020-8020-202020202020"])
+@pytest.mark.parametrize("header_fits", [False, True])
 def test_native_compressed_limit_requires_verified_metadata_identity(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, metadata_id: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, metadata_id: str, header_fits: bool
 ) -> None:
     from test_sessions import _zstd_compress
 
@@ -126,11 +126,13 @@ def test_native_compressed_limit_requires_verified_metadata_identity(
     path = tmp_path / "sessions" / f"rollout-compressed-conflict-{TASK_ID}.jsonl.zst"
     path.parent.mkdir()
     path.write_bytes(_zstd_compress(raw))
-    monkeypatch.setattr(sessions, "MAX_JSONL_TOTAL_BYTES", len(raw) - 1)
-    assert open_task()["structuredContent"] == {
-        "viewerState": "select-session",
-        "reason": "task-unavailable",
-    }
+    monkeypatch.setattr(sessions, "MAX_JSONL_TOTAL_BYTES", len(raw) - 1 if header_fits else 32)
+    native = open_task()["structuredContent"]
+    if header_fits and metadata_id == TASK_ID:
+        assert native["viewerState"] == "read-limit-exceeded"
+        assert native["sessionId"] == TASK_ID
+    else:
+        assert native == {"viewerState": "select-session", "reason": "task-unavailable"}
     # Explicit public filename alias resolution remains supported; it cannot
     # confer a verified native binding before the metadata has been read.
     public = call_tool("get_codex_trajectory", {"sessionId": TASK_ID, "maxReadBytes": len(raw)})
@@ -153,6 +155,33 @@ def test_native_oversized_alias_cannot_offer_retry_for_another_task(
         "reason": "task-unavailable",
     }
     assert open_task(other_id)["structuredContent"]["viewerState"] == "read-limit-exceeded"
+
+
+def test_task_resolution_never_spools_unrelated_compressed_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from test_sessions import _zstd_compress
+
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+    selected = write_rollout(
+        tmp_path / "sessions" / f"rollout-{TASK_ID}.jsonl", rollout_events(TASK_ID)
+    )
+    unrelated = tmp_path / "archived_sessions" / "unrelated.jsonl.zst"
+    unrelated.parent.mkdir()
+    header = b'{"type":"session_meta","payload":{"id":"unrelated"}}\n'
+    unrelated.write_bytes(_zstd_compress(header + b" " * 20_000 + b"\n"))
+    monkeypatch.setattr(projection, "session_files", lambda include_archived: [unrelated, selected])
+    monkeypatch.setattr(sessions, "MAX_JSONL_TOTAL_BYTES", 10_000)
+    original_open = sessions._open_rollout_binary
+
+    def checked_open(path: Path) -> Any:
+        assert path != unrelated, "Unrelated discovery must only stream the bounded header"
+        return original_open(path)
+
+    monkeypatch.setattr(sessions, "_open_rollout_binary", checked_open)
+    result = call_tool("get_codex_trajectory", {"sessionId": TASK_ID, "includeArchived": True})
+    assert "isError" not in result
+    assert result["structuredContent"]["session"]["id"] == TASK_ID
 
 
 @pytest.mark.parametrize("value", [True, 0, -1, 3.0, "3000000000", 64_000_000_001])

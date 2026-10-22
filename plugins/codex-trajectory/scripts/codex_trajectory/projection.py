@@ -2727,12 +2727,6 @@ def session_timing_summary(path: Path) -> dict[str, Any]:
                 index.close()
 
 
-def prewarm_caches() -> None:
-    """Warm the bounded session and latest-summary caches after MCP startup."""
-    path = resolve_session(None, include_archived=False)
-    cached_trajectory(path, DEFAULT_MAX_RECORDS, "summary")
-
-
 def _read_limit_task_id(path: Path) -> str | None:
     try:
         metadata = first_session_metadata(path)

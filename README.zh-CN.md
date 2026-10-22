@@ -38,6 +38,8 @@ codex plugin add codex-trajectory@icesixgod
 
 安装后新建一个 Codex 任务以加载插件。更新已有安装后，请完整退出并重新打开 Codex。
 
+启动时不扫描或预热任务历史，打开查看器或调用工具后才加载日志。查找任务元数据时，压缩归档仅读取有上限的头部，不创建解压临时文件；查看选定压缩任务时，仍在所选读取预算内完整校验其历史。
+
 ## 使用
 
 1. 在任务右侧面板中选择 **+ → More tools… → Plugins and MCPs → Codex Trajectory**，或让 Codex 使用 `show_codex_trajectory` 展示任务轨迹。

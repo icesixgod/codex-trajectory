@@ -2,6 +2,8 @@
 
 Codex Trajectory exposes four user-facing MCP tools, four app-only helpers, and one `text/html;profile=mcp-app` resource at `ui://codex-trajectory/trajectory-v2.html`. The viewer uses the native MCP Apps host and exposes no task-control actions. `list_codex_sessions` updates a private derived index and advertises `readOnlyHint: false`; it never edits source task logs.
 
+MCP startup performs no task discovery, projection, or history prewarming. Compressed metadata and format probes stream only the bounded header (at most 10 physical lines / 16 MiB, also subject to the request's read budget), without seeking to EOF or creating a disk spool. These probes do not validate an unread compressed body. Requested complete trajectory reads retain full frame/tail validation, decompressed byte limits, filesystem checks, logical source offsets, and paginated summary indexes. A verified matching compressed header can therefore identify an oversized native task and offer the existing read-budget retry without decompressing the body during discovery; unavailable or conflicting header identities still require explicit task selection.
+
 ## Current task timing
 
 `get_codex_project_timing` keeps its original name for compatibility but now reads only the explicitly selected task. It requires `sessionId` (no omitted/latest selection), accepts `includeArchived` (default `true`, allowing the selected task to be archived), and optional `maxReadBytes`. A project directory is not required.

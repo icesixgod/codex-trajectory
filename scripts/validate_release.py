@@ -526,8 +526,10 @@ def validate_native_view() -> None:
     )
     mcp_source = (PLUGIN / "scripts" / "codex_trajectory_mcp.py").read_text(encoding="utf-8")
     require(
-        "prewarm_caches()" in mcp_source and "reconcile_daemon" not in mcp_source,
-        "MCP startup must only initialize the read-only cache",
+        "protocol_main()" in mcp_source
+        and "prewarm_caches" not in mcp_source
+        and "reconcile_daemon" not in mcp_source,
+        "MCP startup must serve without prewarming task history",
     )
     for retired in (
         "scripts/codex_trajectory_cdp.py",
