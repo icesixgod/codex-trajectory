@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from . import __version__
+from . import __version__, subagents
 from .command_summary import command_activity
 from .json_support import strict_json_loads
 from .page_index import PageIndex
@@ -905,6 +905,7 @@ def parse_session(
     *,
     _index: PageIndex | None = None,
     _entries: Iterator[tuple[int, int, dict[str, Any]]] | None = None,
+    _usage: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Project one Codex rollout log into a turn-aware trajectory page."""
     detail_level = normalize_detail_level(detail_level)
@@ -932,6 +933,7 @@ def parse_session(
     last_model_service_tier: str | None = None
     latest_rate_limits: dict[str, dict[str, Any]] | None = None
     previous_total_usage: dict[str, int | float] = {}
+    child_agents: set[str] = set()
     context_window: int | None = None
     current_turn = 0
     current_step = 0
@@ -1685,6 +1687,10 @@ def parse_session(
                 _index.flush()
 
     for event_number, line_number, entry in _entries if _entries is not None else source_entries():
+        if _usage is not None:
+            child_agents.update(subagents.referenced_agents(entry))
+            if len(child_agents) > subagents.MAX_TASK_AGENTS:
+                raise ValueError("Task subagent activity exceeds the supported discovery limit.")
         entry_type = entry.get("type")
         payload = entry.get("payload")
         if not isinstance(payload, dict):
@@ -2490,6 +2496,16 @@ def parse_session(
         "agentPath": safe_text(metadata.get("agent_path"), 200),
         "git": git,
     }
+    if _usage is not None:
+        _usage.update(
+            tokens=accounted_usage if accounted_usage is not None else latest_usage,
+            cost=session_cost,
+            children=tuple(sorted(child_agents)),
+            fast=bool(fast_cost_calls),
+            readWarnings=any(
+                warning["code"] != "codex_fast_cost_multiplier" for warning in warnings
+            ),
+        )
     return {
         "schemaVersion": TRAJECTORY_SCHEMA_VERSION,
         "detailLevel": detail_level,
@@ -2537,6 +2553,17 @@ def cached_trajectory(
     detail_level: DetailLevel = "summary",
     before_record: int | None = None,
 ) -> dict[str, Any]:
+    """Keep session pages cached while refreshing totals from all descendant agents."""
+    trajectory = _cached_session_trajectory(path, max_records, detail_level, before_record)
+    return subagents.aggregate_usage(path, trajectory)
+
+
+def _cached_session_trajectory(
+    path: Path,
+    max_records: int = DEFAULT_MAX_RECORDS,
+    detail_level: DetailLevel = "summary",
+    before_record: int | None = None,
+) -> dict[str, Any]:
     """Return one immutable-signature projection from a small process cache."""
     normalized_detail = normalize_detail_level(detail_level)
     limited = max(MIN_RECORDS, min(int(max_records), MAX_RECORDS))
@@ -2554,13 +2581,17 @@ def cached_trajectory(
         if index is None:
             try:
                 index = PageIndex()
-                summary = parse_session(path, limited, "summary", before_record, _index=index)
+                usage: dict[str, Any] = {}
+                summary = parse_session(
+                    path, limited, "summary", before_record, _index=index, _usage=usage
+                )
                 index.finish(summary)
                 if not index.enabled or session_signature(path) != signature:
                     index.close()
                     index = None
                 else:
                     _PAGE_INDEXES[index_key] = index
+                    subagents.remember_usage(path, signature, usage)
             except (OSError, sqlite3.Error):
                 if index is not None:
                     index.close()
@@ -2625,7 +2656,12 @@ def cached_trajectory(
                 _, evicted_index = _PAGE_INDEXES.popitem(last=False)
                 evicted_index.close()
         else:
-            trajectory = parse_session(path, limited, normalized_detail, before_record)
+            usage = {}
+            trajectory = parse_session(
+                path, limited, normalized_detail, before_record, _usage=usage
+            )
+            if session_signature(path) == signature:
+                subagents.remember_usage(path, signature, usage)
     size = len(json.dumps(trajectory, ensure_ascii=True).encode("ascii"))
     if session_signature(path) == signature:
         with _TRAJECTORY_CACHE_LOCK:
@@ -2805,14 +2841,9 @@ def trajectory_result(
 
 
 def trajectory_revision(path: Path) -> str:
-    """Return an opaque revision for every file in a rollout lineage."""
-    digest = hashlib.sha256()
-    for item in session_signature(path):
-        for value in item:
-            encoded = str(value).encode("utf-8", errors="replace")
-            digest.update(len(encoded).to_bytes(8, "big"))
-            digest.update(encoded)
-    return digest.hexdigest()
+    """Refresh task totals when any descendant's log or membership changes."""
+    signature = subagents.task_usage(path).signature
+    return hashlib.sha256(json.dumps(signature, ensure_ascii=True).encode("ascii")).hexdigest()
 
 
 def trajectory_update_result(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -2841,20 +2872,20 @@ def trajectory_update_result(arguments: dict[str, Any]) -> dict[str, Any]:
         ):
             raise ValueError("maxReadBytes requires an explicit sessionId.")
         path = resolve_session(session_id, include_archived)
-        current_revision = trajectory_revision(path)
-        update: dict[str, Any] = {
-            "schemaVersion": TRAJECTORY_SCHEMA_VERSION,
-            "unchanged": revision == current_revision,
-            "revision": current_revision,
-            "quota": latest_account_quota(),
-        }
-        if revision != current_revision:
-            try:
+        try:
+            current_revision = trajectory_revision(path)
+            update: dict[str, Any] = {
+                "schemaVersion": TRAJECTORY_SCHEMA_VERSION,
+                "unchanged": revision == current_revision,
+                "revision": current_revision,
+                "quota": latest_account_quota(),
+            }
+            if revision != current_revision:
                 update["trajectory"] = cached_trajectory(path, LIVE_MAX_RECORDS, "summary")
-            except ReadLimitExceeded as error:
-                error.session_id = _read_limit_task_id(path)
-                error.session_id_verified = error.session_id is not None
-                raise
+        except ReadLimitExceeded as error:
+            error.session_id = _read_limit_task_id(path)
+            error.session_id_verified = error.session_id is not None
+            raise
     state = "unchanged" if update["unchanged"] else "updated"
     return {
         "structuredContent": update,
