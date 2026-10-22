@@ -1116,7 +1116,7 @@ def test_safe_summary_search_filter_keyboard_and_detail_inspector(
     )
     assert token_panel.locator(".token-metric[title]").count() == 0
     assert frame.locator(".stat[title]").count() == 0
-    assert "cache is part of input and reasoning is part of output" in token_panel.inner_text()
+    assert "Cache is part of input and reasoning is part of output" in token_panel.inner_text()
     assert "Cache hit 75%" in token_panel.locator(".token-badges").inner_text()
     assert "Pricing coverage Complete" in token_panel.locator(".token-badges").inner_text()
     assert "not a Codex subscription bill" in token_panel.locator(".cost-note").inner_text()
