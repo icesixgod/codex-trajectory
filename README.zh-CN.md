@@ -6,92 +6,56 @@
 
 [English](README.md) · **简体中文**
 
-**版本 1.0.0** · 2026 年 10 月 2 日 · [更新日志](CHANGELOG.md#100---2026-10-02)
+看清 Codex 任务做了什么、时间花在哪里、用了多少 Token。Codex Trajectory 将本地任务日志整理成可搜索的时间轴和事件账本。
 
-看清 Codex 任务做了什么、时间花在哪里、用了多少 Token。
+- **回看过程：**查看消息、已保存的推理摘要、工具调用、失败、子代理活动和上下文压缩。
+- **定位耗时：**展示当前任务中工具执行、模型估算和未归因时间的时长与占比。
+- **统计用量：**查看 Token、缓存命中和估算费用；任务总量包含所有层级子代理，轮次明细仅显示当前代理。
+- **跟随实时活动：**查看新增事件、Token 总量和本地最新额度采样。
 
-Codex Trajectory 将本地 Codex 日志整理成可搜索的事件账本和交互时间轴，可从任务右侧插件面板打开，也可通过 `show_codex_trajectory` MCP 工具打开。
+![当前任务的耗时分布、Token 用量、时间轴与事件详情](plugins/codex-trajectory/assets/screenshots/desktop-zh-CN.png)
 
-![Codex Trajectory 中文查看器](plugins/codex-trajectory/assets/screenshots/desktop-zh-CN.png)
-
-*2026 年 10 月 2 日使用当前查看器截取，内容为演示数据。*
-
-## 能看到什么
-
-- **任务过程：**消息、日志中保存的推理摘要、工具调用、子代理活动和上下文压缩。
-- **耗时与失败：**事件耗时、执行状态，以及帮助定位慢调用的时间轴。
-- **当前任务耗时分布：**统计当前打开任务的活跃耗时，展示本地／工具执行、模型／Token 估算、未归因时间及占比。
-- **Token 与费用：**任务总量包含主代理及所有层级子代理，展示缓存使用情况和估算费用；轮次明细保留当前代理自身的用量。
-- **实时活动：**滚动事件流、Token 总量、估算费用，以及本地最新可用的额度采样。
-- **历史浏览：**搜索、事件筛选、任务切换和更早记录，支持压缩日志与分页历史。
-
-步骤划分是近似值，推理摘要仅在日志保存了摘要时显示。费用按内置 API 价格估算，不等于 Codex 订阅账单；本地额度采样也可能滞后于账户实际状态。
-
-任务 Token 和费用会递归汇总有关联的活跃及已归档子代理日志，每个代理只计一次，分别按其记录的模型及 Fast 模式估算费用。子代理用量变化时，即使主代理空闲，实时总量也会更新。缺失或不可读的子代理日志会提示总量不完整；关联日志超过读取上限时，需要显式提高读取预算。事件账本、轮次明细、耗时分布、上下文窗口与额度采样继续按页面标注展示当前代理或账户的数据。
+*2026 年 10 月 22 日截取当前界面，使用合成演示数据。*
 
 ## 安装
 
-需要 **Codex** 和 **[uv](https://docs.astral.sh/uv/getting-started/installation/)**，支持 macOS、Linux 和 Windows。
+需要 **Codex 桌面版**和 **[uv](https://docs.astral.sh/uv/getting-started/installation/)**，支持 macOS、Linux 和 Windows。
 
 ```sh
 codex plugin marketplace add icesixgod/codex-trajectory
 codex plugin add codex-trajectory@icesixgod
 ```
 
-安装后新建一个 Codex 任务以加载插件。更新已有安装后，请完整退出并重新打开 Codex。
-
-启动时不扫描或预热任务历史，打开查看器或调用工具后才加载日志。查找任务元数据时，压缩归档仅读取有上限的头部，不创建解压临时文件；查看选定压缩任务时，仍在所选读取预算内完整校验其历史。
+安装后新建一个 Codex 任务。更新插件后，请完整退出并重新打开 Codex。
 
 ## 使用
 
-1. 在任务右侧面板中选择 **+ → More tools… → Plugins and MCPs → Codex Trajectory**，或让 Codex 使用 `show_codex_trajectory` 展示任务轨迹。
-2. 浏览时间轴和事件账本，用搜索与筛选定位记录，点击记录查看详情。
-3. 点击 **实时小窗**跟随任务活动，或点击**加载更早记录**浏览历史。
-4. 两种方式打开的页面均在顶部统计卡片下方提供**当前任务耗时分布**。点击**统计当前任务耗时**，即可查看本任务的耗时与占比；点击**重新统计**获取最新快照。
+1. 在任务右侧面板选择 **+ → More tools… → Plugins and MCPs → Codex Trajectory**，直接打开当前任务，无需触发模型对话；无法获取任务上下文时，手动选择本地任务。
+2. 搜索或筛选事件，点击记录查看详情；点击**加载更早记录**浏览历史。
+3. 点击**统计当前任务耗时**查看耗时分布，或点击**实时小窗**跟随新增活动。
 
-耗时统计仅读取当前任务的完整历史，不受当前已加载分页影响，并优先复用已加载的摘要索引。统计排除轮次间空档，并行工具的重叠时间只计算一次。工具侧包括本地命令、外部工具及调用等待。模型／Token 耗时是估算，包含网络、排队和调度等待，不能代表纯 Token 生成时间。工具计时区分缺失、无效、零值和低于 1 毫秒；缺失或无效计时只将可能执行区间保留为未归因，其余时间继续估算。零值和低于精度的耗时在分布中按 0 毫秒处理，不再阻塞整轮估算。
-
-原生任务面板入口不触发模型对话。有有效任务上下文时，查看器精确打开该任务；任务上下文不可用时，显示本地任务选择器。插件面板与 MCP 展示工具使用相同页面，均包含当前任务耗时统计。
-
-也可以直接对 Codex 说：
+也可以让 Codex 通过 `show_codex_trajectory` 打开查看器：
 
 > 展示当前 Codex 任务的安全轨迹摘要。
 
-日志超过默认 **512 MiB** 读取上限时，设置足够的**读取上限（GB）**并点击**启用并重试**。提高后的上限仅对当前面板中的该任务生效；大日志首次扫描需要更长时间。
+通过 MCP 调用时，请传入 `sessionId` 指定任务；未指定时，读取和展示工具默认选择最近修改的活跃任务。
+
+耗时统计排除轮次间空档，并行工具重叠时间只计一次；模型时间包含网络和排队等待。费用按内置 API 价格估算，不等于订阅账单；本地额度采样可能滞后。
+
+日志超过 **512 MiB** 时，可在错误提示中提高**读取上限（GB）**并点击**启用并重试**，仅对当前面板中的该任务生效。
 
 ## 隐私
 
-查看器默认显示**安全摘要**，隐藏工具输入、输出和原始元数据。点击**加载完整详情**后，需要确认才会向当前对话提供有长度限制的详情。确认框中的选项可以为本机所有任务记住这一选择；**恢复安全摘要默认值**可清除偏好。实时视图始终使用安全摘要。
+日志在本地读取，源文件保持不变。默认的**安全摘要**隐藏工具输入、输出和原始元数据；**加载完整详情**需要确认，也可记住这一选择。实时视图始终使用安全摘要。
 
-插件不修改源日志，也不返回基础指令或加密推理。Python 运行时不含遥测、不发起应用网络请求；首次配置时，`uv` 可能下载 Python 和依赖。
+通过 Codex 返回的数据可能进入当前对话，详见[隐私说明](PRIVACY.md)。
 
-完整隐私说明见 [PRIVACY.md](PRIVACY.md)。
+## 文档
 
-## MCP 工具
-
-| 工具 | 用途 |
-| --- | --- |
-| `list_codex_sessions` | 查找近期本地任务。 |
-| `get_codex_project_timing` | 仅读取选定任务的耗时分布；保留原工具名以兼容已有调用。 |
-| `get_codex_trajectory` | 读取结构化轨迹数据。 |
-| `show_codex_trajectory` | 打开交互查看器。 |
-
-读取指定任务时，请明确传入 `sessionId`。公共读取和展示工具未指定 ID 时，会选择最近修改的活跃任务，可能与当前任务不同。参数、分页和数据结构见[接口文档](docs/interface.md)。
-
-## 开发
-
-```sh
-uv sync --group dev
-uv run ruff format --check .
-uv run ruff check .
-uv run mypy
-uv run pytest
-```
-
-浏览器测试与发布检查见 [CONTRIBUTING.md](CONTRIBUTING.md)，迁移和故障排查见[原生查看器指南](docs/native-viewer.md)，版本变化见 [CHANGELOG.md](CHANGELOG.md)。
+[MCP 工具与接口](docs/interface.md) · [故障排查](docs/native-viewer.md) · [开发指南](CONTRIBUTING.md) · [更新日志](CHANGELOG.md)
 
 ## 许可与致谢
 
-采用 [MIT 许可证](LICENSE)。事件账本、时间轴和检查器的部分实现改编自 DeepSeek 的 MIT 许可项目 [DeepSeek Harness trajectory UI](https://github.com/deepseek-ai/deepseek-harness/tree/master/packages/client/ui-trajectory)，版权为 © 2026 DeepSeek。详见 [NOTICE](NOTICE) 和[上游许可证](LICENSES/DeepSeek-Harness.txt)。本项目独立维护，与 DeepSeek 不存在隶属或背书关系。
+采用 [MIT 许可证](LICENSE)。部分界面改编自 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness/tree/master/packages/client/ui-trajectory)，© 2026 DeepSeek，详见 [NOTICE](NOTICE) 和[上游许可证](LICENSES/DeepSeek-Harness.txt)。本项目独立维护，与 DeepSeek 无隶属关系。
 
 友情链接：[Linux.do](https://linux.do/)
