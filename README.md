@@ -6,92 +6,56 @@
 
 **English** · [简体中文](README.zh-CN.md)
 
-**Version 1.0.0** · October 2, 2026 · [Changelog](CHANGELOG.md#100---2026-10-02)
+See what a Codex task did, where time went, and how many tokens it used. Codex Trajectory turns local task logs into a searchable timeline and event ledger.
 
-See what happened in a Codex task, where time went, and how many tokens it used.
+- **Replay tasks:** inspect messages, saved reasoning summaries, tool calls, failures, subagent activity, and context compaction.
+- **Find slow work:** see durations and percentages for tools, estimated model time, and unattributed time in the selected task.
+- **Track usage:** view tokens, cache usage, and estimated costs, including all descendant subagents in task totals. Turn details show the selected agent only.
+- **Follow live activity:** watch new events, token totals, and the latest local quota sample.
 
-Codex Trajectory is a plugin that turns local Codex logs into a searchable event ledger and interactive timeline. Open it from a task's right panel or through the `show_codex_trajectory` MCP tool.
+![Task timing, token usage, timeline, and event details](plugins/codex-trajectory/assets/screenshots/overview-en.png)
 
-![Codex Trajectory: English viewer](plugins/codex-trajectory/assets/screenshots/overview-en.png)
-
-*Captured from the current viewer on October 2, 2026, using synthetic demo data.*
-
-## What you can see
-
-- **Task history:** messages, saved reasoning summaries, tool calls, subagent activity, and context compaction.
-- **Timing and failures:** event durations, execution status, and a timeline to locate slow calls.
-- **Current task timing:** active time for the open task, split into local/tool execution, estimated model/token time, and unattributed time, with percentages.
-- **Tokens and cost:** task totals include the main agent and all descendant subagents, with cache usage and estimated cost; turn details show the selected agent's own usage.
-- **Live activity:** a scrolling event stream, token totals, cost estimates, and the latest available local quota sample.
-- **History browsing:** search, event filters, task switching, and earlier records, including compressed and paginated logs.
-
-Steps are approximate, and reasoning summaries appear only when saved in the log. Cost figures are estimates based on bundled API prices, not a Codex subscription bill. Local quota samples may lag the account service.
-
-Task token and cost totals recursively include related active and archived subagent logs, counting each agent once. Each agent uses its recorded model and Fast mode for pricing. Live totals refresh when a subagent changes, even if the main agent is idle. Missing or unreadable subagent logs produce a warning that totals are incomplete; an oversized related log requires a larger explicit read budget. The event ledger, turn details, timing distribution, context window, and quota sample remain scoped to the selected agent or account as labeled.
+*Current viewer, captured October 22, 2026 with synthetic demo data.*
 
 ## Install
 
-You need **Codex** and **[uv](https://docs.astral.sh/uv/getting-started/installation/)**. The plugin runs on macOS, Linux, and Windows.
+Requires **Codex desktop** and **[uv](https://docs.astral.sh/uv/getting-started/installation/)**. Supports macOS, Linux, and Windows.
 
 ```sh
 codex plugin marketplace add icesixgod/codex-trajectory
 codex plugin add codex-trajectory@icesixgod
 ```
 
-Open a new Codex task to load the plugin. After updating an existing installation, fully quit and reopen Codex.
-
-Startup does not scan or prewarm task history. Logs are loaded when a viewer or tool requests them. Metadata discovery streams only bounded headers from compressed archives without creating decompression temporary files; viewing a selected compressed task still validates its complete history within the chosen read budget.
+After installing, open a new Codex task. After updating, fully quit and reopen Codex.
 
 ## Use
 
-1. Select **+ → More tools… → Plugins and MCPs → Codex Trajectory** in the task's right panel, or ask Codex to show the task trajectory using `show_codex_trajectory`.
-2. Browse the timeline and event ledger. Use search and filters to find a record; select it to inspect it.
-3. Click **Live window** to follow activity, or **Load earlier records** to browse history.
-4. In either opened page, find **Current task timing distribution** below the top statistics and click **Calculate task timing**. Use **Recalculate** for a new snapshot of this task.
+1. In the task's right panel, select **+ → More tools… → Plugins and MCPs → Codex Trajectory**. This opens the current task without a model turn; if task context is unavailable, choose a local task.
+2. Search or filter the event ledger, then click a record to inspect it. Use **Load earlier records** for more history.
+3. Click **Calculate task timing** for the timing breakdown, or **Live window** to follow new activity.
 
-Timing reads the selected task's complete history, independently of loaded pages, and reuses its loaded summary index when available. It excludes gaps between turns and counts overlapping tools once. Tool time includes local commands, external tools, and call waits. Model/token time is an estimate that includes network, queueing, and scheduling waits, rather than a measurement of pure token generation. Missing and invalid tool timing are reported separately from zero and sub-millisecond durations. Only a missing/invalid tool's possible execution window remains unattributed; other time can still be estimated. Zero and below-precision durations count as 0 ms in this breakdown without blocking the rest of a turn.
-
-The native task-panel entry opens without a model turn. With valid task context, the viewer opens that exact task; without available task context, it shows a local task selector. The plugin panel and MCP show tool use the same viewer, including current-task timing.
-
-You can also ask Codex:
+You can also open the viewer through `show_codex_trajectory` by asking Codex:
 
 > Show the safe trajectory summary for this Codex task.
 
-For logs larger than the default **512 MiB** read limit, choose a sufficient **Read limit (GB)** and click **Enable and retry**. The higher limit applies only to that task in the current panel; large logs take longer to scan.
+For MCP calls, pass an explicit `sessionId` to select a task. Without it, read/show tools use the most recently modified active task.
+
+Timing excludes gaps between turns and counts overlapping tools once. Model time includes network and queueing waits. Costs use bundled API prices and are estimates, not subscription charges; local quota samples may lag.
+
+If a log exceeds **512 MiB**, raise **Read limit (GB)** in the error panel and click **Enable and retry**. The limit applies only to that task in the current panel.
 
 ## Privacy
 
-The viewer starts with a **safe summary**: tool inputs, outputs, and raw metadata are hidden. **Load full details** asks for confirmation before exposing bounded details to the active conversation. Its checkbox can remember your choice for all tasks on this device; **Restore safe summary default** clears that preference. Live views always use safe summaries.
+Logs are read locally and remain unchanged. **Safe summary** hides tool inputs, outputs, and raw metadata; **Load full details** requires confirmation and can remember your choice. Live views always use safe summaries.
 
-Source logs remain unchanged. Base instructions and encrypted reasoning are never returned. The Python runtime has no telemetry or application network requests; `uv` may download Python and dependencies during setup.
+Data returned through Codex may enter the active conversation. See the [privacy policy](PRIVACY.md) for details.
 
-See [PRIVACY.md](PRIVACY.md) for the complete privacy model.
+## Documentation
 
-## MCP tools
-
-| Tool | Use |
-| --- | --- |
-| `list_codex_sessions` | Find recent local tasks. |
-| `get_codex_project_timing` | Read timing for the selected task only; original tool name retained for compatibility. |
-| `get_codex_trajectory` | Read structured trajectory data. |
-| `show_codex_trajectory` | Open the interactive viewer. |
-
-Pass an explicit `sessionId` to read a specific task. Without one, the public read/show tools select the most recently modified active task, which may differ from the current task. See the [interface reference](docs/interface.md) for arguments, pagination, and schemas.
-
-## Development
-
-```sh
-uv sync --group dev
-uv run ruff format --check .
-uv run ruff check .
-uv run mypy
-uv run pytest
-```
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for browser tests and release checks, [the native viewer guide](docs/native-viewer.md) for migration and troubleshooting, and [CHANGELOG.md](CHANGELOG.md) for changes.
+[MCP tools and API](docs/interface.md) · [Troubleshooting](docs/native-viewer.md) · [Development](CONTRIBUTING.md) · [Changelog](CHANGELOG.md)
 
 ## License and credits
 
-[MIT](LICENSE). Parts of the ledger, timeline, and inspector are adapted from DeepSeek's MIT-licensed [DeepSeek Harness trajectory UI](https://github.com/deepseek-ai/deepseek-harness/tree/master/packages/client/ui-trajectory), copyright © 2026 DeepSeek. See [NOTICE](NOTICE) and the [upstream license](LICENSES/DeepSeek-Harness.txt). This is an independent project, not affiliated with or endorsed by DeepSeek.
+[MIT](LICENSE). Parts of the UI are adapted from [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness/tree/master/packages/client/ui-trajectory), © 2026 DeepSeek. See [NOTICE](NOTICE) and the [upstream license](LICENSES/DeepSeek-Harness.txt). Independently maintained; not affiliated with DeepSeek.
 
 Friendly link: [Linux.do](https://linux.do/)
