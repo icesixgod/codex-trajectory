@@ -28,6 +28,15 @@ codex plugin add codex-trajectory@icesixgod
 
 安装后新建一个 Codex 任务。更新插件后，请完整退出并重新打开 Codex。
 
+已有 Git 市场安装可先刷新市场，再安装当前版本：
+
+```sh
+codex plugin marketplace upgrade icesixgod
+codex plugin add codex-trajectory@icesixgod
+```
+
+随后在 macOS 上用 **⌘Q** 完全退出 Codex，Windows/Linux 上也需完整退出应用，重开后再打开任务侧栏。仅重新打开侧栏可能继续使用旧页面资源。
+
 ## 使用
 
 1. 在任务右侧面板选择 **+ → More tools… → Plugins and MCPs → Codex Trajectory**，直接打开当前任务，无需触发模型对话；无法获取任务上下文时，手动选择本地任务。

@@ -4,6 +4,8 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-25
+
 ### Added
 
 - Include the selected agent and all recursively related active/archived subagents in task Token and cost totals. Deduplicate logical agent IDs, retain per-agent model/Fast pricing and selected-agent turn details, refresh totals on child-only changes, and warn about incomplete subagent logs.

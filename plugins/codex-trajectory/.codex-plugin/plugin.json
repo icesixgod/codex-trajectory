@@ -1,6 +1,6 @@
 {
   "name": "codex-trajectory",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Inspect local Codex task trajectories as a privacy-aware event ledger and timeline.",
   "author": {
     "name": "icesixgod",

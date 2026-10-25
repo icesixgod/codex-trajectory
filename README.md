@@ -28,6 +28,15 @@ codex plugin add codex-trajectory@icesixgod
 
 After installing, open a new Codex task. After updating, fully quit and reopen Codex.
 
+To upgrade an existing Git marketplace installation, refresh the marketplace and install the current package:
+
+```sh
+codex plugin marketplace upgrade icesixgod
+codex plugin add codex-trajectory@icesixgod
+```
+
+Then fully quit Codex with **Cmd+Q** on macOS, or quit the app completely on Windows/Linux, and reopen the task's panel. Reopening only the panel can retain an older UI resource.
+
 ## Use
 
 1. In the task's right panel, select **+ → More tools… → Plugins and MCPs → Codex Trajectory**. This opens the current task without a model turn; if task context is unavailable, choose a local task.
