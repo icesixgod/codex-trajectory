@@ -30,9 +30,13 @@ Legacy hosts can supply `window.openai.toolOutput` before viewer startup. The vi
 
 Preloaded results also render when the host omits the legacy `callTool` interface. Native initialization validates the negotiated MCP Apps version; failed or unsupported handshakes leave an already rendered trajectory visible, and delayed results can recover an initial loading error.
 
+The viewer always attempts the standard `ui/initialize` / `ui/notifications/initialized` handshake, including when `window.openai.callTool` is present as a compatibility alias. Successful negotiation selects the native tool and display-mode transport and host context. Legacy-only hosts can resume calls after one second without a standard response, or immediately after a rejected/unsupported handshake. The standard request remains pending within its normal sixty-second limit, so a delayed valid reply still completes readiness and selects the native transport; closing the viewer rejects pending bridge requests and ignores late initialization replies.
+
 旧宿主可以在页面启动前提供 `window.openai.toolOutput`。查看器只初始化一次，并为该初始结果读取一次偏好；此前已启用全文详情时也遵循这一行为。
 
 宿主未提供旧版 `callTool` 接口时，预先提供的结果同样可以显示。原生初始化校验协商后的 MCP Apps 版本；握手失败或版本不受支持时保留已经显示的轨迹，延迟到达的结果可以恢复初始加载错误。
+
+查看器始终尝试标准的 `ui/initialize` / `ui/notifications/initialized` 握手，即使宿主同时提供 `window.openai.callTool` 兼容接口。协商成功后，工具调用、显示模式和宿主上下文使用标准通道。仅支持旧接口的宿主在一秒未收到标准响应后回退；标准握手被拒绝或版本不受支持时立即回退。标准请求仍在原有六十秒上限内等待，迟到的有效响应会补全握手并切换到标准通道；关闭查看器会拒绝待处理的桥接请求，并忽略迟到的初始化响应。
 
 ## Local verification
 
@@ -59,6 +63,10 @@ uv run python scripts/smoke_mcp.py \
 
 This starts the installed plugin's declared launcher, verifies its MCP discovery and self-contained resource, and reads the selected real task in safe-summary mode. It does not start a model turn or alter task history. Native menu visibility and clicking in the desktop app require a separate UI check; protocol and harness success alone do not establish that check.
 
+Installed macOS verification on **2026-10-25**: the repaired bridge matched the workspace, the original task's native panel completed the standard handshake after a full Codex restart, and the user confirmed that the panel displayed normally after retrying. The restarted desktop process logged no initialization timeouts. A transient `Transport closed` failure on the native entry recovered after the plugin connection became ready and the panel was reloaded. The repair's regression runs passed all 166 browser tests and 74 related backend/native/protocol tests; the installed launcher also passed exact-task summary and timing smoke checks.
+
+**2026-10-25 本机验收**：已安装桥接文件与工作区一致；完整重启 Codex 后，原聊天的原生侧栏完成标准握手，用户重试后确认正常显示。新桌面进程未再记录初始化超时。入口曾短暂报告 `Transport closed`，插件连接就绪后重新加载面板恢复。本次修复的 166 项界面测试、74 项相关后端、原生入口与协议测试通过，已安装启动器的指定任务摘要和耗时统计 smoke 通过。
+
 ## Upgrade from the injected viewer
 
 Install the candidate from a local marketplace for development, then fully quit and reopen Codex before reopening an existing task. Installing new files or refreshing the menu does not replace a task's already-running MCP process. Preserve the existing marketplace configuration if you plan to restore the released plugin afterward.
@@ -74,6 +82,10 @@ A watcher launched by an older installed version can outlive its MCP process. Di
 After reinstalling, an existing task can still use the old MCP process while the menu advertises the new `open_codex_trajectory` tool. The desktop log then reports `Unknown tool name.` for that tool. Reading the UI resource can also report `Internal server error.` if the old process's plugin directory was retired during installation.
 
 Confirm the running plugin process's working directory, rather than relying only on installed files or a successful smoke test started in a new process. Fully quit Codex with **Cmd+Q**, reopen it, and return to the task before clicking the native entry again. Local plugin reload guidance is also covered in [OpenAI Docs](https://developers.openai.com/plugins/build/plugins).
+
+For `MCP app initialization timed out`, check that the viewer completes the standard `ui/initialize` / `ui/notifications/initialized` exchange even if `window.openai.callTool` is also present. Copying a repaired bridge into the installed plugin does not replace a page already retained by the desktop client. Closing and reopening only the panel can reuse that old resource and repeat the thirty-second timeout. After an in-place repair, fully quit with **Cmd+Q** and reopen Codex before checking the original task again. The desktop log's `htmlByteLength` can be compared with the UTF-8 byte length of the installed MCP resource to identify a stale page; a matching installed file alone does not establish that the panel loaded it.
+
+出现 `MCP app initialization timed out` 时，查看器即使检测到 `window.openai.callTool`，也必须完成标准的 `ui/initialize` / `ui/notifications/initialized` 握手。把修复后的桥接文件复制到已安装插件，并不会替换桌面客户端已保留的页面；仅关闭再打开侧栏可能继续使用旧资源，并再次在三十秒后超时。原位修复后，需要 **⌘Q 完全退出并重开 Codex**，再验证原聊天。可将桌面日志中的 `htmlByteLength` 与已安装 MCP 页面资源的 UTF-8 字节数对照，辅助识别旧页面；安装文件一致不等于侧栏已经加载新内容。
 
 ### Timing fails after an in-place plugin update
 

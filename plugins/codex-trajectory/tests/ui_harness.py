@@ -524,11 +524,12 @@ def wrapper_html(
         if selector_reason
         else f"trajectory({json.dumps(initial_session)})"
     )
+    # Hybrid hosts advertise the same display capabilities through both transports.
     available_modes = (
         ["fullscreen"]
         if initial_display_mode == "fullscreen"
         else ["inline", "fullscreen"]
-        if native_host
+        if native_host or host_display
         else ["inline"]
     )
     return f"""<!doctype html>

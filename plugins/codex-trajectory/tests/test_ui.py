@@ -2127,10 +2127,210 @@ def test_english_and_chinese_desktop_layout(page: Page, harness_url: str) -> Non
     )
 
 
+@pytest.mark.parametrize("preloaded", [False, True])
+def test_native_handshake_with_legacy_aliases(page: Page, preloaded: bool) -> None:
+    """Compatibility aliases must not bypass the native host's readiness deadline."""
+    snapshot = demo_trajectories()["session-alpha"]
+    snapshot.pop("recentSessions", None)
+    with page.context.new_page() as isolated:
+        isolated.clock.install()
+        isolated.set_content('<iframe id="viewer" sandbox="allow-scripts"></iframe>')
+        isolated.evaluate(
+            """({payload, timing}) => {
+              const viewer = document.getElementById('viewer');
+              const send = message => viewer.contentWindow.postMessage(message, '*');
+              window.startupMessages = [];
+              window.nativeCalls = [];
+              window.legacyCalls = [];
+              window.initialized = false;
+              window.initializationFailed = false;
+              setTimeout(() => {
+                if (!window.initialized) {
+                  window.initializationFailed = true;
+                  viewer.remove();
+                }
+              }, 30_000);
+              window.addEventListener('message', event => {
+                if (event.source !== viewer.contentWindow) return;
+                const message = event.data;
+                if (message.legacyCall) {
+                  window.legacyCalls.push(message.legacyCall);
+                  return;
+                }
+                if (message.jsonrpc !== '2.0') return;
+                window.startupMessages.push(message.method);
+                if (message.method === 'ui/initialize') {
+                  send({jsonrpc: '2.0', id: message.id, result: {
+                    protocolVersion: '2026-01-26',
+                    hostContext: {theme: 'light', locale: 'zh-CN',
+                      displayMode: 'fullscreen', availableDisplayModes: ['fullscreen']}
+                  }});
+                } else if (message.method === 'ui/notifications/initialized') {
+                  window.initialized = true;
+                  send({jsonrpc: '2.0', method: 'ui/notifications/tool-result',
+                    params: {structuredContent: payload}});
+                } else if (message.method === 'tools/call') {
+                  window.nativeCalls.push(message.params.name);
+                  if (!window.initialized) {
+                    send({jsonrpc: '2.0', id: message.id,
+                      error: {code: -32002, message: 'App has not initialized'}});
+                    return;
+                  }
+                  const name = message.params.name;
+                  const structuredContent = name === 'get_codex_trajectory_preferences'
+                    ? {defaultFullDetails: false}
+                    : name === 'list_codex_sessions' ? {sessions: [payload.session]}
+                    : name === 'get_codex_project_timing' ? timing : payload;
+                  send({jsonrpc: '2.0', id: message.id, result: {structuredContent}});
+                }
+              });
+            }""",
+            {"payload": snapshot, "timing": demo_project_timings()["session-alpha"]},
+        )
+        encoded = json.dumps(snapshot if preloaded else None).replace("<", "\\u003c")
+        mock = f"""<script>
+          window.openai = {{
+            theme: 'dark', locale: 'en', displayMode: 'inline', toolOutput: {encoded},
+            async callTool(name) {{
+              window.parent.postMessage({{legacyCall: name}}, '*');
+              throw new Error('Use the standard MCP Apps transport');
+            }},
+          }};
+        </script>"""
+        isolated.locator("iframe").evaluate(
+            "(el, html) => el.srcdoc = html", ui_html().replace("<head>", f"<head>{mock}", 1)
+        )
+        frame = viewer(isolated)
+        expect(frame.locator("#sessionSelect")).to_have_value("session-alpha")
+        expect(frame.locator("html")).to_have_attribute("data-codex-theme", "light")
+        expect(frame.locator("html")).to_have_attribute("lang", "zh-CN")
+        expect(frame.locator("#sessionSelect")).to_be_enabled()
+        frame.locator("#refresh").click()
+        expect(frame.locator("#refresh")).to_be_enabled()
+        frame.locator("#calculateProjectTiming").click()
+        expect(frame.locator(".timing-metric")).to_have_count(4)
+        isolated.clock.fast_forward(30_001)
+        expect(frame.locator("#refresh")).to_be_visible()
+        expect(frame.get_by_role("alert")).to_have_count(0)
+        assert isolated.evaluate("window.initialized && !window.initializationFailed")
+        methods = isolated.evaluate("window.startupMessages")
+        assert methods[:2] == ["ui/initialize", "ui/notifications/initialized"]
+        assert methods.count("ui/initialize") == 1
+        assert methods.count("ui/notifications/initialized") == 1
+        assert isolated.evaluate("window.legacyCalls") == []
+        assert set(isolated.evaluate("window.nativeCalls")) == {
+            "get_codex_trajectory_preferences",
+            "list_codex_sessions",
+            "get_codex_trajectory",
+            "get_codex_project_timing",
+        }
+
+
+@pytest.mark.parametrize("close_before_reply", [False, True])
+def test_delayed_native_handshake_after_legacy_fallback(
+    page: Page, close_before_reply: bool
+) -> None:
+    """Late initialization completes once unless the viewer has already closed."""
+    bridge = (Path(__file__).parents[1] / "assets" / "mcp-app-bridge.js").read_text(
+        encoding="utf-8"
+    )
+    with page.context.new_page() as isolated:
+        isolated.clock.install()
+        isolated.set_content("<div></div>")
+        isolated.evaluate(
+            """() => {
+              window.messages = [];
+              window.legacyCalls = [];
+              window.results = [];
+              window.errors = [];
+              window.teardowns = 0;
+              window.openai = {
+                async callTool(name) {
+                  window.legacyCalls.push(name);
+                  return {transport: 'legacy'};
+                },
+                async requestDisplayMode() {
+                  window.legacyCalls.push('displayMode');
+                  return {mode: 'fullscreen', transport: 'legacy'};
+                },
+              };
+              window.addEventListener('message', event => {
+                if (event.source !== window || event.data?.jsonrpc !== '2.0') return;
+                const message = event.data;
+                window.messages.push(message.method);
+                if (message.method === 'ui/initialize') {
+                  window.replyToInitialization = () => window.postMessage({
+                    jsonrpc: '2.0', id: message.id, result: {
+                      protocolVersion: '2026-01-26',
+                      hostContext: {availableDisplayModes: ['fullscreen']}
+                    }
+                  }, '*');
+                } else if (message.method === 'tools/call'
+                    || message.method === 'ui/request-display-mode') {
+                  window.postMessage({jsonrpc: '2.0', id: message.id,
+                    result: {transport: 'native', mode: 'fullscreen'}}, '*');
+                }
+              });
+            }"""
+        )
+        isolated.add_script_tag(content=bridge)
+        isolated.evaluate(
+            """() => {
+              window.host = window.createTrajectoryHost({
+                onResult() {}, onContext() {},
+                onError(error) { window.errors.push(error.message); },
+                onTeardown() { window.teardowns += 1; },
+              });
+              void window.host.start();
+              void window.host.callTool('before-ready', {}).then(result => {
+                window.results.push(result);
+              });
+            }"""
+        )
+        isolated.wait_for_function("typeof window.replyToInitialization === 'function'")
+        isolated.clock.fast_forward(1_001)
+        isolated.wait_for_function("window.results.length === 1")
+        assert isolated.evaluate("window.results") == [{"transport": "legacy"}]
+        assert isolated.evaluate("window.legacyCalls") == ["before-ready"]
+        assert isolated.evaluate("window.host.requestDisplayMode('fullscreen')") == {
+            "transport": "legacy",
+            "mode": "fullscreen",
+        }
+        if close_before_reply:
+            isolated.evaluate("window.dispatchEvent(new Event('pagehide'))")
+        isolated.evaluate("window.replyToInitialization()")
+        if close_before_reply:
+            assert (
+                isolated.evaluate(
+                    "window.host.callTool('after-close', {}).catch(error => error.message)"
+                )
+                == "The viewer has closed."
+            )
+            assert isolated.evaluate("window.teardowns") == 1
+        else:
+            isolated.wait_for_function("window.messages.includes('ui/notifications/initialized')")
+            assert isolated.evaluate("window.host.callTool('after-ready', {})") == {
+                "transport": "native",
+                "mode": "fullscreen",
+            }
+            assert isolated.evaluate("window.host.requestDisplayMode('fullscreen')") == {
+                "transport": "native",
+                "mode": "fullscreen",
+            }
+            assert isolated.evaluate("window.host.supportsDisplayMode('fullscreen')")
+        isolated.clock.fast_forward(60_001)
+        methods = isolated.evaluate("window.messages")
+        assert methods.count("ui/initialize") == 1
+        assert methods.count("ui/notifications/initialized") == (0 if close_before_reply else 1)
+        assert isolated.evaluate("window.legacyCalls") == ["before-ready", "displayMode"]
+        assert isolated.evaluate("window.errors") == []
+
+
+@pytest.mark.parametrize("handshake", ["ignored", "rejected", "unsupported"])
 @pytest.mark.parametrize("language", ["en", "zh-CN"])
 @pytest.mark.parametrize("remember_full", [False, True])
 def test_legacy_preloaded_result_initializes_once(
-    page: Page, language: str, remember_full: bool
+    page: Page, language: str, remember_full: bool, handshake: str
 ) -> None:
     snapshot = demo_trajectories()["session-alpha"]
     snapshot["detailLevel"] = "summary"
@@ -2141,6 +2341,18 @@ def test_legacy_preloaded_result_initializes_once(
     mock = f"""<script>
       window.__legacyToolCalls = [];
       window.__legacyInitialReads = 0;
+      window.__legacyProtocol = [];
+      window.addEventListener('message', event => {{
+        if (event.source !== window || event.data?.jsonrpc !== '2.0') return;
+        const message = event.data;
+        window.__legacyProtocol.push(message.method);
+        if (message.method !== 'ui/initialize' || {json.dumps(handshake)} === 'ignored') return;
+        window.postMessage({{jsonrpc: '2.0', id: message.id,
+          ...({json.dumps(handshake)} === 'rejected'
+            ? {{error: {{code: -32601, message: 'Unsupported initialization'}}}}
+            : {{result: {{protocolVersion: 'unknown'}}}})
+        }}, '*');
+      }});
       const initialTrajectory = {encoded};
       window.openai = {{
         theme: "dark",
@@ -2170,8 +2382,8 @@ def test_legacy_preloaded_result_initializes_once(
     expect(page.locator("html")).to_have_attribute("lang", language)
     expect(page.locator("html")).to_have_attribute("data-codex-theme", "dark")
     assert page.get_by_role("alert").count() == 0
-    # Each read of the preloaded result occurs only during the one initialization.
-    assert page.evaluate("window.__legacyInitialReads") == 2
+    assert page.evaluate("window.__legacyInitialReads") == 1
+    assert page.evaluate("window.__legacyProtocol.filter(Boolean)") == ["ui/initialize"]
     names = page.evaluate("window.__legacyToolCalls.map(call => call.name)")
     assert sorted(names) == ["get_codex_trajectory_preferences", "list_codex_sessions"]
 

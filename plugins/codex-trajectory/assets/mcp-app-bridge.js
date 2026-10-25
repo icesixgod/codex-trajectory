@@ -3,6 +3,7 @@
   const PROTOCOL_VERSION = "2026-01-26";
   const REQUEST_TIMEOUT_MS = 60_000;
   const LARGE_LOG_TIMEOUT_MS = 600_000;
+  const LEGACY_FALLBACK_MS = 1_000;
 
   window.createTrajectoryHost = ({ onResult, onContext, onError, onTeardown }) => {
     const pending = new Map();
@@ -10,7 +11,8 @@
     let context = {};
     let connection = null;
     let closed = false;
-    const legacy = typeof window.openai?.callTool === "function";
+    let nativeReady = false;
+    const legacyAvailable = typeof window.openai?.callTool === "function";
     const post = message => window.parent.postMessage({ jsonrpc: "2.0", ...message }, "*");
     const notify = (method, params = {}) => post({ method, params });
 
@@ -57,7 +59,8 @@
     function receive(event) {
       if (event.source !== window.parent || event.data?.jsonrpc !== "2.0") return;
       const message = event.data;
-      if (pending.has(message.id)) {
+      // A standalone legacy page can receive its own outgoing requests.
+      if (pending.has(message.id) && message.method === undefined) {
         const handler = pending.get(message.id);
         pending.delete(message.id);
         clearTimeout(handler.timer);
@@ -87,11 +90,12 @@
     window.addEventListener("pagehide", teardown, { once: true });
 
     function connect() {
+      if (closed) return Promise.reject(new Error("The viewer has closed."));
       if (connection) return connection;
       // Cache the promise before callbacks can reenter through callTool().
       connection = Promise.resolve().then(async () => {
         if (closed) throw new Error("The viewer has closed.");
-        if (legacy) {
+        if (legacyAvailable) {
           updateContext({
             theme: window.openai.theme,
             locale: window.openai.locale,
@@ -99,21 +103,33 @@
             availableDisplayModes: typeof window.openai.requestDisplayMode === "function"
               ? ["inline", "fullscreen"] : ["inline"],
           });
-          if (window.openai.toolOutput) onResult({ structuredContent: window.openai.toolOutput });
-          return;
         }
         const initial = window.openai?.toolOutput;
         if (initial) onResult({ structuredContent: initial });
-        const result = await request("ui/initialize", {
+        // Native hosts can expose legacy aliases while still requiring this handshake.
+        const initialization = request("ui/initialize", {
           protocolVersion: PROTOCOL_VERSION,
           appInfo: { name: "Codex Trajectory", version: "__TRAJECTORY_VERSION__" },
           appCapabilities: {},
+        }).then(result => {
+          if (result?.protocolVersion !== PROTOCOL_VERSION) {
+            throw new Error("Unsupported viewer protocol version.");
+          }
+          nativeReady = true;
+          updateContext(result?.hostContext || {});
+          notify("ui/notifications/initialized");
         });
-        if (result?.protocolVersion !== PROTOCOL_VERSION) {
-          throw new Error("Unsupported viewer protocol version.");
+        if (legacyAvailable) {
+          try {
+            await withTimeout(initialization, LEGACY_FALLBACK_MS);
+          } catch (error) {
+            if (closed) throw error;
+            // Keep old hosts usable and retain the pending handshake: a delayed
+            // native response must still complete readiness and switch transports.
+          }
+        } else {
+          await initialization;
         }
-        updateContext(result?.hostContext || {});
-        notify("ui/notifications/initialized");
       }).catch(error => {
         connection = null;
         if (!closed) onError(error);
@@ -130,13 +146,13 @@
         const largeRead = ["get_codex_trajectory", "show_codex_trajectory", "get_codex_trajectory_update", "get_codex_project_timing"].includes(name)
           && Number.isSafeInteger(args?.maxReadBytes) && args.maxReadBytes > 512 * 1024 * 1024;
         const timeoutMs = largeRead ? LARGE_LOG_TIMEOUT_MS : REQUEST_TIMEOUT_MS;
-        if (legacy) return withTimeout(window.openai.callTool(name, args), timeoutMs);
+        if (!nativeReady && legacyAvailable) return withTimeout(window.openai.callTool(name, args), timeoutMs);
         return request("tools/call", { name, arguments: args }, timeoutMs);
       },
       supportsDisplayMode: mode => (context.availableDisplayModes || []).includes(mode),
       async requestDisplayMode(mode) {
         await connect();
-        if (legacy) return withTimeout(window.openai.requestDisplayMode({ mode }));
+        if (!nativeReady && legacyAvailable) return withTimeout(window.openai.requestDisplayMode({ mode }));
         return request("ui/request-display-mode", { mode });
       },
     });
