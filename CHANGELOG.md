@@ -4,6 +4,10 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## [Unreleased]
 
+### Added
+
+- Estimate standard API token costs for GPT-6.2 Astra, GPT-6.2 Sol, GPT-6.1 Terra, GPT-6 Cyber, GPT-6 Rosalind, and both GPT-6 Astra for Law models.
+
 ## [1.1.0] - 2026-10-25
 
 ### Added

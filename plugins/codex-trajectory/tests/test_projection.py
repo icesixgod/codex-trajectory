@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 from codex_trajectory import projection
 from codex_trajectory.json_support import MAX_JSON_NESTING_DEPTH, strict_json_loads
+from codex_trajectory.pricing import PRICING_UPDATED_AT
 from codex_trajectory.privacy import (
     bounded,
     content_text,
@@ -85,7 +86,7 @@ def test_summary_projects_turns_tools_usage_and_privacy(tmp_path: Path) -> None:
             "coverage": "unavailable",
             "pricedModelCalls": 0,
             "unpricedModelCalls": 1,
-            "pricingUpdatedAt": "2026-10-01",
+            "pricingUpdatedAt": PRICING_UPDATED_AT,
         },
         "contextWindow": 100000,
         "rateLimits": {
@@ -241,7 +242,7 @@ def test_cost_estimates_follow_each_turn_model_and_roll_up_to_the_session(tmp_pa
         "coverage": "complete",
         "pricedModelCalls": 2,
         "unpricedModelCalls": 0,
-        "pricingUpdatedAt": "2026-10-01",
+        "pricingUpdatedAt": PRICING_UPDATED_AT,
     }
     assert all(record["usage"] is None and record["cost"] is None for record in result["records"])
     TRAJECTORY_VALIDATOR.validate(result)
@@ -250,7 +251,10 @@ def test_cost_estimates_follow_each_turn_model_and_roll_up_to_the_session(tmp_pa
 @pytest.mark.parametrize(
     ("model", "total"),
     [
+        ("gpt-6.2-astra", 0.00082),
+        ("gpt-6.2-sol", 0.000205),
         ("gpt-6.1-sol", 0.000205),
+        ("gpt-6.1-terra", 0.0001025),
         ("gpt-6-astra", 0.00105),
         ("gpt-6-sol", 0.00021),
         ("gpt-6-luna", 0.0000105),
@@ -275,7 +279,7 @@ def test_gpt_6_rollouts_have_pricing_for_task_turn_and_usage_record(
     assert cost["totalUsd"] == total
     assert cost["pricedModelCalls"] == 1
     assert cost["unpricedModelCalls"] == 0
-    assert cost["pricingUpdatedAt"] == "2026-10-01"
+    assert cost["pricingUpdatedAt"] == PRICING_UPDATED_AT
     assert result["turns"][0]["cost"] == cost
     assert all(record["usage"] is None and record["cost"] is None for record in result["records"])
     TRAJECTORY_VALIDATOR.validate(result)
