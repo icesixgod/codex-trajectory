@@ -16,10 +16,17 @@ from codex_trajectory.pricing import (
 )
 
 OFFICIAL_STANDARD_PRICES: dict[str, tuple[str, str | None, str]] = {
+    "gpt-6.2-astra": ("8", "0.4", "40"),
+    "gpt-6.2-sol": ("2", "0.1", "10"),
     "gpt-6.1-sol": ("2", "0.1", "10"),
+    "gpt-6.1-terra": ("1", "0.05", "5"),
     "gpt-6-astra": ("10", "1", "50"),
     "gpt-6-sol": ("2", "0.2", "10"),
     "gpt-6-luna": ("0.1", "0.01", "0.5"),
+    "gpt-6-cyber": ("20", "2", "100"),
+    "gpt-6-rosalind": ("10", "1", "50"),
+    "gpt-6.2-astra-law": ("8", "0.4", "40"),
+    "gpt-6-astra-law": ("10", "1", "50"),
     "gpt-5.6": ("4", "0.4", "20"),
     "gpt-5.6-sol": ("4", "0.4", "20"),
     "gpt-5.6-terra": ("2", "0.2", "12"),
@@ -128,6 +135,7 @@ def test_only_explicit_official_dated_snapshots_are_priced() -> None:
         "gpt-5.6-sol-2026-08-24",
         "gpt-5.3-codex-2026-02-30",
         "gpt-6.1-sol-2026-09-29",
+        "gpt-6.2-astra-2026-11-17",
         "gpt-6-astra-2026-09-30",
         "gpt-6-sol-fast",
         "gpt-6.1-sol-preview",
@@ -158,7 +166,7 @@ def test_prices_uncached_cached_and_output_tokens_without_double_counting_reason
         "coverage": "complete",
         "pricedModelCalls": 1,
         "unpricedModelCalls": 0,
-        "pricingUpdatedAt": "2026-10-01",
+        "pricingUpdatedAt": "2026-11-19",
     }
     assert PRICING_SOURCE == "https://developers.openai.com/api/docs/pricing"
 

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from decimal import Decimal, localcontext
 from typing import Any
 
-PRICING_UPDATED_AT = "2026-10-01"
+PRICING_UPDATED_AT = "2026-11-19"
 PRICING_SOURCE = "https://developers.openai.com/api/docs/pricing"
 MILLION_TOKENS = Decimal(1_000_000)
 # Included subscription usage, not purchased-credit or API invoice pricing:
@@ -37,13 +37,21 @@ def _price(input_rate: str, cached_rate: str | None, output_rate: str) -> ModelP
 # API price (for example, gpt-5.3-codex-spark) stay unpriced instead of inheriting a guessed
 # rate. Only dated snapshots explicitly published in the model catalog resolve to a base model.
 MODEL_PRICES_USD_PER_MILLION: dict[str, ModelPrice] = {
+    "gpt-6.2-astra": _price("8", "0.4", "40"),
+    "gpt-6.2-sol": _price("2", "0.1", "10"),
     "gpt-6.1-sol": _price("2", "0.1", "10"),
+    "gpt-6.1-terra": _price("1", "0.05", "5"),
     "gpt-6-astra": _price("10", "1", "50"),
     # The previous Sol model retains its separately published cache-read rate:
     # https://developers.openai.com/api/docs/models/gpt-6-sol
     "gpt-6-sol": _price("2", "0.2", "10"),
     "gpt-6-luna": _price("0.1", "0.01", "0.5"),
-    # The GPT-5.6 Sol standard rate is promotional through at least 2026-11-21.
+    "gpt-6-cyber": _price("20", "2", "100"),
+    # Rosalind and Law promotional rates apply through at least 2026-12-31.
+    "gpt-6-rosalind": _price("10", "1", "50"),
+    "gpt-6.2-astra-law": _price("8", "0.4", "40"),
+    "gpt-6-astra-law": _price("10", "1", "50"),
+    # The GPT-5.6 Sol standard rate is promotional until 2026-11-30.
     "gpt-5.6": _price("4", "0.4", "20"),
     "gpt-5.6-sol": _price("4", "0.4", "20"),
     "gpt-5.6-terra": _price("2", "0.2", "12"),
